@@ -1,4 +1,5 @@
 export const DEFAULT_PREFERENCES = {
+  theme_mode: "dark",
   accent_color: "#89b4fa",
   background_mode: "default",
   background_color: "#0b0e18",

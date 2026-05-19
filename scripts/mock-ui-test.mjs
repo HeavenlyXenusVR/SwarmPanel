@@ -18,6 +18,7 @@ const OWNER_SESSION = {
 };
 
 const preferences = {
+  theme_mode: "dark",
   accent_color: "#89b4fa",
   background_mode: "default",
   background_color: "#0b0e18",
@@ -26,9 +27,13 @@ const preferences = {
   card_shape: "soft",
   font_scale: "normal",
   motion: "standard",
+  profile_layout: "spotlight",
+  directory_layout: "grid",
   tab_style: "pills",
   surface_opacity: 0.92,
   surface_blur: 18,
+  stream_card_style: "editorial",
+  dashboard_density: "comfortable",
 };
 
 const musicBots = [
@@ -284,7 +289,14 @@ async function click(page, role, name) {
 }
 
 async function expectVisible(page, text) {
-  await page.getByText(text, { exact: false }).first().waitFor({ state: "visible", timeout: 10_000 });
+  await page.waitForFunction((needle) => {
+    return Array.from(document.querySelectorAll("body *")).some((element) => {
+      const text = element.textContent || "";
+      if (!text.includes(needle)) return false;
+      const style = window.getComputedStyle(element);
+      return style.visibility !== "hidden" && style.display !== "none" && element.getClientRects().length > 0;
+    });
+  }, text, { timeout: 10_000 });
 }
 
 async function runAuthMock(browser, failures) {

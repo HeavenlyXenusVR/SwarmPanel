@@ -116,6 +116,7 @@ PERSONAL_API_PREFIXES = (
     "/api/telegram",
 )
 PROFILE_ACCENT_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+PANEL_THEME_MODES = {"dark", "light", "system"}
 PANEL_BACKGROUND_MODES = {"default", "midnight", "aurora", "ember", "custom_color", "custom_image"}
 PANEL_LAYOUT_MODES = {"standard", "focused", "wide"}
 PANEL_DENSITY_MODES = {"comfortable", "compact"}
@@ -544,6 +545,7 @@ class UserProfileUpdateRequest(BaseModel):
 
 
 class PanelPreferencesUpdateRequest(BaseModel):
+    theme_mode: str | None = None
     accent_color: str | None = None
     background_mode: str | None = None
     background_color: str | None = None
@@ -868,6 +870,7 @@ def _clean_profile_updates(payload: UserProfileUpdateRequest) -> dict[str, Any]:
 def _clean_panel_preferences(payload: PanelPreferencesUpdateRequest) -> dict[str, Any]:
     raw = payload.model_dump(exclude_unset=True)
     preferences = {
+        "theme_mode": "dark",
         "accent_color": "#89b4fa",
         "background_mode": "default",
         "background_color": "#0b0e18",
@@ -885,6 +888,8 @@ def _clean_panel_preferences(payload: PanelPreferencesUpdateRequest) -> dict[str
         "stream_card_style": "editorial",
         "dashboard_density": "comfortable",
     }
+    if "theme_mode" in raw:
+        preferences["theme_mode"] = _normalize_choice(raw.get("theme_mode"), "Theme mode", PANEL_THEME_MODES, "dark")
     if "accent_color" in raw:
         preferences["accent_color"] = _normalize_profile_accent(raw.get("accent_color")) or "#89b4fa"
     if "background_mode" in raw:

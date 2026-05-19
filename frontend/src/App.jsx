@@ -14,7 +14,7 @@ import { Denied, NotFound, Page, SkeletonGrid } from "./components/ui.jsx";
 import { Shell } from "./components/Shell.jsx";
 import { DEFAULT_PREFERENCES } from "./config.js";
 import { useLiveRefresh } from "./hooks/useLiveRefresh.js";
-import { panelStyle } from "./utils/control.js";
+import { panelClassName, panelStyle } from "./utils/control.js";
 import DashboardPage from "./pages/DashboardPage.jsx";
 import ControlsPage from "./pages/ControlsPage.jsx";
 import InvitesPage from "./pages/InvitesPage.jsx";
@@ -159,7 +159,7 @@ function App() {
   }), [loadPreferences, loadSession, loginWith, logout, preferences, session, showToast, switchAdminMode, token]);
 
   return (
-    <div className="app-shell" style={panelStyle(preferences)}>
+    <div className={panelClassName(preferences)} style={panelStyle(preferences)}>
       <Shell ctx={ctx}>
         <Routes>
           <Route path="/" element={<Protected ctx={ctx}><DashboardPage ctx={ctx} /></Protected>} />

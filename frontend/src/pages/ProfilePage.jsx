@@ -3,6 +3,7 @@ import { Check, KeyRound, Mail, Save, ShieldCheck } from "lucide-react";
 import { apiFetch, cachedFetch, clearCache } from "../api.js";
 import { Page, SkeletonGrid } from "../components/ui.jsx";
 import { initials, pick } from "../utils/format.js";
+import { profileLayoutClass } from "../utils/control.js";
 
 export default function ProfilePage({ ctx }) {
   const [data, setData] = useState(null);
@@ -85,8 +86,8 @@ export default function ProfilePage({ ctx }) {
   return (
     <Page title="Server Identity" eyebrow="Profile">
       {!data ? <SkeletonGrid count={2} /> : (
-        <section className="settings-grid">
-          <form className="panel form-panel" onSubmit={save}>
+        <section className={`settings-grid ${profileLayoutClass(ctx.preferences)}`}>
+          <form className="panel form-panel profile-editor" onSubmit={save}>
             <div className="profile-preview">
               <div className="avatar">{form.avatar_url || form.server_icon_url ? <img src={form.avatar_url || form.server_icon_url} alt="" loading="lazy" decoding="async" /> : initials(form.display_name || data.username)}</div>
               <div>
