@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { Check, ExternalLink, Heart, KeyRound, Mail, MessageCircle, Music2, Save, ShieldCheck, UserPlus } from "lucide-react";
 import { apiFetch, cachedFetch, clearCache } from "../api.js";
 import { EmptyState, Page, SkeletonGrid } from "../components/ui.jsx";
+import { PresencePill } from "../components/swarm.jsx";
 import { initials, pick } from "../utils/format.js";
 import { profileLayoutClass } from "../utils/control.js";
 
@@ -33,7 +34,7 @@ function formToPayload(form) {
 
 function ProfileAvatar({ profile }) {
   const src = profile?.avatar_url || profile?.server_icon_url;
-  return <div className="avatar profile-avatar-xl">{src ? <img src={src} alt="" loading="lazy" decoding="async" /> : initials(profile?.display_name || profile?.username || "SP")}</div>;
+  return <div className="avatar profile-avatar-xl avatar-presence">{src ? <img src={src} alt="" loading="lazy" decoding="async" /> : initials(profile?.display_name || profile?.username || "SP")}<span className={`presence-dot avatar-dot ${profile?.is_online ? "online" : "inactive"}`} aria-hidden="true" /></div>;
 }
 
 export default function ProfilePage({ ctx }) {
@@ -164,7 +165,7 @@ export default function ProfilePage({ ctx }) {
         <div className="public-profile-copy">
           <h2>{profile.profile_headline || profile.display_name || profile.username}</h2>
           <p>{profile.bio || profile.server_name || `Guild ${profile.guild_id || "profile"}`}</p>
-          <div className="chip-row">{tags.map((tag) => <span key={tag}>{tag}</span>)}<span>{profile.favorite_bot || "swarm"}</span><span>{profile.server_name || `Guild ${profile.guild_id || "server"}`}</span></div>
+          <div className="chip-row"><PresencePill user={profile} />{tags.map((tag) => <span key={tag}>{tag}</span>)}<span>{profile.favorite_bot || "swarm"}</span><span>{profile.server_name || `Guild ${profile.guild_id || "server"}`}</span></div>
         </div>
         <div className="public-profile-actions">
           {publicMode ? <button type="button" onClick={follow}><Heart size={16} />{profile.followed_by_me ? "Unfollow" : "Follow"}</button> : null}

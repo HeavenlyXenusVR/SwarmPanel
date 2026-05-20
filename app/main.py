@@ -1346,6 +1346,7 @@ async def lifespan(_: FastAPI):
         ],
     )
     await telegram_service.start()
+    await _send_panel_telegram_alert("startup", "SwarmPanel online", "Telegram bridge and panel health watcher are running.")
     yield
     if telegram_service:
         await telegram_service.close()
@@ -1459,6 +1460,10 @@ async def register_submit(
         send_verification_email(settings, account["email"], _verification_url(request, email_token), email_token)
     site_owner = _is_site_owner_account(account)
     _set_account_session(request, account["username"], account["guild_id"], admin_mode=site_owner, site_owner=site_owner)
+    try:
+        await db.touch_account_seen(account["username"], account["guild_id"])
+    except Exception:
+        action_logger.debug("SwarmPanel account presence touch failed after form register.", exc_info=True)
     return RedirectResponse(url="/", status_code=303)
 
 
@@ -1507,6 +1512,11 @@ async def api_session_status(request: Request):
     site_owner = _is_site_owner_auth(auth)
     admin_mode = _is_admin_auth(auth)
     account_guild_id = await _resolve_account_guild_id(auth, username)
+    if account_guild_id and username:
+        try:
+            await db.touch_account_seen(username, account_guild_id)
+        except Exception:
+            action_logger.debug("SwarmPanel account presence touch failed for %s.", username, exc_info=True)
     return {
         "authenticated": True,
         "mode": auth.get("mode") or "token",
@@ -1591,6 +1601,10 @@ async def api_session_register(request: Request, payload: SessionRegisterRequest
 
     site_owner = _is_site_owner_account(account)
     _set_account_session(request, account["username"], account["guild_id"], admin_mode=site_owner, site_owner=site_owner)
+    try:
+        await db.touch_account_seen(account["username"], account["guild_id"])
+    except Exception:
+        action_logger.debug("SwarmPanel account presence touch failed after register.", exc_info=True)
     token = issue_api_token(
         settings.session_secret,
         account["username"],
@@ -1680,6 +1694,11 @@ async def api_resend_session_verification(request: Request):
     profile = await db.get_account_profile(username, scoped_guild_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Account profile not found")
+    try:
+        await db.touch_account_seen(username, scoped_guild_id)
+        profile["is_online"] = True
+    except Exception:
+        action_logger.debug("SwarmPanel account presence touch failed for profile view.", exc_info=True)
     if not profile.get("email"):
         raise HTTPException(status_code=400, detail="This account does not have an email address.")
     if profile.get("email_verified"):

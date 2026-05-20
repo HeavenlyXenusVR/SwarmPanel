@@ -399,6 +399,19 @@ a {
   padding: 24px 0 52px;
 }
 
+.site-footer {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  padding: 0 16px 26px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.site-footer a {
+  color: var(--accent);
+}
+
 .page {
   display: grid;
   gap: 18px;
@@ -824,6 +837,7 @@ textarea:focus {
 }
 
 .avatar {
+  position: relative;
   display: grid;
   place-items: center;
   width: 48px;
@@ -836,10 +850,64 @@ textarea:focus {
   overflow: hidden;
 }
 
+.avatar-presence {
+  overflow: visible;
+}
+
 .avatar img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  border-radius: inherit;
+}
+
+.presence-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: max-content;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.presence-pill.compact {
+  margin-top: 3px;
+  padding: 2px 7px;
+  font-size: 0.72rem;
+}
+
+.presence-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.16);
+}
+
+.presence-pill.online .presence-dot,
+.presence-dot.online {
+  background: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.18);
+}
+
+.presence-pill.inactive .presence-dot,
+.presence-dot.inactive {
+  background: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.16);
+}
+
+.avatar-dot {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  border: 2px solid var(--surface);
 }
 
 .avatar-link {
@@ -1237,6 +1305,53 @@ th {
   display: grid;
   gap: 8px;
   padding: 12px;
+}
+
+.command-preview-grid {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.command-preview-grid .preview-card {
+  min-height: 92px;
+}
+
+.command-preview-grid .preview-card > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.command-preview-primary {
+  grid-column: span 3;
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--line));
+}
+
+.preview-meter {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 65%, transparent);
+}
+
+.preview-meter span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--ok));
+}
+
+.preview-card.mini {
+  align-content: center;
+  justify-items: start;
+  min-height: 84px;
+}
+
+.preview-card.mini span {
+  color: var(--muted);
 }
 
 .preview-card p {

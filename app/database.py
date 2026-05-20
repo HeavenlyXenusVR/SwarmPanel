@@ -53,6 +53,7 @@ ACCOUNT_PROFILE_COLUMNS = (
     ("server_name", "VARCHAR(120) NULL"),
     ("server_icon_url", "TEXT NULL"),
     ("panel_preferences", "JSON NULL"),
+    ("last_seen_at", "TIMESTAMP NULL DEFAULT NULL"),
     ("updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
 )
 ACCOUNT_PROFILE_FIELDS = {name for name, _definition in ACCOUNT_PROFILE_COLUMNS}
@@ -457,6 +458,7 @@ class PanelDatabase:
                                 guild_id BIGINT NOT NULL,
                                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                                 last_login_at TIMESTAMP NULL DEFAULT NULL,
+                                last_seen_at TIMESTAMP NULL DEFAULT NULL,
                                 INDEX idx_accountlogins_guild_id (guild_id)
                             )
                             """
@@ -610,6 +612,7 @@ class PanelDatabase:
         for index_name, columns in (
             ("idx_accountlogins_public_username", "`public_profile`, `username`"),
             ("idx_accountlogins_server_name", "`server_name`"),
+            ("idx_accountlogins_last_seen", "`last_seen_at`"),
         ):
             try:
                 safe_index = _validate_identifier(index_name, "account profile index")
@@ -847,7 +850,7 @@ class PanelDatabase:
         await self._execute(
             f"""
             UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
-            SET last_login_at = CURRENT_TIMESTAMP
+            SET last_login_at = CURRENT_TIMESTAMP, last_seen_at = CURRENT_TIMESTAMP
             WHERE username = %s AND guild_id = %s
             """,
             (username, row["guild_id"]),
@@ -860,6 +863,18 @@ class PanelDatabase:
             "has_password": bool(password_hash),
             "used_legacy_login": legacy_ok,
         }
+
+    async def touch_account_seen(self, username: str, guild_id: str | int) -> None:
+        username = _normalize_account_username(username)
+        gid = _coerce_int(guild_id, "guild_id")
+        await self._execute(
+            f"""
+            UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
+            SET last_seen_at = CURRENT_TIMESTAMP
+            WHERE username = %s AND guild_id = %s
+            """,
+            (username, gid),
+        )
 
     async def get_account_guild_id_for_username(self, username: str) -> str | None:
         username = _normalize_account_username(username)
@@ -882,6 +897,7 @@ class PanelDatabase:
         profile["public_profile"] = bool(profile.get("public_profile"))
         profile["email_verified"] = bool(profile.get("email_verified_at"))
         profile["has_password"] = bool(profile.get("password_hash"))
+        profile["is_online"] = self._is_recently_seen(profile.get("last_seen_at"))
         profile.pop("password_hash", None)
         preferences = profile.get("panel_preferences")
         if isinstance(preferences, str):
@@ -902,11 +918,26 @@ class PanelDatabase:
             if not isinstance(value, list):
                 value = []
             profile[key] = value
-        for key in ("created_at", "last_login_at", "updated_at", "email_verified_at", "email_verification_sent_at"):
+        for key in ("created_at", "last_login_at", "last_seen_at", "updated_at", "email_verified_at", "email_verification_sent_at"):
             value = profile.get(key)
             if hasattr(value, "isoformat"):
                 profile[key] = value.isoformat()
         return profile
+
+    @staticmethod
+    def _is_recently_seen(value: Any, *, window_seconds: int = 180) -> bool:
+        if not value:
+            return False
+        try:
+            if isinstance(value, str):
+                seen_at = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            else:
+                seen_at = value
+            if getattr(seen_at, "tzinfo", None) is None:
+                seen_at = seen_at.replace(tzinfo=timezone.utc)
+            return (datetime.now(timezone.utc) - seen_at.astimezone(timezone.utc)).total_seconds() <= window_seconds
+        except Exception:
+            return False
 
     async def get_account_profile(self, username: str, guild_id: str | int) -> dict[str, Any] | None:
         username = _normalize_account_username(username)
@@ -917,7 +948,7 @@ class PanelDatabase:
                    profile_headline, profile_tags, profile_links, profile_banner_url, profile_banner_mode, profile_card_style, profile_social_mode,
                    favorite_bot, theme_accent,
                    public_profile, server_invite_url, server_name, server_icon_url,
-                   panel_preferences, created_at, last_login_at, updated_at
+                   panel_preferences, created_at, last_login_at, last_seen_at, updated_at
             FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
             WHERE username = %s AND guild_id = %s
             LIMIT 1
@@ -971,7 +1002,7 @@ class PanelDatabase:
                    display_name, avatar_url, bio, profile_headline, profile_tags, profile_links, profile_banner_url, profile_banner_mode,
                    profile_card_style, profile_social_mode, favorite_bot, theme_accent, public_profile,
                    server_invite_url, server_name, server_icon_url, panel_preferences,
-                   created_at, last_login_at, updated_at
+                   created_at, last_login_at, last_seen_at, updated_at
             FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
             WHERE id = %s
             LIMIT 1
@@ -1000,7 +1031,7 @@ class PanelDatabase:
             f"""
             SELECT id, username, guild_id, email, email_verified_at, email_verification_sent_at, password_hash,
                    display_name, favorite_bot, public_profile, server_name,
-                   created_at, last_login_at, updated_at
+                   created_at, last_login_at, last_seen_at, updated_at
             FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
             WHERE (
                 %s = ''
@@ -1260,7 +1291,7 @@ class PanelDatabase:
                    profile_headline, profile_tags, profile_links, profile_banner_url, profile_banner_mode, profile_card_style, profile_social_mode,
                    favorite_bot, theme_accent,
                    public_profile, server_invite_url, server_name, server_icon_url,
-                   created_at, last_login_at, updated_at,
+                   created_at, last_login_at, last_seen_at, updated_at,
                    EXISTS(
                      SELECT 1
                      FROM `{ACCOUNT_LOGIN_SCHEMA}`.`account_follows` mine
@@ -1295,7 +1326,7 @@ class PanelDatabase:
                    profile_headline, profile_tags, profile_links, profile_banner_url, profile_banner_mode, profile_card_style, profile_social_mode,
                    favorite_bot, theme_accent,
                    public_profile, server_invite_url, server_name, server_icon_url, panel_preferences,
-                   created_at, last_login_at, updated_at
+                   created_at, last_login_at, last_seen_at, updated_at
             FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
             WHERE id=%s
             LIMIT 1
@@ -1444,7 +1475,7 @@ class PanelDatabase:
         own_col, other_col = ("requester_account_id", "addressee_account_id") if mode == "outgoing" else ("addressee_account_id", "requester_account_id")
         rows = await self._fetchall(
             f"""
-            SELECT fr.*, u.id AS user_id, u.username, u.guild_id, u.display_name, u.avatar_url, u.server_name, u.server_icon_url, u.public_profile
+            SELECT fr.*, u.id AS user_id, u.username, u.guild_id, u.display_name, u.avatar_url, u.server_name, u.server_icon_url, u.public_profile, u.last_seen_at
             FROM `{ACCOUNT_LOGIN_SCHEMA}`.`account_friend_requests` fr
             JOIN `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}` u ON u.id=fr.{other_col}
             WHERE fr.{own_col}=%s AND fr.status='pending'
@@ -1478,7 +1509,7 @@ class PanelDatabase:
             f"""
             SELECT u.id, u.username, u.guild_id, u.display_name, u.avatar_url, u.bio, u.profile_headline, u.profile_tags,
                    u.profile_links, u.profile_banner_url, u.profile_banner_mode, u.profile_card_style, u.profile_social_mode,
-                   u.server_name, u.server_icon_url, u.public_profile,
+                   u.server_name, u.server_icon_url, u.public_profile, u.last_seen_at,
                    fr.responded_at AS friended_at
             FROM `{ACCOUNT_LOGIN_SCHEMA}`.`account_friend_requests` fr
             JOIN `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}` u
@@ -1507,7 +1538,7 @@ class PanelDatabase:
         )
         message = await self._fetchone(
             f"""
-            SELECT msg.*, u.username, u.guild_id, u.display_name, u.avatar_url, u.server_name, u.server_icon_url, u.public_profile
+            SELECT msg.*, u.username, u.guild_id, u.display_name, u.avatar_url, u.server_name, u.server_icon_url, u.public_profile, u.last_seen_at
             FROM `{ACCOUNT_LOGIN_SCHEMA}`.`account_messages` msg
             JOIN `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}` u ON u.id=msg.sender_account_id
             WHERE msg.sender_account_id=%s AND msg.recipient_account_id=%s AND msg.body=%s
@@ -1523,7 +1554,7 @@ class PanelDatabase:
             f"""
             SELECT
               other_user.id, other_user.id AS account_id, other_user.username, other_user.guild_id,
-              other_user.display_name, other_user.avatar_url, other_user.server_name, other_user.server_icon_url, other_user.public_profile,
+              other_user.display_name, other_user.avatar_url, other_user.server_name, other_user.server_icon_url, other_user.public_profile, other_user.last_seen_at,
               latest.id AS last_message_id, latest.body AS last_message, latest.created_at AS last_message_at,
               latest.sender_account_id AS last_sender_account_id, unread.unread_count
             FROM (
@@ -1562,7 +1593,7 @@ class PanelDatabase:
         )
         rows = await self._fetchall(
             f"""
-            SELECT msg.*, u.username, u.guild_id, u.display_name, u.avatar_url, u.server_name, u.server_icon_url, u.public_profile
+            SELECT msg.*, u.username, u.guild_id, u.display_name, u.avatar_url, u.server_name, u.server_icon_url, u.public_profile, u.last_seen_at
             FROM `{ACCOUNT_LOGIN_SCHEMA}`.`account_messages` msg
             JOIN `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}` u ON u.id=msg.sender_account_id
             WHERE (msg.sender_account_id=%s AND msg.recipient_account_id=%s)
@@ -1578,6 +1609,8 @@ class PanelDatabase:
 
     def _serialize_social_row(self, row: dict[str, Any]) -> dict[str, Any]:
         item = dict(row or {})
+        if "last_seen_at" in item:
+            item["is_online"] = self._is_recently_seen(item.get("last_seen_at"))
         for key, value in list(item.items()):
             if hasattr(value, "isoformat"):
                 item[key] = value.isoformat()

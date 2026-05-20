@@ -63,6 +63,10 @@ export function Shell({ ctx, children }) {
         </div>
       </header>
       <main className="stage">{children}</main>
+      <footer className="site-footer">
+        <span>Copyright © HeavenlyXenusVR</span>
+        <a href="https://discord.com/users/1304564041863266347" target="_blank" rel="noreferrer">Discord</a>
+      </footer>
     </>
   );
 }

@@ -1,64 +1,47 @@
 # SwarmPanel
-Web control panel for all 12 music bots plus Aria.
 
-## Features
-- Live dashboard across all bot nodes (track, guild/channel, filter, queue depth, heartbeat).
-- Direct bot controls from the panel to queue a track or playlist on a specific worker node.
-- Per-guild loop controls from the panel with `off`, `song`, and `queue` modes.
-- Bot explorer to view each bot's guilds and channels.
-- Database control section to truncate a specific table or all tables in a schema.
-- Session login protection for panel access.
-- GitHub Pages remote front-end at `https://heavenlyxenusvr.github.io/SwarmPanel/` for phone-friendly access.
+![Witch Knot site icon](favicon.ico)
 
-## Setup
-1. Create and activate a virtual environment.
-2. Install dependencies:
-   - `pip install -r requirements.txt`
-3. Copy `.env.example` to `.env` and fill required values.
-4. Export env vars (or use your process manager).
+SwarmPanel is the React and FastAPI command center for Aria and the 12-node music bot fleet. It focuses on live operational visibility, queue and playback control, owner-safe administration, account profiles, social features, and mobile-friendly monitoring.
 
-## Environment variables
-- Database:
-  - `PANEL_DB_HOST`
-  - `PANEL_DB_PORT`
-  - `PANEL_DB_USER`
-  - `PANEL_DB_PASSWORD` (required)
-  - `PANEL_DB_DEFAULT_SCHEMA`
-- Panel auth/session:
-  - `PANEL_ADMIN_USERNAME`
-  - `PANEL_ADMIN_PASSWORD` (required)
-  - `PANEL_SESSION_SECRET`
-  - `PANEL_CORS_ALLOWED_ORIGINS`
-  - `PANEL_API_TOKEN_TTL_SECONDS`
-  - `PANEL_PAGES_PUBLIC_URL`
-- Discord tokens:
-  - `GWS_DISCORD_TOKEN`
-  - `HARMONIC_DISCORD_TOKEN`
-  - `MAESTRO_DISCORD_TOKEN`
-  - `MELODIC_DISCORD_TOKEN`
-  - `NEXUS_DISCORD_TOKEN`
-  - `RHYTHM_DISCORD_TOKEN`
-  - `SYMPHONY_DISCORD_TOKEN`
-  - `TUNESTREAM_DISCORD_TOKEN`
-  - `ALUCARD_DISCORD_TOKEN`
-  - `SAPPHIRE_DISCORD_TOKEN`
-  - `STRIFE_DISCORD_TOKEN`
-  - `LOCKHART_DISCORD_TOKEN`
-  - `ARIA_DISCORD_TOKEN`
+## What It Does
 
-## Run
-- `uvicorn app.main:app --host 0.0.0.0 --port 8000`
-- Live GitHub Pages backend tunnel:
-  - `scripts/start_live_backend.sh 8000`
-  - Keep the script running while you want the GitHub Pages site connected.
-- Auto-start the live backend after login/reboot:
-  - `scripts/install_live_backend_service.sh`
-  - Stop/remove it with `scripts/uninstall_live_backend_service.sh`
-  - The service tunnels the Docker `web_swarmpanel` backend on port `8000` and republishes `live-config.json`.
+- Shows live bot status across all music nodes: track, guild, voice channel, queue depth, backup depth, filters, heartbeat, and drift.
+- Sends direct bot controls to the fleet for play, pause, resume, skip, stop, loop, filter, queue, and recovery actions.
+- Gives the owner expanded admin mode for database inspection, destructive-action safeguards, bot control, and operational review.
+- Tracks Swarm health, stale nodes, Medic warnings, queue recovery candidates, voice failures, and database issues.
+- Provides user accounts with profile pages, avatars, display names, bios, links, profile colors, visibility, and online or inactive presence.
+- Supports profile discovery, friend requests, follows, and direct messages between panel users.
+- Includes appearance controls with real previews so users can see how dashboard, queue, Medic, and database sections will look.
+- Sends scoped Telegram operator alerts for important panel health issues without spamming normal logs.
+- Publishes a static GitHub Pages frontend that reads `live-config.json` for the current live backend URL.
 
-## Notes
-- Destructive DB actions require explicit confirmation text in the UI.
-- Keep this panel behind trusted network access and strong credentials.
-- Bot inventory/channels are fetched via Discord REST with each bot token.
-- If a token is missing, that bot still appears in the dashboard but Discord inventory calls are disabled.
-- The GitHub Pages site is a static front-end. It still needs a public SwarmPanel backend URL to talk to.
+## Main Surfaces
+
+- **Dashboard:** fleet status, health summaries, queue state, heartbeat checks, and active warnings.
+- **Bots:** per-node command controls, current playback, guild/channel inventory, and Lavalink-backed playback state.
+- **Medic:** Aria-reported drift, stale nodes, recovery candidates, and voice connection trouble.
+- **Database:** schema browser, guarded table reads, guarded truncation, and owner-only destructive controls.
+- **Users:** profile directory, social actions, presence, messaging, follows, and friend request flows.
+- **Appearance:** theme customization, density choices, accent controls, light and dark modes, and live panel previews.
+
+## Servers And Data
+
+- Frontend: React and Vite, deployable to GitHub Pages.
+- Backend: FastAPI app served from `app.main`.
+- Database: MySQL schemas for panel accounts, Aria telemetry, and each music bot queue.
+- Bot network: 12 Discord music bots plus Aria.
+- Audio control: Lavalink-backed bots with panel-issued command requests.
+- Operator alerts: Telegram bridge for scoped health and database notices.
+
+## Guardrails
+
+- Destructive database actions require explicit owner confirmation.
+- Secrets belong in ignored environment files, never in committed code.
+- Admin mode is treated as owner-only authority, not a regular user feature.
+- External bot tokens are not surfaced in the frontend or README.
+- Queue and Medic data should be treated as operational telemetry, not decoration.
+
+## Copyright
+
+(c) HeavenlyXenusVR. Discord: <https://discord.com/users/1304564041863266347>

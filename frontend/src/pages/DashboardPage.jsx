@@ -109,7 +109,7 @@ export default function DashboardPage({ ctx }) {
         <Metric icon={Siren} label="Stale Nodes" value={stale} />
         <Metric icon={ListMusic} label="Queued" value={sessions.reduce((sum, item) => sum + Number(item.queue_count || 0), 0)} />
         <Metric icon={ListMusic} label="Backup Queue" value={backupQueued} />
-        {ctx.isAdmin && telegram ? <Metric icon={MessageCircle} label="Telegram Live" value={telegram.running ? 1 : 0} /> : null}
+        {ctx.isAdmin && telegram ? <Metric icon={MessageCircle} label="Telegram" value={telegram.running ? 1 : 0} /> : null}
       </MetricGrid>
       {ctx.isAdmin && telegram ? (
         <Notice tone={telegram.running ? "info" : "error"}>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { RotateCcw, Save, SlidersHorizontal } from "lucide-react";
+import { Activity, Bot, Database, HeartPulse, Play, RotateCcw, Save, SlidersHorizontal } from "lucide-react";
 import { apiFetch, clearCache } from "../api.js";
 import { DEFAULT_PREFERENCES } from "../config.js";
 import { Choice, Page } from "../components/ui.jsx";
@@ -63,11 +63,27 @@ export default function AppearancePage({ ctx }) {
         </form>
         <aside className={`panel appearance-preview panel-shape-${draft.card_shape || "soft"} panel-density-${draft.density || "comfortable"} panel-tabs-${draft.tab_style || "pills"}`} style={panelStyle(draft)}>
           <div className="preview-topline"><span /> <strong>SwarmPanel</strong></div>
-          <div className="preview-tabs"><span>Live</span><span>Queues</span><span>Medic</span></div>
-          <div className="preview-card">
-            <strong>{draft.stream_card_style === "cinematic" ? "Cinematic stream" : draft.stream_card_style === "compact" ? "Compact stream" : "Editorial stream"}</strong>
-            <p>{draft.profile_layout || "spotlight"} profile / {draft.directory_layout || "grid"} directory</p>
-            <div className="chip-row"><span>{draft.theme_mode || "dark"}</span><span>{draft.layout_mode || "standard"}</span><span>{Math.round((draft.surface_opacity ?? 0.92) * 100)}%</span></div>
+          <div className="preview-tabs"><span>Live</span><span>Queues</span><span>Medic</span><span>Owner</span></div>
+          <div className="command-preview-grid">
+            <article className="preview-card command-preview-primary">
+              <div><Bot size={18} /><strong>{draft.stream_card_style === "cinematic" ? "Cinematic Fleet" : draft.stream_card_style === "compact" ? "Compact Fleet" : "Editorial Fleet"}</strong></div>
+              <p>12 bots / Lavalink online / Aria watching recovery</p>
+              <div className="preview-meter"><span style={{ width: draft.dashboard_density === "compact" ? "62%" : "82%" }} /></div>
+            </article>
+            <article className="preview-card">
+              <div><Play size={18} /><strong>Queue Health</strong></div>
+              <p>{draft.profile_layout || "spotlight"} profiles / {draft.directory_layout || "grid"} directory</p>
+              <div className="chip-row"><span>{draft.theme_mode || "dark"}</span><span>{draft.layout_mode || "standard"}</span><span>{Math.round((draft.surface_opacity ?? 0.92) * 100)}%</span></div>
+            </article>
+            <article className="preview-card mini">
+              <HeartPulse size={18} /><strong>Medic</strong><span>stable</span>
+            </article>
+            <article className="preview-card mini">
+              <Database size={18} /><strong>DB</strong><span>writing</span>
+            </article>
+            <article className="preview-card mini">
+              <Activity size={18} /><strong>Logs</strong><span>live</span>
+            </article>
           </div>
         </aside>
       </section>

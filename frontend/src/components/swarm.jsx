@@ -5,6 +5,16 @@ import { apiFetch, clearCache } from "../api.js";
 import { EmptyState, Notice } from "./ui.jsx";
 import { formatCell, formatTime, initials, pick, unique } from "../utils/format.js";
 
+export function PresencePill({ user, compact = false }) {
+  const online = Boolean(user?.is_online);
+  return (
+    <span className={`presence-pill ${online ? "online" : "inactive"} ${compact ? "compact" : ""}`}>
+      <span className="presence-dot" aria-hidden="true" />
+      {online ? "Online" : "Inactive"}
+    </span>
+  );
+}
+
 function bestSession(bot) {
   const sessions = bot.sessions || [];
   return sessions.find((session) => session.is_playing) || sessions[0] || null;
@@ -107,9 +117,10 @@ export function UserCard({ user, ctx, onChanged }) {
   }
   return (
     <article className="user-card">
-      <Link className="avatar-link" to={profilePath}><div className="avatar">{imageUrl ? <img src={imageUrl} alt="" loading="lazy" decoding="async" /> : initials(user.display_name || user.username)}</div></Link>
+      <Link className="avatar-link" to={profilePath}><div className="avatar avatar-presence">{imageUrl ? <img src={imageUrl} alt="" loading="lazy" decoding="async" /> : initials(user.display_name || user.username)}<span className={`presence-dot avatar-dot ${user.is_online ? "online" : "inactive"}`} aria-hidden="true" /></div></Link>
       <div>
         <Link to={profilePath}><h3>{user.display_name || user.username}</h3></Link>
+        <PresencePill user={user} compact />
         <p>@{user.username} / {user.server_name || `Guild ${user.guild_id}`}</p>
         <div className="chip-row"><span>{user.favorite_bot || "no favorite"}</span><span>{user.follower_count || 0} followers</span><span>{user.friend_count || 0} friends</span></div>
       </div>
