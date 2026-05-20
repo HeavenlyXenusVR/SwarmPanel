@@ -86,6 +86,8 @@ export function InviteCard({ bot }) {
 
 export function UserCard({ user, ctx, onChanged }) {
   const imageUrl = user.avatar_url || user.server_icon_url || "";
+  const accountId = user.id || user.account_id || user.user_id;
+  const profilePath = accountId ? `/users/${accountId}` : "/users";
   async function follow() {
     try {
       await apiFetch(`/api/users/${user.id}/follow`, { method: "POST", body: JSON.stringify({ following: !user.followed_by_me }) });
@@ -105,16 +107,17 @@ export function UserCard({ user, ctx, onChanged }) {
   }
   return (
     <article className="user-card">
-      <div className="avatar">{imageUrl ? <img src={imageUrl} alt="" loading="lazy" decoding="async" /> : initials(user.display_name || user.username)}</div>
+      <Link className="avatar-link" to={profilePath}><div className="avatar">{imageUrl ? <img src={imageUrl} alt="" loading="lazy" decoding="async" /> : initials(user.display_name || user.username)}</div></Link>
       <div>
-        <h3>{user.display_name || user.username}</h3>
+        <Link to={profilePath}><h3>{user.display_name || user.username}</h3></Link>
         <p>@{user.username} / {user.server_name || `Guild ${user.guild_id}`}</p>
-        <div className="chip-row"><span>{user.favorite_bot || "no favorite"}</span><span>{user.public_profile === false ? "private" : "public"}</span></div>
+        <div className="chip-row"><span>{user.favorite_bot || "no favorite"}</span><span>{user.follower_count || 0} followers</span><span>{user.friend_count || 0} friends</span></div>
       </div>
       {ctx ? (
         <div className="inline-controls">
+          <Link className="button-link" to={profilePath}>Open</Link>
           <button type="button" onClick={follow}><Heart size={16} />{user.followed_by_me ? "Unfollow" : "Follow"}</button>
-          <button type="button" onClick={friend}><UserPlus size={16} />Friend</button>
+          <button type="button" onClick={friend} disabled={["friends", "pending_out", "self"].includes(user.friend_status)}><UserPlus size={16} />{user.friend_status === "friends" ? "Friends" : user.friend_status === "pending_out" ? "Pending" : "Friend"}</button>
           <Link className="button-link" to="/messages" state={{ user }}><MessageCircle size={16} />Message</Link>
         </div>
       ) : null}

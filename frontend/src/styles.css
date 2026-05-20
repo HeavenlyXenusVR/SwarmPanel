@@ -842,6 +842,11 @@ textarea:focus {
   object-fit: cover;
 }
 
+.avatar-link {
+  color: inherit;
+  text-decoration: none;
+}
+
 .user-card {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
@@ -897,6 +902,128 @@ textarea:focus {
 
 .profile-preview p {
   margin: 4px 0 0;
+}
+
+.public-profile-hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  min-height: 210px;
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 24%, transparent), rgba(27, 36, 50, 0.64)),
+    #101720;
+}
+
+.public-profile-banner-image {
+  background:
+    linear-gradient(90deg, rgba(9, 12, 18, 0.82), rgba(9, 12, 18, 0.22)),
+    var(--profile-banner-url),
+    #101720;
+  background-size: cover;
+  background-position: center;
+}
+
+.public-profile-banner-signal {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 28%, transparent), transparent 58%),
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.05), rgba(255,255,255,0.05) 1px, transparent 1px, transparent 18px),
+    #101720;
+}
+
+.public-profile-banner-quiet {
+  background: #101720;
+}
+
+.public-profile-banner-contrast {
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--line-strong));
+}
+
+.profile-avatar-xl {
+  width: 88px;
+  height: 88px;
+  font-size: 1.45rem;
+}
+
+.public-profile-copy {
+  min-width: 0;
+}
+
+.public-profile-copy h2 {
+  margin: 0;
+  font-size: clamp(1.5rem, 2.3vw, 2.4rem);
+}
+
+.public-profile-copy p {
+  max-width: 720px;
+  color: var(--muted);
+}
+
+.public-profile-actions,
+.profile-link-list {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.profile-link-list a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  text-decoration: none;
+  background: #101720;
+}
+
+.link-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.profile-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.profile-stat-panel {
+  display: grid;
+  gap: 3px;
+}
+
+.profile-stat-panel strong {
+  font-size: 1.6rem;
+}
+
+.profile-stat-panel span {
+  color: var(--muted);
+}
+
+.profile-social-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.42fr);
+}
+
+.compact-events {
+  gap: 8px;
+}
+
+.public-profile-card-glass {
+  background-color: rgba(16, 23, 32, 0.78);
+  backdrop-filter: blur(16px);
+}
+
+.public-profile-card-outline {
+  background-color: transparent;
+  box-shadow: none;
+}
+
+.public-profile-card-terminal {
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .table-wrap {
@@ -1131,6 +1258,7 @@ th {
 .panel-theme-light .bot-card,
 .panel-theme-light .invite-card,
 .panel-theme-light .event,
+.panel-theme-light .public-profile-hero,
 .panel-theme-light .notice,
 .panel-theme-light .empty-state,
 .panel-theme-light .auth-card {
@@ -1139,6 +1267,7 @@ th {
 
 .panel-theme-light .chip-row span,
 .panel-theme-light .profile-preview,
+.panel-theme-light .profile-link-list a,
 .panel-theme-light .table-wrap,
 .panel-theme-light .live-defaults,
 .panel-theme-light .json-panel,
@@ -1162,6 +1291,7 @@ th {
   .panel-theme-system .bot-card,
   .panel-theme-system .invite-card,
   .panel-theme-system .event,
+  .panel-theme-system .public-profile-hero,
   .panel-theme-system .notice,
   .panel-theme-system .empty-state,
   .panel-theme-system .auth-card {
@@ -1170,6 +1300,7 @@ th {
 
   .panel-theme-system .chip-row span,
   .panel-theme-system .profile-preview,
+  .panel-theme-system .profile-link-list a,
   .panel-theme-system .table-wrap,
   .panel-theme-system .live-defaults,
   .panel-theme-system .json-panel,
@@ -1484,11 +1615,14 @@ th {
   .user-grid,
   .user-grid-magazine,
   .user-grid-stack,
+  .profile-dashboard-grid,
+  .profile-social-layout,
   .skeleton-grid {
     grid-template-columns: 1fr;
   }
 
-  .user-card {
+  .user-card,
+  .public-profile-hero {
     grid-template-columns: 1fr;
   }
 

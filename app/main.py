@@ -128,6 +128,9 @@ PANEL_DIRECTORY_LAYOUT_MODES = {"grid", "magazine", "stack"}
 PANEL_TAB_STYLE_MODES = {"pills", "underline", "minimal"}
 PANEL_STREAM_CARD_MODES = {"editorial", "compact", "cinematic"}
 PANEL_DASHBOARD_DENSITY_MODES = {"comfortable", "compact"}
+PROFILE_BANNER_MODES = {"gradient", "image", "signal", "quiet", "contrast"}
+PROFILE_CARD_STYLES = {"solid", "glass", "outline", "terminal"}
+PROFILE_SOCIAL_MODES = {"open", "friends", "quiet"}
 AUTH_RATE_BUCKETS: dict[str, list[float]] = {}
 DISCORD_INVITE_HOSTS = {
     "discord.gg",
@@ -536,6 +539,13 @@ class UserProfileUpdateRequest(BaseModel):
     display_name: str | None = None
     avatar_url: str | None = None
     bio: str | None = None
+    profile_headline: str | None = None
+    profile_tags: list[str] | None = None
+    profile_links: list[dict[str, str]] | None = None
+    profile_banner_url: str | None = None
+    profile_banner_mode: str | None = None
+    profile_card_style: str | None = None
+    profile_social_mode: str | None = None
     favorite_bot: str | None = None
     theme_accent: str | None = None
     public_profile: bool | None = None
@@ -849,6 +859,31 @@ def _clean_profile_updates(payload: UserProfileUpdateRequest) -> dict[str, Any]:
             updates[key] = _normalize_public_url(value, "Avatar URL")
         elif key == "bio":
             updates[key] = _normalize_optional_text(value, "Bio", 280)
+        elif key == "profile_headline":
+            updates[key] = _normalize_optional_text(value, "Profile headline", 140)
+        elif key == "profile_tags":
+            clean_tags = []
+            for raw_tag in value or []:
+                tag = re.sub(r"[^A-Za-z0-9_.-]+", "", str(raw_tag or "").strip())[:32]
+                if tag and tag.lower() not in {existing.lower() for existing in clean_tags}:
+                    clean_tags.append(tag)
+            updates[key] = json.dumps(clean_tags[:12], separators=(",", ":"))
+        elif key == "profile_links":
+            clean_links = []
+            for raw_link in value or []:
+                label = _normalize_optional_text((raw_link or {}).get("label"), "Link label", 32)
+                url = _normalize_public_url((raw_link or {}).get("url"), "Profile link", 600)
+                if label and url:
+                    clean_links.append({"label": label, "url": url})
+            updates[key] = json.dumps(clean_links[:5], separators=(",", ":"))
+        elif key == "profile_banner_url":
+            updates[key] = _normalize_public_url(value, "Profile banner URL")
+        elif key == "profile_banner_mode":
+            updates[key] = _normalize_choice(value, "Profile banner", PROFILE_BANNER_MODES, "gradient")
+        elif key == "profile_card_style":
+            updates[key] = _normalize_choice(value, "Profile card style", PROFILE_CARD_STYLES, "solid")
+        elif key == "profile_social_mode":
+            updates[key] = _normalize_choice(value, "Profile social mode", PROFILE_SOCIAL_MODES, "open")
         elif key == "favorite_bot":
             favorite = _normalize_optional_text(value, "Favorite bot", 50)
             if favorite and favorite not in BOT_INDEX:
@@ -1742,6 +1777,7 @@ async def api_user_profile_me(request: Request):
     profile = await db.get_account_profile(username, scoped_guild_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Account profile not found")
+    profile.update(await db.get_account_social_snapshot(int(profile["id"]), int(profile["id"])))
     profile["activity"] = (
         await db.get_music_activity_summary_for_guilds([scoped_guild_id])
     ).get(str(scoped_guild_id), db._empty_music_activity_summary())
@@ -1836,6 +1872,29 @@ async def api_user_directory(request: Request):
         viewer_id = None
     users = await db.search_account_profiles(query, limit, viewer_account_id=viewer_id)
     return {"ok": True, "query": query, "users": users, "limit": limit}
+
+
+@app.get("/api/users/{account_id}/profile")
+async def api_public_user_profile(account_id: int, request: Request):
+    auth = await _hydrate_site_owner_auth(request, _require_api_auth(request))
+    viewer_id = None
+    try:
+        viewer_id = await _account_id_for_auth(auth)
+    except Exception:
+        viewer_id = None
+    profile = await db.get_public_account_profile(account_id, viewer_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    friends = await db.list_account_friends(int(profile["id"])) if profile.get("profile_social_mode") != "quiet" else []
+    return {
+        "ok": True,
+        "profile": profile,
+        "friends": friends[:12],
+        "favorite_bot_options": [
+            {"key": bot.key, "display_name": bot.display_name, "kind": bot.kind}
+            for bot in ALL_BOTS
+        ],
+    }
 
 
 @app.post("/api/users/{account_id}/follow")

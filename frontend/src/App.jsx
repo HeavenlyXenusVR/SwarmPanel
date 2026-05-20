@@ -170,6 +170,7 @@ function App() {
           <Route path="/friends" element={<Protected ctx={ctx}><FriendsPage ctx={ctx} /></Protected>} />
           <Route path="/messages" element={<Protected ctx={ctx}><MessagesPage ctx={ctx} /></Protected>} />
           <Route path="/profile" element={<Protected ctx={ctx}><ProfilePage ctx={ctx} /></Protected>} />
+          <Route path="/users/:accountId" element={<Protected ctx={ctx}><ProfilePage ctx={ctx} /></Protected>} />
           <Route path="/appearance" element={<Protected ctx={ctx}><AppearancePage ctx={ctx} /></Protected>} />
           <Route path="/diagnostics" element={<Protected ctx={ctx} admin><DiagnosticsPage ctx={ctx} /></Protected>} />
           <Route path="/accounts" element={<Protected ctx={ctx} admin><AccountsPage ctx={ctx} /></Protected>} />
