@@ -1,9 +1,144 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Heart, MessageCircle, Music2, PlugZap, UserPlus } from "lucide-react";
 import { apiFetch, clearCache } from "../api.js";
 import { EmptyState, Notice } from "./ui.jsx";
-import { formatCell, formatTime, initials, pick, unique } from "../utils/format.js";
+import { formatCell, formatTime, initials, number, pick, titleCase, unique } from "../utils/format.js";
+
+const COLUMN_LABELS = {
+  account_id: "Account",
+  backup_queue_count: "Backup",
+  bot_display: "Bot",
+  bot_key: "Bot Key",
+  bot_name: "Bot",
+  channel_id: "Channel ID",
+  channel_name: "Channel",
+  created_at: "Created",
+  display_name: "Display Name",
+  favorite_bot: "Favorite Bot",
+  filter_mode: "Filter",
+  friend_count: "Friends",
+  guild_id: "Guild ID",
+  guild_name: "Guild",
+  heartbeat_status: "Heartbeat",
+  is_paused: "Paused",
+  is_playing: "Live",
+  last_checkpoint_at: "Checkpoint",
+  loop_mode: "Loop",
+  queue_count: "Queued",
+  thumbnail_url: "Artwork",
+  updated_at: "Updated",
+  user_id: "User ID",
+  username: "Handle",
+};
+
+function MediaImage({ src, className, alt = "", fallback }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) return fallback;
+  return (
+    <img
+      className={className}
+      src={src}
+      alt={alt}
+      loading="lazy"
+      decoding="async"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+export function IdentityAvatar({ src, label, online = false, className = "avatar", showPresence = true }) {
+  const avatarClassName = className.includes("avatar-presence") ? className : `${className} avatar-presence`;
+  return (
+    <div className={avatarClassName}>
+      <MediaImage
+        className="avatar-image"
+        src={src}
+        alt=""
+        fallback={<span className="avatar-fallback">{initials(label)}</span>}
+      />
+      {showPresence ? <span className={`presence-dot avatar-dot ${online ? "online" : "inactive"}`} aria-hidden="true" /> : null}
+    </div>
+  );
+}
+
+function playbackBadge(session, bot) {
+  if (session?.is_playing || session?.session_state === "playing") return { label: "Live", tone: "live" };
+  if (session?.is_paused || session?.session_state === "paused") return { label: "Paused", tone: "soft" };
+  if (String(bot?.heartbeat_status || bot?.status || "").toLowerCase().includes("stale") || String(bot?.status || "").toLowerCase() === "offline") {
+    return { label: "Stale", tone: "danger" };
+  }
+  return { label: "Idle", tone: "off" };
+}
+
+function safeBoolean(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value > 0;
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return false;
+  return ["1", "true", "yes", "playing", "online", "active", "enabled"].includes(normalized);
+}
+
+function labelForColumn(column) {
+  return COLUMN_LABELS[column] || titleCase(column);
+}
+
+function cellTone(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized || normalized === "none" || normalized === "idle" || normalized === "inactive" || normalized === "offline") return "off";
+  if (normalized.includes("error") || normalized.includes("failed") || normalized.includes("stale")) return "danger";
+  if (normalized.includes("online") || normalized.includes("playing") || normalized.includes("active") || normalized === "live") return "live";
+  return "soft";
+}
+
+function isNumericColumn(column, value) {
+  if (typeof value === "number") return true;
+  if (typeof value !== "string" || !/^-?\d+(\.\d+)?$/.test(value.trim())) return false;
+  return /count|plays|skips|likes|dislikes|followers|friends|guilds|queued|backup|finishes|position|seconds|duration|score|health/i.test(column);
+}
+
+function renderTableCell(column, value) {
+  if (value === null || value === undefined || value === "") return <span className="muted">-</span>;
+  if (Array.isArray(value)) {
+    return (
+      <div className="chip-row table-chip-row">
+        {value.slice(0, 4).map((item, index) => <span key={`${column}-${index}`}>{formatCell(item)}</span>)}
+        {value.length > 4 ? <span>+{value.length - 4}</span> : null}
+      </div>
+    );
+  }
+  if (typeof value === "object") {
+    return <pre className="table-code">{JSON.stringify(value, null, 2)}</pre>;
+  }
+  if (typeof value === "boolean" || column.startsWith("is_")) {
+    const active = safeBoolean(value);
+    const label = column === "is_playing" ? (active ? "Live" : "Idle") : column === "is_paused" ? (active ? "Paused" : "No") : (active ? "Yes" : "No");
+    return <span className={`data-pill data-pill-${active ? "live" : "off"}`}>{label}</span>;
+  }
+  if (column.endsWith("_at") || column.includes("timestamp")) {
+    return <time className="table-mono">{formatTime(value)}</time>;
+  }
+  if (typeof value === "string" && (column.endsWith("_id") || column === "schema")) {
+    return <code className="table-mono">{value}</code>;
+  }
+  if (typeof value === "string" && /(status|mode)/i.test(column)) {
+    return <span className={`data-pill data-pill-${cellTone(value)}`}>{titleCase(value)}</span>;
+  }
+  if (isNumericColumn(column, value)) {
+    return <span className="table-number">{number(value)}</span>;
+  }
+  if (typeof value === "string" && /(title|display_name|guild_name|channel_name|bot_name|headline|message|description)/i.test(column)) {
+    return <div className="table-rich"><strong>{value}</strong></div>;
+  }
+  return <span>{formatCell(value)}</span>;
+}
+
+function cellClassName(column) {
+  if (column.endsWith("_id") || column === "schema") return "table-cell-mono";
+  if (/title|description|message/i.test(column)) return "table-cell-wide";
+  if (/count|plays|skips|likes|dislikes|followers|friends|queued|backup/i.test(column)) return "table-cell-number";
+  return "";
+}
 
 export function PresencePill({ user, compact = false }) {
   const online = Boolean(user?.is_online);
@@ -25,13 +160,26 @@ export function BotCard({ bot }) {
   const session = bestSession(bot);
   const accent = bot.accent || "#89b4fa";
   const thumbnail = session?.thumbnail || session?.thumbnail_url || "";
+  const badge = playbackBadge(session, bot);
   return (
     <article className="bot-card" style={{ "--card-accent": accent }}>
-      <div className="bot-head"><span className="bot-dot" /><h3>{bot.display_name || bot.name || bot.key}</h3><small>{bot.heartbeat_status || bot.status || "unknown"}</small></div>
+      <div className="bot-head">
+        <span className="bot-dot" />
+        <div className="bot-head-copy">
+          <h3>{bot.display_name || bot.name || bot.key}</h3>
+          <small>{bot.heartbeat_status || bot.status || "telemetry ready"}</small>
+        </div>
+        <span className={`data-pill data-pill-${badge.tone}`}>{badge.label}</span>
+      </div>
       <div className="bot-now">
-        {thumbnail ? <img className="bot-thumb" src={thumbnail} alt="" loading="lazy" decoding="async" /> : <div className="bot-thumb bot-thumb-empty"><Music2 size={22} /></div>}
-        <div>
-          <p>{session?.title || bot.db_error || bot.schema || "Waiting for live playback."}</p>
+        <MediaImage
+          className="bot-thumb"
+          src={thumbnail}
+          alt=""
+          fallback={<div className="bot-thumb bot-thumb-empty"><Music2 size={22} /></div>}
+        />
+        <div className="bot-now-copy">
+          <strong>{session?.title || bot.db_error || bot.schema || "Waiting for live playback."}</strong>
           <small>{session?.guild_name || session?.channel_name || "Live state will fill in automatically."}</small>
         </div>
       </div>
@@ -98,6 +246,9 @@ export function UserCard({ user, ctx, onChanged }) {
   const imageUrl = user.avatar_url || user.server_icon_url || "";
   const accountId = user.id || user.account_id || user.user_id;
   const profilePath = accountId ? `/users/${accountId}` : "/users";
+  const displayName = user.display_name || user.username || "Unknown operator";
+  const guildLabel = user.server_name || user.profile_headline || (user.guild_id ? `Guild ${user.guild_id}` : "Swarm directory");
+  const favoriteBot = user.favorite_bot ? titleCase(user.favorite_bot) : "No favorite";
   async function follow() {
     try {
       await apiFetch(`/api/users/${user.id}/follow`, { method: "POST", body: JSON.stringify({ following: !user.followed_by_me }) });
@@ -117,15 +268,39 @@ export function UserCard({ user, ctx, onChanged }) {
   }
   return (
     <article className="user-card">
-      <Link className="avatar-link" to={profilePath}><div className="avatar avatar-presence">{imageUrl ? <img src={imageUrl} alt="" loading="lazy" decoding="async" /> : initials(user.display_name || user.username)}<span className={`presence-dot avatar-dot ${user.is_online ? "online" : "inactive"}`} aria-hidden="true" /></div></Link>
-      <div>
-        <Link to={profilePath}><h3>{user.display_name || user.username}</h3></Link>
-        <PresencePill user={user} compact />
-        <p>@{user.username} / {user.server_name || `Guild ${user.guild_id}`}</p>
-        <div className="chip-row"><span>{user.favorite_bot || "no favorite"}</span><span>{user.follower_count || 0} followers</span><span>{user.friend_count || 0} friends</span></div>
+      <div className="user-card-main">
+        <Link className="avatar-link" to={profilePath}>
+          <IdentityAvatar src={imageUrl} label={displayName} online={user.is_online} className="avatar avatar-lg avatar-presence" />
+        </Link>
+        <div className="user-card-copy">
+          <div className="user-card-head">
+            <Link to={profilePath}><h3>{displayName}</h3></Link>
+            <PresencePill user={user} compact />
+          </div>
+          <p className="user-card-handle">@{user.username || "operator"}</p>
+          <p className="user-card-guild">{guildLabel}</p>
+          <div className="chip-row user-card-tags">
+            <span>{favoriteBot}</span>
+            {user.server_name ? <span>{user.server_name}</span> : null}
+          </div>
+        </div>
+      </div>
+      <div className="user-card-stats">
+        <article>
+          <strong>{number(user.follower_count || 0)}</strong>
+          <span>Followers</span>
+        </article>
+        <article>
+          <strong>{number(user.friend_count || 0)}</strong>
+          <span>Friends</span>
+        </article>
+        <article>
+          <strong>{favoriteBot}</strong>
+          <span>Favorite Bot</span>
+        </article>
       </div>
       {ctx ? (
-        <div className="inline-controls">
+        <div className="inline-controls user-card-actions">
           <Link className="button-link" to={profilePath}>Open</Link>
           <button type="button" onClick={follow}><Heart size={16} />{user.followed_by_me ? "Unfollow" : "Follow"}</button>
           <button type="button" onClick={friend} disabled={["friends", "pending_out", "self"].includes(user.friend_status)}><UserPlus size={16} />{user.friend_status === "friends" ? "Friends" : user.friend_status === "pending_out" ? "Pending" : "Friend"}</button>
@@ -164,12 +339,12 @@ export function DataTable({ rows = [], actions }) {
   const columns = unique(rows.flatMap((row) => Object.keys(row))).filter((column) => !String(column).toLowerCase().includes("password_hash")).slice(0, 9);
   return (
     <div className="table-wrap">
-      <table>
-        <thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}{actions ? <th>Actions</th> : null}</tr></thead>
+      <table className="data-table">
+        <thead><tr>{columns.map((column) => <th className={cellClassName(column)} key={column}>{labelForColumn(column)}</th>)}{actions ? <th>Actions</th> : null}</tr></thead>
         <tbody>
           {rows.map((row, index) => (
             <tr key={row.id ?? `${index}-${JSON.stringify(row).slice(0, 20)}`}>
-              {columns.map((column) => <td key={column}>{formatCell(row[column])}</td>)}
+              {columns.map((column) => <td className={cellClassName(column)} key={column}>{renderTableCell(column, row[column])}</td>)}
               {actions ? <td>{actions(row)}</td> : null}
             </tr>
           ))}

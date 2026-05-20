@@ -18,9 +18,20 @@ export default function UsersPage({ ctx }) {
     return () => window.clearTimeout(timer);
   }, [ctx, q]);
   return (
-    <Page title="Swarm Directory" eyebrow="Users">
-      <div className="toolbar"><div className="search-box"><Search size={16} /><input value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search users, servers, favorite bots" /></div></div>
-      <div className={`user-grid ${directoryLayoutClass(ctx.preferences)}`}>{users.map((user) => <UserCard user={user} ctx={ctx} onChanged={loadUsers} key={`${user.username}-${user.guild_id}`} />)}</div>
+    <Page
+      title="Swarm Directory"
+      eyebrow="Users"
+      lede="Browse public identities, guild presence, favorite bots, and social links across the swarm."
+      className="page-users"
+    >
+      <div className="directory-toolbar">
+        <div className="search-box search-box-wide"><Search size={16} /><input value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search users, servers, favorite bots" /></div>
+        <div className="directory-summary">
+          <span>{users.length} visible</span>
+          <span>{q ? "filtered" : "all public"}</span>
+        </div>
+      </div>
+      <div className={`user-grid directory-grid ${directoryLayoutClass(ctx.preferences)}`}>{users.map((user) => <UserCard user={user} ctx={ctx} onChanged={loadUsers} key={`${user.username}-${user.guild_id}`} />)}</div>
       {!users.length ? <EmptyState title="No users found" /> : null}
     </Page>
   );

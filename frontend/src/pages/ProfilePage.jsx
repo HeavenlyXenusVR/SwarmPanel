@@ -3,8 +3,8 @@ import { Link, useParams } from "react-router-dom";
 import { Check, ExternalLink, Heart, KeyRound, Mail, MessageCircle, Music2, Save, ShieldCheck, UserPlus } from "lucide-react";
 import { apiFetch, cachedFetch, clearCache } from "../api.js";
 import { EmptyState, Page, SkeletonGrid } from "../components/ui.jsx";
-import { PresencePill } from "../components/swarm.jsx";
-import { initials, pick } from "../utils/format.js";
+import { IdentityAvatar, PresencePill } from "../components/swarm.jsx";
+import { pick } from "../utils/format.js";
 import { profileLayoutClass } from "../utils/control.js";
 
 function profileToForm(profile = {}) {
@@ -34,7 +34,7 @@ function formToPayload(form) {
 
 function ProfileAvatar({ profile }) {
   const src = profile?.avatar_url || profile?.server_icon_url;
-  return <div className="avatar profile-avatar-xl avatar-presence">{src ? <img src={src} alt="" loading="lazy" decoding="async" /> : initials(profile?.display_name || profile?.username || "SP")}<span className={`presence-dot avatar-dot ${profile?.is_online ? "online" : "inactive"}`} aria-hidden="true" /></div>;
+  return <IdentityAvatar src={src} label={profile?.display_name || profile?.username || "SP"} online={profile?.is_online} className="avatar profile-avatar-xl avatar-presence" />;
 }
 
 export default function ProfilePage({ ctx }) {
@@ -159,7 +159,12 @@ export default function ProfilePage({ ctx }) {
   };
 
   return (
-    <Page title={publicMode ? (profile.display_name || profile.username) : "Server Identity"} eyebrow={publicMode ? "Public Profile" : "Profile"}>
+    <Page
+      title={publicMode ? (profile.display_name || profile.username) : "Server Identity"}
+      eyebrow={publicMode ? "Public Profile" : "Profile"}
+      lede={publicMode ? "Public-facing profile card, live activity, and social links." : "Tune how your guild identity and activity appear across the swarm."}
+      className="page-profile"
+    >
       <section className={`panel public-profile-hero ${profileClasses}`} style={bannerStyle}>
         <ProfileAvatar profile={profile} />
         <div className="public-profile-copy">

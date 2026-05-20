@@ -13,11 +13,15 @@ export function Choice({ label, value, values, onChange }) {
   );
 }
 
-export function Page({ title, eyebrow, actions, children }) {
+export function Page({ title, eyebrow, lede = "", actions, className = "", children }) {
   return (
-    <div className="page">
+    <div className={`page ${className}`.trim()}>
       <header className="page-head">
-        <div><p>{eyebrow}</p><h1>{title}</h1></div>
+        <div>
+          <p>{eyebrow}</p>
+          <h1>{title}</h1>
+          {lede ? <span className="page-lede">{lede}</span> : null}
+        </div>
         {actions ? <div className="page-actions">{actions}</div> : null}
       </header>
       {children}

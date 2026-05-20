@@ -93,14 +93,22 @@ export default function DashboardPage({ ctx }) {
   const active = sessions.filter((session) => session.is_playing || session.session_state === "playing").length;
   const stale = bots.filter((bot) => String(bot.heartbeat_status || "").includes("stale") || bot.status === "offline").length;
   const backupQueued = sessions.reduce((sum, item) => sum + Number(item.backup_queue_count || 0), 0);
+  const totalQueued = sessions.reduce((sum, item) => sum + Number(item.queue_count || 0), 0);
   const isInitialLoad = state.loading && !bots.length;
   const telegram = state.telegram?.telegram;
+  const uniqueGuilds = new Set(sessions.map((session) => session.guild_id || session.guild_name).filter(Boolean)).size;
+  const spotlight = sessions.find((session) => session.is_playing || session.session_state === "playing") || sessions[0] || null;
+  const queueLeaders = [...sessions]
+    .sort((a, b) => (Number(b.queue_count || 0) + Number(b.backup_queue_count || 0)) - (Number(a.queue_count || 0) + Number(a.backup_queue_count || 0)))
+    .slice(0, 4);
 
   return (
     <Page
       title="Swarm Command Deck"
       eyebrow="Dashboard"
+      lede="Live fleet telemetry, queue pressure, and command-state visibility in one deck."
       actions={<button type="button" onClick={() => load()} disabled={state.refreshing}><RefreshCw size={16} />{state.refreshing ? "Updating" : "Refresh"}</button>}
+      className="page-dashboard"
     >
       {state.error ? <Notice tone="error">{state.error}</Notice> : null}
       <MetricGrid>
@@ -122,6 +130,51 @@ export default function DashboardPage({ ctx }) {
             <SectionHead title="Live Bots" count={bots.length} />
             <div className="bot-grid">
               {bots.map((bot) => <BotCard bot={bot} key={bot.key} />)}
+            </div>
+          </div>
+          <div className="panel dashboard-brief-panel">
+            <SectionHead title="Fleet Pulse" count={uniqueGuilds} />
+            <article className="dashboard-spotlight">
+              <span className="dashboard-eyebrow">{spotlight ? "Now steering" : "Standby"}</span>
+              <strong>{spotlight?.title || "No live playback right now."}</strong>
+              <p>{spotlight ? `${spotlight.bot_name || spotlight.bot_key || "Bot"} • ${spotlight.channel_name || spotlight.guild_name || "Voice channel"}` : "The deck will highlight the first active playback session here."}</p>
+              <div className="chip-row">
+                <span>{active} live</span>
+                <span>{uniqueGuilds} guilds</span>
+                <span>{totalQueued} queued</span>
+                <span>{backupQueued} backup</span>
+              </div>
+            </article>
+            <div className="dashboard-mini-metrics">
+              <article>
+                <span>Recovery Watch</span>
+                <strong>{stale}</strong>
+                <small>stale or offline nodes</small>
+              </article>
+              <article>
+                <span>Bridge</span>
+                <strong>{telegram?.running ? "Live" : "Idle"}</strong>
+                <small>{ctx.isAdmin && telegram?.bot_username ? `@${telegram.bot_username}` : "status relay"}</small>
+              </article>
+            </div>
+            <div className="dashboard-queue-leaders">
+              <div className="section-head"><h2>Queue Pressure</h2></div>
+              <div className="event-list compact-events">
+                {queueLeaders.map((session) => (
+                  <article className="event dashboard-queue-card" key={`${session.bot_name}-${session.guild_id}-${session.channel_name}`}>
+                    <div>
+                      <strong>{session.bot_name || session.bot_key || "Bot"}</strong>
+                      <small>{session.channel_name || session.guild_name || "voice"}</small>
+                    </div>
+                    <p>{session.title || "No title available"}</p>
+                    <div className="chip-row">
+                      <span>{Number(session.queue_count || 0)} queued</span>
+                      <span>{Number(session.backup_queue_count || 0)} backup</span>
+                    </div>
+                  </article>
+                ))}
+                {!queueLeaders.length ? <Notice tone="info">Queue pressure appears calm right now.</Notice> : null}
+              </div>
             </div>
           </div>
           <div className="panel">

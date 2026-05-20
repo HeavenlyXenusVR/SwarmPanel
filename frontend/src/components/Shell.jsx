@@ -20,12 +20,16 @@ import {
 export function Shell({ ctx, children }) {
   const location = useLocation();
   const authenticated = ctx.session.authenticated;
+  const username = ctx.session.username || "Operator";
   return (
     <>
       <header className="topbar">
         <Link className="brand" to="/">
           <span className="brand-mark"><Sparkles size={18} /></span>
-          <span>SwarmPanel</span>
+          <span className="brand-copy">
+            <strong>SwarmPanel</strong>
+            <small>Fleet Command</small>
+          </span>
         </Link>
         {authenticated ? (
           <nav className="nav" aria-label="Main">
@@ -49,12 +53,18 @@ export function Shell({ ctx, children }) {
             <>
               <span className={`mode-pill ${ctx.isAdmin ? "admin" : ""}`}>{ctx.isAdmin ? "Admin" : "User"}</span>
               {ctx.isOwner ? (
-                <label className="switch">
-                  <input type="checkbox" checked={ctx.isAdmin} onChange={(event) => ctx.switchAdminMode(event.target.checked)} />
-                  <span>Admin</span>
-                </label>
+                <button
+                  className={`mode-toggle ${ctx.isAdmin ? "active" : ""}`}
+                  type="button"
+                  onClick={() => ctx.switchAdminMode(!ctx.isAdmin)}
+                >
+                  {ctx.isAdmin ? "Admin On" : "Admin Off"}
+                </button>
               ) : null}
-              <Link className="profile-link" to="/profile">{ctx.session.username}</Link>
+              <Link className="profile-link" to="/profile">
+                <span className="profile-link-badge">{username.slice(0, 1).toUpperCase()}</span>
+                <span>{username}</span>
+              </Link>
               <button className="icon-button" type="button" onClick={ctx.logout} title="Logout"><LogOut size={18} /></button>
             </>
           ) : location.pathname !== "/login" ? (
@@ -64,7 +74,7 @@ export function Shell({ ctx, children }) {
       </header>
       <main className="stage">{children}</main>
       <footer className="site-footer">
-        <span>Copyright © HeavenlyXenusVR</span>
+        <span>SwarmPanel // HeavenlyXenusVR</span>
         <a href="https://discord.com/users/1304564041863266347" target="_blank" rel="noreferrer">Discord</a>
       </footer>
     </>
