@@ -1,7 +1,21 @@
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 from urllib.parse import urlencode
+
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover - dotenv is a runtime dependency, but keep imports resilient.
+    load_dotenv = None
+
+if load_dotenv:
+    _PANEL_ROOT = Path(__file__).resolve().parents[1]
+    _PROJECTS_ROOT = _PANEL_ROOT.parent
+    # BotDefinition values are created at import time, so the shared .env files
+    # must be loaded before _music_schema() reads per-bot DB overrides.
+    load_dotenv(_PANEL_ROOT / ".env", override=False)
+    load_dotenv(_PROJECTS_ROOT / "Music" / ".env", override=False)
 
 
 @dataclass(frozen=True)

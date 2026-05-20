@@ -1387,8 +1387,11 @@ async def lifespan(_: FastAPI):
             ("help", "Show available commands"),
         ],
     )
-    await telegram_service.start()
-    await _send_panel_telegram_alert("startup", "SwarmPanel online", "Telegram bridge and panel health watcher are running.")
+    if settings.telegram_polling_enabled:
+        await telegram_service.start()
+        await _send_panel_telegram_alert("startup", "SwarmPanel online", "Telegram bridge and panel health watcher are running.")
+    else:
+        action_logger.info("SwarmPanel Telegram polling is disabled by PANEL_TELEGRAM_POLLING_ENABLED.")
     yield
     if telegram_service:
         await telegram_service.close()
@@ -1600,7 +1603,13 @@ async def api_session_login(request: Request, payload: SessionLoginRequest):
     if auth["role"] == "admin":
         _set_admin_session(request, auth["username"])
     else:
-        _set_account_session(request, auth["username"], auth["guild_id"], site_owner=bool(auth.get("site_owner")))
+        _set_account_session(
+            request,
+            auth["username"],
+            auth["guild_id"],
+            admin_mode=bool(auth.get("admin_mode")),
+            site_owner=bool(auth.get("site_owner")),
+        )
     linked_guild_id = auth.get("guild_id") or (await _resolve_account_guild_id(auth, auth["username"]) if auth["role"] == "admin" else None)
     site_owner = bool(auth.get("site_owner"))
     token = issue_api_token(
@@ -2932,5 +2941,7 @@ async def command_worker():
     return
 
 def verify_token(token: str = Header(None)):
-    if token != os.getenv("PANEL_API_KEY"):
-        raise HTTPException(403,"Unauthorized")
+    expected = os.getenv("PANEL_API_KEY", "").strip()
+    if not expected or not secrets.compare_digest(str(token or ""), expected):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+    return True

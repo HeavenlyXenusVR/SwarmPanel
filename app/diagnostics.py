@@ -29,6 +29,7 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 MUSIC_PANEL_ACTIONS = [
     {"id": "PLAY", "label": "Queue track or playlist", "scope": "bot + guild + voice channel"},
+    {"id": "SMART_RECOMMEND", "label": "Queue a learned smart recommendation", "scope": "bot + guild + voice channel"},
     {"id": "PAUSE", "label": "Pause playback", "scope": "bot + guild"},
     {"id": "RESUME", "label": "Resume playback", "scope": "bot + guild"},
     {"id": "SKIP", "label": "Skip current track", "scope": "bot + guild"},
@@ -39,6 +40,7 @@ MUSIC_PANEL_ACTIONS = [
     {"id": "LOOP", "label": "Change loop mode", "scope": "bot + guild"},
     {"id": "FILTER", "label": "Apply audio filter", "scope": "bot + guild"},
     {"id": "SET_HOME", "label": "Set default home voice channel", "scope": "bot + guild + voice channel"},
+    {"id": "RECOVER", "label": "Ask the bot to recover a stalled session", "scope": "bot + guild"},
     {"id": "RESTART", "label": "Restart node", "scope": "bot"},
 ]
 
@@ -144,12 +146,27 @@ class RuntimeDiagnosticsService:
     def _music_env_config(self, bot_key: str, env_values: dict[str, str]) -> dict[str, Any]:
         prefix = bot_key.upper()
         return {
-            "token": env_values.get(f"{prefix}_DISCORD_TOKEN", ""),
-            "db_host": env_values.get(f"{prefix}_DB_HOST", "127.0.0.1"),
-            "db_user": env_values.get(f"{prefix}_DB_USER", "botuser"),
-            "db_password": env_values.get(f"{prefix}_DB_PASSWORD", ""),
-            "db_name": env_values.get(f"{prefix}_DB_NAME", f"discord_music_{bot_key}"),
-            "lavalink_password": env_values.get(f"{prefix}_LAVALINK_PASSWORD", ""),
+            "token": env_values.get(f"{prefix}_DISCORD_TOKEN") or env_values.get("DISCORD_TOKEN", ""),
+            "db_host": (
+                env_values.get(f"{prefix}_DB_HOST")
+                or env_values.get("DB_HOST")
+                or env_values.get("MYSQL_HOST")
+                or self.settings.db_host
+            ),
+            "db_user": (
+                env_values.get(f"{prefix}_DB_USER")
+                or env_values.get("DB_USER")
+                or env_values.get("MYSQL_USER")
+                or self.settings.db_user
+            ),
+            "db_password": (
+                env_values.get(f"{prefix}_DB_PASSWORD")
+                or env_values.get("DB_PASSWORD")
+                or env_values.get("MYSQL_PASSWORD")
+                or self.settings.db_password
+            ),
+            "db_name": env_values.get(f"{prefix}_DB_NAME") or f"discord_music_{bot_key}",
+            "lavalink_password": env_values.get(f"{prefix}_LAVALINK_PASSWORD") or env_values.get("LAVALINK_PASSWORD", ""),
         }
 
     def _aria_env_config(self, env_values: dict[str, str]) -> dict[str, Any]:
@@ -447,7 +464,7 @@ class RuntimeDiagnosticsService:
         for bot in MUSIC_BOTS:
             cfg = self._music_env_config(bot.key, env_values)
             bot_env_payloads[bot.key] = cfg
-            table_prefix = bot.key
+            table_prefix = bot.table_prefix or bot.key
             bot_tasks.append(
                 asyncio.gather(
                     self._probe_mysql(
