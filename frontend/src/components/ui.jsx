@@ -2,10 +2,11 @@ import { Lock, Sparkles } from "lucide-react";
 import { number, titleCase } from "../utils/format.js";
 
 export function Choice({ label, value, values, onChange }) {
+  const selected = values.includes(value) ? value : values[0];
   return (
     <label className="field">
       <span>{label}</span>
-      <select value={value || values[0]} onChange={(event) => onChange(event.target.value)}>
+      <select value={selected} onChange={(event) => onChange(event.target.value)}>
         {values.map((item) => <option key={item} value={item}>{titleCase(item)}</option>)}
       </select>
     </label>

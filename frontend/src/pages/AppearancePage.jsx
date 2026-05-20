@@ -46,13 +46,13 @@ export default function AppearancePage({ ctx }) {
             <Choice label="Cards" value={draft.card_shape} values={["soft", "crisp"]} onChange={(value) => update("card_shape", value)} />
             <Choice label="Font" value={draft.font_scale} values={["normal", "large", "dense"]} onChange={(value) => update("font_scale", value)} />
             <Choice label="Motion" value={draft.motion} values={["standard", "reduced"]} onChange={(value) => update("motion", value)} />
-            <Choice label="Tabs" value={draft.tab_style} values={["pills", "underline", "minimal"]} onChange={(value) => update("tab_style", value)} />
+            <Choice label="Tabs" value={draft.tab_style} values={["rail", "underline", "minimal"]} onChange={(value) => update("tab_style", value)} />
           </div>
           <div className="three-col">
-            <Choice label="Profile" value={draft.profile_layout} values={["spotlight", "studio", "compact"]} onChange={(value) => update("profile_layout", value)} />
-            <Choice label="Directory" value={draft.directory_layout} values={["grid", "magazine", "stack"]} onChange={(value) => update("directory_layout", value)} />
-            <Choice label="Streams" value={draft.stream_card_style} values={["editorial", "compact", "cinematic"]} onChange={(value) => update("stream_card_style", value)} />
-            <Choice label="Dashboard" value={draft.dashboard_density} values={["comfortable", "compact"]} onChange={(value) => update("dashboard_density", value)} />
+            <Choice label="Operator" value={draft.operator_layout} values={["command", "console", "compact"]} onChange={(value) => update("operator_layout", value)} />
+            <Choice label="Roster" value={draft.roster_layout} values={["cards", "signals", "ledger"]} onChange={(value) => update("roster_layout", value)} />
+            <Choice label="Bot Cards" value={draft.stream_card_style} values={["telemetry", "compact", "cinematic"]} onChange={(value) => update("stream_card_style", value)} />
+            <Choice label="Dashboard" value={draft.dashboard_density} values={["command", "dense"]} onChange={(value) => update("dashboard_density", value)} />
             <label className="field"><span>Opacity</span><input type="range" min="0.35" max="1" step="0.01" value={draft.surface_opacity ?? 0.92} onChange={(event) => update("surface_opacity", Number(event.target.value))} /></label>
             <label className="field"><span>Blur</span><input type="range" min="0" max="36" step="1" value={draft.surface_blur ?? 18} onChange={(event) => update("surface_blur", Number(event.target.value))} /></label>
           </div>
@@ -61,18 +61,18 @@ export default function AppearancePage({ ctx }) {
             <button type="button" onClick={reset}><RotateCcw size={16} />Reset</button>
           </div>
         </form>
-        <aside className={`panel appearance-preview panel-shape-${draft.card_shape || "soft"} panel-density-${draft.density || "comfortable"} panel-tabs-${draft.tab_style || "pills"}`} style={panelStyle(draft)}>
+        <aside className={`panel appearance-preview panel-shape-${draft.card_shape || "soft"} panel-density-${draft.density || "comfortable"} panel-tabs-${draft.tab_style || "rail"}`} style={panelStyle(draft)}>
           <div className="preview-topline"><span /> <strong>SwarmPanel</strong></div>
           <div className="preview-tabs"><span>Live</span><span>Queues</span><span>Medic</span><span>Owner</span></div>
           <div className="command-preview-grid">
             <article className="preview-card command-preview-primary">
-              <div><Bot size={18} /><strong>{draft.stream_card_style === "cinematic" ? "Cinematic Fleet" : draft.stream_card_style === "compact" ? "Compact Fleet" : "Editorial Fleet"}</strong></div>
+              <div><Bot size={18} /><strong>{draft.stream_card_style === "cinematic" ? "Cinematic Fleet" : draft.stream_card_style === "compact" ? "Compact Fleet" : "Telemetry Fleet"}</strong></div>
               <p>12 bots / Lavalink online / Aria watching recovery</p>
-              <div className="preview-meter"><span style={{ width: draft.dashboard_density === "compact" ? "62%" : "82%" }} /></div>
+              <div className="preview-meter"><span style={{ width: draft.dashboard_density === "dense" ? "62%" : "82%" }} /></div>
             </article>
             <article className="preview-card">
               <div><Play size={18} /><strong>Queue Health</strong></div>
-              <p>{draft.profile_layout || "spotlight"} profiles / {draft.directory_layout || "grid"} directory</p>
+              <p>{draft.operator_layout || "command"} operator / {draft.roster_layout || "cards"} roster</p>
               <div className="chip-row"><span>{draft.theme_mode || "dark"}</span><span>{draft.layout_mode || "standard"}</span><span>{Math.round((draft.surface_opacity ?? 0.92) * 100)}%</span></div>
             </article>
             <article className="preview-card mini">

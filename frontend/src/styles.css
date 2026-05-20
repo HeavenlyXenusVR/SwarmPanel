@@ -1,14 +1,14 @@
 :root {
   color-scheme: dark;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #0d1117;
+  background: #090d0f;
   color: #edf3fb;
-  --bg: #0d1117;
-  --panel: #151b24;
-  --panel-2: #1c2430;
-  --panel-3: #253040;
-  --line: #2f3b4c;
-  --line-strong: #46566b;
+  --bg: #090d0f;
+  --panel: #11171b;
+  --panel-2: #182127;
+  --panel-3: #223039;
+  --line: #304047;
+  --line-strong: #50656c;
   --text: #edf3fb;
   --muted: #9eabbc;
   --muted-2: #728094;
@@ -16,7 +16,7 @@
   --ok: #7ee787;
   --warn: #ffd166;
   --danger: #ff6b6b;
-  --radius: 8px;
+  --radius: 6px;
   --surface-opacity: 0.92;
   --surface-blur: 18px;
   --shadow: 0 18px 56px rgba(0, 0, 0, 0.3);
@@ -43,8 +43,9 @@ body {
   margin: 0;
   overflow-x: hidden;
   background:
-    radial-gradient(circle at 20% 0%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 36rem),
-    linear-gradient(180deg, rgba(20, 28, 38, 0.82), transparent 24rem),
+    repeating-linear-gradient(90deg, rgba(137, 180, 250, 0.045) 0 1px, transparent 1px 72px),
+    repeating-linear-gradient(0deg, rgba(126, 231, 135, 0.035) 0 1px, transparent 1px 72px),
+    linear-gradient(180deg, rgba(18, 26, 28, 0.92), transparent 24rem),
     var(--bg);
   color: var(--text);
 }
@@ -128,7 +129,8 @@ a {
   z-index: -1;
   pointer-events: none;
   background-image:
-    linear-gradient(180deg, rgba(13, 17, 23, 0.72), rgba(13, 17, 23, 0.94)),
+    linear-gradient(180deg, rgba(7, 10, 12, 0.7), rgba(7, 10, 12, 0.94)),
+    linear-gradient(115deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent 34rem),
     var(--panel-bg-image);
   background-position: center;
   background-size: cover;
@@ -246,8 +248,10 @@ a {
   align-items: center;
   gap: 14px;
   padding: 12px 18px;
-  border-bottom: 1px solid rgba(68, 84, 106, 0.48);
-  background: rgba(13, 17, 23, 0.9);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 26%, rgba(68, 84, 106, 0.48));
+  background:
+    linear-gradient(90deg, rgba(126, 231, 135, 0.06), transparent 38%),
+    rgba(7, 10, 12, 0.94);
   backdrop-filter: blur(var(--surface-blur));
 }
 
@@ -265,9 +269,10 @@ a {
   place-items: center;
   width: 34px;
   height: 34px;
-  border-radius: var(--radius);
+  border-radius: 4px;
   color: #06090d;
-  background: linear-gradient(135deg, var(--accent), #7ee787);
+  background: linear-gradient(135deg, #7ee787, var(--accent) 58%, #ffd166);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22), 0 0 22px color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
 .nav {
@@ -288,7 +293,9 @@ a {
 .nav-item.active {
   color: var(--text);
   border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
-  background: #202b39;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 15%, transparent), transparent),
+    #172126;
 }
 
 .panel-tabs-underline .nav-item {
@@ -459,7 +466,9 @@ a {
 .auth-card {
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: rgba(21, 27, 36, var(--surface-opacity));
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 64%),
+    rgba(17, 23, 27, var(--surface-opacity));
   box-shadow: var(--shadow);
   transition: border-color var(--motion-med), box-shadow var(--motion-med), transform var(--motion-med);
 }
@@ -478,7 +487,7 @@ a {
   align-items: start;
 }
 
-.dashboard-density-compact,
+.dashboard-density-dense,
 .panel-density-compact .dashboard-grid,
 .panel-density-compact .bot-grid,
 .panel-density-compact .metric-grid,
@@ -920,23 +929,28 @@ textarea:focus {
   align-items: center;
 }
 
+.roster-layout-signals,
 .user-grid-magazine {
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
 }
 
+.roster-layout-signals .user-card,
 .user-grid-magazine .user-card {
   grid-template-columns: auto minmax(0, 1fr);
   min-height: 156px;
 }
 
+.roster-layout-ledger,
 .user-grid-stack {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.roster-layout-ledger .user-card,
 .user-grid-stack .user-card {
   grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
+.roster-layout-ledger .inline-controls,
 .user-grid-stack .inline-controls {
   justify-content: flex-end;
 }
@@ -952,18 +966,22 @@ textarea:focus {
   background: #101720;
 }
 
+.operator-layout-console,
 .profile-layout-studio {
   grid-template-columns: minmax(0, 1fr) minmax(320px, 0.42fr);
 }
 
+.operator-layout-console .profile-editor,
 .profile-layout-studio .profile-editor {
   min-height: 520px;
 }
 
+.operator-layout-compact,
 .profile-layout-compact {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.operator-layout-compact .profile-preview,
 .profile-layout-compact .profile-preview {
   grid-template-columns: auto minmax(0, 1fr) auto;
 }
@@ -1728,6 +1746,8 @@ th {
   .bot-grid,
   .invite-grid,
   .user-grid,
+  .roster-layout-signals,
+  .roster-layout-ledger,
   .user-grid-magazine,
   .user-grid-stack,
   .profile-dashboard-grid,

@@ -9,13 +9,13 @@ export const DEFAULT_PREFERENCES = {
   card_shape: "soft",
   font_scale: "normal",
   motion: "standard",
-  profile_layout: "spotlight",
-  directory_layout: "grid",
-  tab_style: "pills",
+  operator_layout: "command",
+  roster_layout: "cards",
+  tab_style: "rail",
   surface_opacity: 0.92,
   surface_blur: 18,
-  stream_card_style: "editorial",
-  dashboard_density: "comfortable",
+  stream_card_style: "telemetry",
+  dashboard_density: "command",
 };
 
 export const CONTROL_ACTIONS = [

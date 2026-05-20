@@ -117,7 +117,7 @@ export default function DashboardPage({ ctx }) {
         </Notice>
       ) : null}
       {isInitialLoad ? <SkeletonGrid count={6} /> : (
-        <section className={`dashboard-grid dashboard-density-${ctx.preferences.dashboard_density || "comfortable"} stream-card-${ctx.preferences.stream_card_style || "editorial"}`} aria-busy={state.refreshing ? "true" : "false"}>
+        <section className={`dashboard-grid dashboard-density-${ctx.preferences.dashboard_density || "command"} stream-card-${ctx.preferences.stream_card_style || "telemetry"}`} aria-busy={state.refreshing ? "true" : "false"}>
           <div className="panel wide live-bots-panel">
             <SectionHead title="Live Bots" count={bots.length} />
             <div className="bot-grid">

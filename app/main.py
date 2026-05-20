@@ -123,11 +123,18 @@ PANEL_DENSITY_MODES = {"comfortable", "compact"}
 PANEL_SHAPE_MODES = {"soft", "crisp"}
 PANEL_FONT_MODES = {"normal", "large", "dense"}
 PANEL_MOTION_MODES = {"standard", "reduced"}
-PANEL_PROFILE_LAYOUT_MODES = {"spotlight", "studio", "compact"}
-PANEL_DIRECTORY_LAYOUT_MODES = {"grid", "magazine", "stack"}
-PANEL_TAB_STYLE_MODES = {"pills", "underline", "minimal"}
-PANEL_STREAM_CARD_MODES = {"editorial", "compact", "cinematic"}
-PANEL_DASHBOARD_DENSITY_MODES = {"comfortable", "compact"}
+PANEL_OPERATOR_LAYOUT_MODES = {"command", "console", "compact"}
+PANEL_ROSTER_LAYOUT_MODES = {"cards", "signals", "ledger"}
+PANEL_TAB_STYLE_MODES = {"rail", "underline", "minimal"}
+PANEL_STREAM_CARD_MODES = {"telemetry", "compact", "cinematic"}
+PANEL_DASHBOARD_DENSITY_MODES = {"command", "dense"}
+PANEL_LOOK_ALIASES = {
+    "operator_layout": {"spotlight": "command", "studio": "console"},
+    "roster_layout": {"grid": "cards", "magazine": "signals", "stack": "ledger"},
+    "tab_style": {"pills": "rail"},
+    "stream_card_style": {"editorial": "telemetry"},
+    "dashboard_density": {"comfortable": "command", "compact": "dense"},
+}
 PROFILE_BANNER_MODES = {"gradient", "image", "signal", "quiet", "contrast"}
 PROFILE_CARD_STYLES = {"solid", "glass", "outline", "terminal"}
 PROFILE_SOCIAL_MODES = {"open", "friends", "quiet"}
@@ -213,6 +220,15 @@ def _normalize_profile_accent(value: Any) -> str | None:
 
 def _normalize_choice(value: Any, field_name: str, allowed: set[str], default: str) -> str:
     choice = str(value or default).strip().lower()
+    if choice not in allowed:
+        raise ValueError(f"{field_name} must be one of: {', '.join(sorted(allowed))}")
+    return choice
+
+
+def _normalize_panel_look_choice(value: Any, field_name: str, key: str, allowed: set[str], default: str) -> str:
+    aliases = PANEL_LOOK_ALIASES.get(key, {})
+    choice = str(value or default).strip().lower()
+    choice = aliases.get(choice, choice)
     if choice not in allowed:
         raise ValueError(f"{field_name} must be one of: {', '.join(sorted(allowed))}")
     return choice
@@ -565,6 +581,8 @@ class PanelPreferencesUpdateRequest(BaseModel):
     card_shape: str | None = None
     font_scale: str | None = None
     motion: str | None = None
+    operator_layout: str | None = None
+    roster_layout: str | None = None
     profile_layout: str | None = None
     directory_layout: str | None = None
     tab_style: str | None = None
@@ -915,13 +933,13 @@ def _clean_panel_preferences(payload: PanelPreferencesUpdateRequest) -> dict[str
         "card_shape": "soft",
         "font_scale": "normal",
         "motion": "standard",
-        "profile_layout": "spotlight",
-        "directory_layout": "grid",
-        "tab_style": "pills",
+        "operator_layout": "command",
+        "roster_layout": "cards",
+        "tab_style": "rail",
         "surface_opacity": 0.92,
         "surface_blur": 18,
-        "stream_card_style": "editorial",
-        "dashboard_density": "comfortable",
+        "stream_card_style": "telemetry",
+        "dashboard_density": "command",
     }
     if "theme_mode" in raw:
         preferences["theme_mode"] = _normalize_choice(raw.get("theme_mode"), "Theme mode", PANEL_THEME_MODES, "dark")
@@ -943,12 +961,24 @@ def _clean_panel_preferences(payload: PanelPreferencesUpdateRequest) -> dict[str
         preferences["font_scale"] = _normalize_choice(raw.get("font_scale"), "Font scale", PANEL_FONT_MODES, "normal")
     if "motion" in raw:
         preferences["motion"] = _normalize_choice(raw.get("motion"), "Motion", PANEL_MOTION_MODES, "standard")
-    if "profile_layout" in raw:
-        preferences["profile_layout"] = _normalize_choice(raw.get("profile_layout"), "Profile layout", PANEL_PROFILE_LAYOUT_MODES, "spotlight")
-    if "directory_layout" in raw:
-        preferences["directory_layout"] = _normalize_choice(raw.get("directory_layout"), "Directory layout", PANEL_DIRECTORY_LAYOUT_MODES, "grid")
+    if "operator_layout" in raw or "profile_layout" in raw:
+        preferences["operator_layout"] = _normalize_panel_look_choice(
+            raw.get("operator_layout", raw.get("profile_layout")),
+            "Operator layout",
+            "operator_layout",
+            PANEL_OPERATOR_LAYOUT_MODES,
+            "command",
+        )
+    if "roster_layout" in raw or "directory_layout" in raw:
+        preferences["roster_layout"] = _normalize_panel_look_choice(
+            raw.get("roster_layout", raw.get("directory_layout")),
+            "Roster layout",
+            "roster_layout",
+            PANEL_ROSTER_LAYOUT_MODES,
+            "cards",
+        )
     if "tab_style" in raw:
-        preferences["tab_style"] = _normalize_choice(raw.get("tab_style"), "Tab style", PANEL_TAB_STYLE_MODES, "pills")
+        preferences["tab_style"] = _normalize_panel_look_choice(raw.get("tab_style"), "Tab style", "tab_style", PANEL_TAB_STYLE_MODES, "rail")
     if "surface_opacity" in raw:
         try:
             opacity = float(raw.get("surface_opacity"))
@@ -962,9 +992,21 @@ def _clean_panel_preferences(payload: PanelPreferencesUpdateRequest) -> dict[str
             raise ValueError("Surface blur must be an integer between 0 and 36") from None
         preferences["surface_blur"] = max(0, min(blur, 36))
     if "stream_card_style" in raw:
-        preferences["stream_card_style"] = _normalize_choice(raw.get("stream_card_style"), "Stream card style", PANEL_STREAM_CARD_MODES, "editorial")
+        preferences["stream_card_style"] = _normalize_panel_look_choice(
+            raw.get("stream_card_style"),
+            "Bot card style",
+            "stream_card_style",
+            PANEL_STREAM_CARD_MODES,
+            "telemetry",
+        )
     if "dashboard_density" in raw:
-        preferences["dashboard_density"] = _normalize_choice(raw.get("dashboard_density"), "Dashboard density", PANEL_DASHBOARD_DENSITY_MODES, "comfortable")
+        preferences["dashboard_density"] = _normalize_panel_look_choice(
+            raw.get("dashboard_density"),
+            "Dashboard density",
+            "dashboard_density",
+            PANEL_DASHBOARD_DENSITY_MODES,
+            "command",
+        )
     return preferences
 
 
@@ -1842,9 +1884,14 @@ async def api_user_panel_preferences(request: Request):
     profile = await db.get_account_profile(username, scoped_guild_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Account profile not found")
+    stored_preferences = profile.get("panel_preferences") or {}
+    try:
+        preferences = _clean_panel_preferences(PanelPreferencesUpdateRequest(**stored_preferences)) if stored_preferences else defaults
+    except Exception:
+        preferences = defaults
     return {
         "editable": True,
-        "preferences": {**defaults, **(profile.get("panel_preferences") or {})},
+        "preferences": preferences,
     }
 
 

@@ -15,15 +15,26 @@ const SAFE_CHOICES = {
   card_shape: new Set(["soft", "crisp"]),
   font_scale: new Set(["normal", "large", "dense"]),
   motion: new Set(["standard", "reduced"]),
-  profile_layout: new Set(["spotlight", "studio", "compact"]),
-  directory_layout: new Set(["grid", "magazine", "stack"]),
-  tab_style: new Set(["pills", "underline", "minimal"]),
-  stream_card_style: new Set(["editorial", "compact", "cinematic"]),
-  dashboard_density: new Set(["comfortable", "compact"]),
+  operator_layout: new Set(["command", "console", "compact"]),
+  roster_layout: new Set(["cards", "signals", "ledger"]),
+  tab_style: new Set(["rail", "underline", "minimal"]),
+  stream_card_style: new Set(["telemetry", "compact", "cinematic"]),
+  dashboard_density: new Set(["command", "dense"]),
 };
 
-function choice(preferences, key, fallback) {
-  const value = String(preferences?.[key] || fallback).trim().toLowerCase();
+const CHOICE_ALIASES = {
+  operator_layout: { spotlight: "command", studio: "console" },
+  roster_layout: { grid: "cards", magazine: "signals", stack: "ledger" },
+  tab_style: { pills: "rail" },
+  stream_card_style: { editorial: "telemetry" },
+  dashboard_density: { comfortable: "command", compact: "dense" },
+};
+
+function choice(preferences, key, fallback, legacyKey = "") {
+  const raw = preferences?.[key] ?? (legacyKey ? preferences?.[legacyKey] : undefined) ?? fallback;
+  const value = String(raw).trim().toLowerCase();
+  const aliased = CHOICE_ALIASES[key]?.[value] || value;
+  if (SAFE_CHOICES[key]?.has(aliased)) return aliased;
   return SAFE_CHOICES[key]?.has(value) ? value : fallback;
 }
 
@@ -85,9 +96,11 @@ export function panelClassName(preferences) {
     shape: choice(preferences, "card_shape", "soft"),
     font: choice(preferences, "font_scale", "normal"),
     motion: choice(preferences, "motion", "standard"),
-    tabs: choice(preferences, "tab_style", "pills"),
-    stream: choice(preferences, "stream_card_style", "editorial"),
-    dashboard: choice(preferences, "dashboard_density", "comfortable"),
+    operator: choice(preferences, "operator_layout", "command", "profile_layout"),
+    roster: choice(preferences, "roster_layout", "cards", "directory_layout"),
+    tabs: choice(preferences, "tab_style", "rail"),
+    stream: choice(preferences, "stream_card_style", "telemetry"),
+    dashboard: choice(preferences, "dashboard_density", "command"),
   };
   return [
     "app-shell",
@@ -98,6 +111,8 @@ export function panelClassName(preferences) {
     `panel-shape-${values.shape}`,
     `panel-font-${values.font}`,
     `panel-motion-${values.motion}`,
+    `panel-operator-${values.operator}`,
+    `panel-roster-${values.roster}`,
     `panel-tabs-${values.tabs}`,
     `panel-stream-${values.stream}`,
     `panel-dashboard-${values.dashboard}`,
@@ -105,9 +120,9 @@ export function panelClassName(preferences) {
 }
 
 export function profileLayoutClass(preferences) {
-  return `profile-layout-${choice(preferences, "profile_layout", "spotlight")}`;
+  return `operator-layout-${choice(preferences, "operator_layout", "command", "profile_layout")}`;
 }
 
 export function directoryLayoutClass(preferences) {
-  return `user-grid-${choice(preferences, "directory_layout", "grid")}`;
+  return `roster-layout-${choice(preferences, "roster_layout", "cards", "directory_layout")}`;
 }
