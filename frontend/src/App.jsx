@@ -30,12 +30,26 @@ import GalleryAdminPage from "./pages/GalleryAdminPage.jsx";
 import IntelPage from "./pages/IntelPage.jsx";
 import AuthPage from "./pages/AuthPage.jsx";
 
+const BOOT_TIPS = [
+  "Fleet Pulse now separates the current session lane from fleet-wide queue totals.",
+  "Dashboard snapshots keep loading behind the glass while the command deck initializes.",
+  "Saved homes, feedback channels, and queue defaults are prefetched during startup.",
+  "Admin mode unlocks diagnostics, account tools, and gallery command routing.",
+];
+
 function App() {
   const navigate = useNavigate();
   const [token, setToken] = useState(() => readToken());
   const [session, setSession] = useState({ authenticated: false, loading: true });
   const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
   const [toast, setToast] = useState(null);
+  const [bootPhase, setBootPhase] = useState("Authorizing operator");
+  const [bootTipIndex, setBootTipIndex] = useState(0);
+  const [bootDismissed, setBootDismissed] = useState(false);
+  const [bootLeaving, setBootLeaving] = useState(false);
+  const isAdmin = Boolean(session.admin_mode);
+  const isOwner = Boolean(session.site_owner);
+  const canGallery = Boolean(session.image_gallery_owner);
 
   const showToast = useCallback((message, tone = "info") => {
     setToast({ message, tone, id: Date.now() });
@@ -91,6 +105,62 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
+  useEffect(() => {
+    if (bootDismissed) return undefined;
+    const timer = window.setInterval(() => {
+      setBootTipIndex((current) => (current + 1) % BOOT_TIPS.length);
+    }, 3200);
+    return () => window.clearInterval(timer);
+  }, [bootDismissed]);
+
+  useEffect(() => {
+    if (bootDismissed || session.loading) {
+      if (session.loading) setBootPhase("Authorizing operator");
+      return undefined;
+    }
+    let cancelled = false;
+    const startedAt = Date.now();
+    const guildId = session.guild_id || session.account_guild_id;
+    const finishBoot = async () => {
+      const remaining = Math.max(0, 1550 - (Date.now() - startedAt));
+      if (remaining) {
+        await new Promise((resolve) => window.setTimeout(resolve, remaining));
+      }
+      if (cancelled) return;
+      setBootLeaving(true);
+      window.setTimeout(() => {
+        if (cancelled) return;
+        setBootDismissed(true);
+        setBootLeaving(false);
+      }, 420);
+    };
+
+    const primeDeck = async () => {
+      if (!session.authenticated || !token) {
+        setBootPhase("Opening guest deck");
+        await finishBoot();
+        return;
+      }
+      setBootPhase("Syncing fleet telemetry");
+      await Promise.allSettled([
+        cachedFetch("/api/users/preferences", { ttl: 30_000, staleTtl: 180_000, storage: "local" }),
+        cachedFetch("/api/bots", { ttl: 30_000, staleTtl: 180_000, storage: "local" }),
+        apiFetch("/api/dashboard"),
+        apiFetch("/api/users/me"),
+        apiFetch(`/api/music-intelligence${query({ guild_id: guildId, limit: 10 })}`),
+        isAdmin ? apiFetch("/api/telegram/status") : Promise.resolve(null),
+      ]);
+      if (cancelled) return;
+      setBootPhase("Projecting command deck");
+      await finishBoot();
+    };
+
+    primeDeck();
+    return () => {
+      cancelled = true;
+    };
+  }, [bootDismissed, isAdmin, session.account_guild_id, session.authenticated, session.guild_id, session.loading, token]);
+
   const loginWith = useCallback((payload) => {
     writeToken(payload.token);
     writeUsername(payload.username);
@@ -109,6 +179,10 @@ function App() {
       pages_public_url: payload.pages_public_url,
     });
     showToast(`Signed in as ${payload.username}.`, "success");
+    setBootDismissed(false);
+    setBootLeaving(false);
+    setBootPhase("Syncing fleet telemetry");
+    setBootTipIndex(0);
     navigate("/");
   }, [navigate, showToast]);
 
@@ -153,10 +227,10 @@ function App() {
     loadPreferences,
     switchAdminMode,
     showToast,
-    isAdmin: Boolean(session.admin_mode),
-    isOwner: Boolean(session.site_owner),
-    canGallery: Boolean(session.image_gallery_owner),
-  }), [loadPreferences, loadSession, loginWith, logout, preferences, session, showToast, switchAdminMode, token]);
+    isAdmin,
+    isOwner,
+    canGallery,
+  }), [canGallery, isAdmin, isOwner, loadPreferences, loadSession, loginWith, logout, preferences, session, showToast, switchAdminMode, token]);
 
   return (
     <div className={panelClassName(preferences)} style={panelStyle(preferences)}>
@@ -181,7 +255,68 @@ function App() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Shell>
+      {!bootDismissed ? (
+        <SwarmBootOverlay
+          authenticated={session.authenticated}
+          leaving={bootLeaving}
+          phase={bootPhase}
+          tip={BOOT_TIPS[bootTipIndex]}
+        />
+      ) : null}
       {toast ? <div className={`toast toast-${toast.tone}`}>{toast.message}</div> : null}
+    </div>
+  );
+}
+
+function SwarmBootOverlay({ phase, tip, authenticated, leaving }) {
+  return (
+    <div
+      aria-busy="true"
+      aria-live="polite"
+      className={`swarm-loading-screen ${leaving ? "is-leaving" : ""}`}
+      role="status"
+    >
+      <div className="swarm-loading-backdrop" />
+      <section className="swarm-loading-panel">
+        <div className="swarm-loading-hero">
+          <div className="swarm-loading-radar" aria-hidden="true">
+            <span className="swarm-loading-ring ring-a" />
+            <span className="swarm-loading-ring ring-b" />
+            <span className="swarm-loading-ring ring-c" />
+            <span className="swarm-loading-sweep" />
+            <span className="swarm-loading-core" />
+          </div>
+          <div className="swarm-loading-copy">
+            <span className="swarm-loading-kicker">SwarmPanel // Fleet Command</span>
+            <strong>{phase}</strong>
+            <p>
+              {authenticated
+                ? "Live controls, fleet pulse, and queue telemetry are loading behind the glass."
+                : "The panel shell is coming online and preparing a public deck."}
+            </p>
+          </div>
+        </div>
+        <div className="swarm-loading-status-grid">
+          <article>
+            <span>Session Link</span>
+            <strong>{authenticated ? "Authenticated" : "Guest Deck"}</strong>
+            <small>{authenticated ? "Command identity verified." : "Browsing without admin access."}</small>
+          </article>
+          <article>
+            <span>Telemetry</span>
+            <strong>Hydrating</strong>
+            <small>Bot state, session lanes, and cached cards are syncing now.</small>
+          </article>
+          <article>
+            <span>Tip Deck</span>
+            <strong>Rotating</strong>
+            <small>{tip}</small>
+          </article>
+        </div>
+        <div className="swarm-loading-progress" aria-hidden="true">
+          <span />
+        </div>
+      </section>
     </div>
   );
 }

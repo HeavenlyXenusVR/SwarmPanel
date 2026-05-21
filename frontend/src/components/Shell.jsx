@@ -54,6 +54,7 @@ export function Shell({ ctx, children }) {
               <span className={`mode-pill ${ctx.isAdmin ? "admin" : ""}`}>{ctx.isAdmin ? "Admin" : "User"}</span>
               {ctx.isOwner ? (
                 <button
+                  aria-label="Admin"
                   className={`mode-toggle ${ctx.isAdmin ? "active" : ""}`}
                   type="button"
                   onClick={() => ctx.switchAdminMode(!ctx.isAdmin)}

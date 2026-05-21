@@ -346,7 +346,7 @@ async function runAuthenticatedMock(browser, failures) {
   await expectVisible(page, "Lockhart");
   await click(page, "button", /Refresh|Updating/);
 
-  await page.getByLabel("Admin").click();
+  await page.getByRole("button", { name: /Admin/ }).click();
   await expectVisible(page, "Admin");
 
   await page.getByRole("link", { name: "Controls" }).click();

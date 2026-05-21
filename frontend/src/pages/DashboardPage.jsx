@@ -5,6 +5,7 @@ import { apiFetch, cachedFetch, prefetchFetch, query } from "../api.js";
 import { useLiveRefresh } from "../hooks/useLiveRefresh.js";
 import { BotCard, IntelligenceView, SessionTable } from "../components/swarm.jsx";
 import { Metric, MetricGrid, Notice, Page, SectionHead, SkeletonGrid } from "../components/ui.jsx";
+import { number } from "../utils/format.js";
 
 function mergeRowsByKey(previous = [], next = [], key = "key") {
   if (!Array.isArray(next) || next.length === 0) return Array.isArray(previous) ? previous : [];
@@ -98,9 +99,18 @@ export default function DashboardPage({ ctx }) {
   const telegram = state.telegram?.telegram;
   const uniqueGuilds = new Set(sessions.map((session) => session.guild_id || session.guild_name).filter(Boolean)).size;
   const spotlight = sessions.find((session) => session.is_playing || session.session_state === "playing") || sessions[0] || null;
+  const spotlightBot = spotlight ? bots.find((bot) => bot.key === spotlight.bot_key || bot.display_name === spotlight.bot_name) : null;
+  const spotlightQueued = Number(spotlight?.queue_count || 0);
+  const spotlightBackup = Number(spotlight?.backup_queue_count || 0);
+  const spotlightRoutes = Math.max(Number(spotlightBot?.known_guild_count || 0), spotlight?.guild_id ? 1 : 0);
+  const spotlightLiveSessions = Math.max(Number(spotlightBot?.active_playing_count || 0), spotlight && (spotlight.is_playing || spotlight.session_state === "playing") ? 1 : 0);
+  const fleetBacklog = totalQueued + backupQueued;
   const queueLeaders = [...sessions]
     .sort((a, b) => (Number(b.queue_count || 0) + Number(b.backup_queue_count || 0)) - (Number(a.queue_count || 0) + Number(a.backup_queue_count || 0)))
     .slice(0, 4);
+  const topQueueLoad = queueLeaders[0] ? Number(queueLeaders[0].queue_count || 0) + Number(queueLeaders[0].backup_queue_count || 0) : 0;
+  const topQueueLabel = queueLeaders[0]?.channel_name || queueLeaders[0]?.guild_name || "No lane";
+  const recoveryLabel = stale ? `${stale} nodes need attention` : "all nodes answering";
 
   return (
     <Page
@@ -133,23 +143,54 @@ export default function DashboardPage({ ctx }) {
             </div>
           </div>
           <div className="panel dashboard-brief-panel">
-            <SectionHead title="Fleet Pulse" count={uniqueGuilds} />
+            <SectionHead title="Fleet Pulse" count={active} />
             <article className="dashboard-spotlight">
-              <span className="dashboard-eyebrow">{spotlight ? "Now steering" : "Standby"}</span>
+              <div className="dashboard-spotlight-head">
+                <span className="dashboard-eyebrow">{spotlight ? "Now steering" : "Standby"}</span>
+                <span className={`dashboard-state-badge ${spotlight?.is_playing || spotlight?.session_state === "playing" ? "live" : "idle"}`}>
+                  {spotlight?.session_state_label || (spotlight?.is_paused ? "Paused" : spotlight ? "Ready" : "Idle")}
+                </span>
+              </div>
               <strong>{spotlight?.title || "No live playback right now."}</strong>
-              <p>{spotlight ? `${spotlight.bot_name || spotlight.bot_key || "Bot"} • ${spotlight.channel_name || spotlight.guild_name || "Voice channel"}` : "The deck will highlight the first active playback session here."}</p>
-              <div className="chip-row">
-                <span>{active} live</span>
-                <span>{uniqueGuilds} guilds</span>
-                <span>{totalQueued} queued</span>
-                <span>{backupQueued} backup</span>
+              <p>{spotlight ? `${spotlight.bot_name || spotlight.bot_key || "Bot"} routing ${spotlight.channel_name || spotlight.guild_name || "the current voice lane"}` : "The deck will highlight the first active playback lane here once a bot is live."}</p>
+              <div className="dashboard-spotlight-metrics">
+                <article>
+                  <span>Session Queue</span>
+                  <strong>{number(spotlightQueued)}</strong>
+                  <small>items in this lane</small>
+                </article>
+                <article>
+                  <span>Backup Lane</span>
+                  <strong>{number(spotlightBackup)}</strong>
+                  <small>recovery items parked</small>
+                </article>
+                <article>
+                  <span>Bot Reach</span>
+                  <strong>{number(spotlightRoutes)}</strong>
+                  <small>guild routes on this bot</small>
+                </article>
+                <article>
+                  <span>Bot Live</span>
+                  <strong>{number(spotlightLiveSessions)}</strong>
+                  <small>active sessions on this bot</small>
+                </article>
               </div>
             </article>
             <div className="dashboard-mini-metrics">
               <article>
+                <span>Fleet Live</span>
+                <strong>{number(active)}</strong>
+                <small>{number(uniqueGuilds)} guild routes carrying audio</small>
+              </article>
+              <article>
+                <span>Queue Pressure</span>
+                <strong>{number(fleetBacklog)}</strong>
+                <small>{topQueueLoad ? `${number(topQueueLoad)} heaviest on ${topQueueLabel}` : "queue pressure is calm"}</small>
+              </article>
+              <article>
                 <span>Recovery Watch</span>
-                <strong>{stale}</strong>
-                <small>stale or offline nodes</small>
+                <strong>{number(stale)}</strong>
+                <small>{recoveryLabel}</small>
               </article>
               <article>
                 <span>Bridge</span>
