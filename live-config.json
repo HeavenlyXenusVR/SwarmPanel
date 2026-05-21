@@ -1,6 +1,6 @@
 {
-  "panel_url": "https://forecasts-lets-effect-gordon.trycloudflare.com",
+  "panel_url": "https://manga-partial-manufacturing-bali.trycloudflare.com",
   "status": "live",
-  "local_urls": ["http://127.0.0.1:8000", "http://localhost:8000", "http://192.168.12.187:8000"],
-  "updated_at": "2026-05-20T20:09:22-05:00"
+  "local_urls": ["http://127.0.0.1:8000", "http://localhost:8000", "http://172.20.10.3:8000"],
+  "updated_at": "2026-05-21T10:36:25-05:00"
 }
