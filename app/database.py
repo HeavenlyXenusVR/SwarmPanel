@@ -395,6 +395,7 @@ class PanelDatabase:
                     password=self.settings.db_password,
                     db=self.settings.db_default_schema,
                     autocommit=True,
+                    init_command="SET time_zone = '+00:00'",
                     minsize=PANEL_DB_POOL_MIN_SIZE,
                     maxsize=PANEL_DB_POOL_MAX_SIZE,
                     connect_timeout=PANEL_DB_CONNECT_TIMEOUT_SECONDS,
@@ -864,17 +865,33 @@ class PanelDatabase:
             "used_legacy_login": legacy_ok,
         }
 
-    async def touch_account_seen(self, username: str, guild_id: str | int) -> None:
+    async def touch_account_seen(self, username: str, guild_id: str | int, min_interval_seconds: int = 30) -> None:
         username = _normalize_account_username(username)
         gid = _coerce_int(guild_id, "guild_id")
-        await self._execute(
-            f"""
-            UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
-            SET last_seen_at = CURRENT_TIMESTAMP
-            WHERE username = %s AND guild_id = %s
-            """,
-            (username, gid),
-        )
+        min_interval = max(0, int(min_interval_seconds or 0))
+        if min_interval:
+            await self._execute(
+                f"""
+                UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
+                SET last_seen_at = CURRENT_TIMESTAMP
+                WHERE username = %s
+                  AND guild_id = %s
+                  AND (
+                    last_seen_at IS NULL
+                    OR last_seen_at < TIMESTAMPADD(SECOND, -%s, CURRENT_TIMESTAMP)
+                  )
+                """,
+                (username, gid, min_interval),
+            )
+        else:
+            await self._execute(
+                f"""
+                UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
+                SET last_seen_at = CURRENT_TIMESTAMP
+                WHERE username = %s AND guild_id = %s
+                """,
+                (username, gid),
+            )
 
     async def get_account_guild_id_for_username(self, username: str) -> str | None:
         username = _normalize_account_username(username)
