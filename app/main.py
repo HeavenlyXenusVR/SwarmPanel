@@ -115,6 +115,7 @@ PERSONAL_API_PREFIXES = (
     "/api/system-diagnostics",
     "/api/telegram",
 )
+PRESENCE_TOUCH_INTERVAL_SECONDS = max(15, int(os.getenv("SWARM_PANEL_PRESENCE_TOUCH_INTERVAL_SECONDS", "30") or "30"))
 PROFILE_ACCENT_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 PANEL_THEME_MODES = {"dark", "light", "system"}
 PANEL_BACKGROUND_MODES = {"default", "midnight", "aurora", "ember", "custom_color", "custom_image"}
@@ -576,6 +577,8 @@ class PanelPreferencesUpdateRequest(BaseModel):
     background_mode: str | None = None
     background_color: str | None = None
     background_image_url: str | None = None
+    profile_backdrop_image_url: str | None = None
+    profile_backdrop_strength: float | None = None
     layout_mode: str | None = None
     density: str | None = None
     card_shape: str | None = None
@@ -702,6 +705,42 @@ async def _resolve_account_guild_id(auth: dict[str, Any] | None, username: str |
     except Exception as exc:
         action_logger.warning("Failed to resolve account guild for %s: %s", lookup_username, exc)
         return None
+
+
+def _should_touch_presence(request: Request) -> bool:
+    path = request.url.path
+    if request.method.upper() not in {"GET", "HEAD", "POST", "PATCH", "PUT", "DELETE"}:
+        return False
+    if not path.startswith("/api/"):
+        return False
+    if path == "/api/session/logout":
+        return False
+    return True
+
+
+async def _touch_request_presence(request: Request) -> None:
+    if not _should_touch_presence(request):
+        return
+    auth = await _hydrate_site_owner_auth(request, _get_api_auth(request))
+    if not auth:
+        return
+    username = str(auth.get("username") or "").strip()
+    linked_guild_id = await _resolve_account_guild_id(auth, username)
+    if not username or not linked_guild_id:
+        return
+    try:
+        await db.touch_account_seen(
+            username,
+            linked_guild_id,
+            min_interval_seconds=PRESENCE_TOUCH_INTERVAL_SECONDS,
+        )
+    except Exception:
+        action_logger.debug(
+            "SwarmPanel account presence refresh failed for %s on %s.",
+            username,
+            request.url.path,
+            exc_info=True,
+        )
 
 
 def _client_id_from_token(token: str) -> str | None:
@@ -928,6 +967,8 @@ def _clean_panel_preferences(payload: PanelPreferencesUpdateRequest) -> dict[str
         "background_mode": "default",
         "background_color": "#0b0e18",
         "background_image_url": None,
+        "profile_backdrop_image_url": None,
+        "profile_backdrop_strength": 0.18,
         "layout_mode": "standard",
         "density": "comfortable",
         "card_shape": "soft",
@@ -951,6 +992,14 @@ def _clean_panel_preferences(payload: PanelPreferencesUpdateRequest) -> dict[str
         preferences["background_color"] = _normalize_profile_accent(raw.get("background_color")) or "#0b0e18"
     if "background_image_url" in raw:
         preferences["background_image_url"] = _normalize_public_url(raw.get("background_image_url"), "Background image URL")
+    if "profile_backdrop_image_url" in raw:
+        preferences["profile_backdrop_image_url"] = _normalize_public_url(raw.get("profile_backdrop_image_url"), "Profile backdrop image URL")
+    if "profile_backdrop_strength" in raw:
+        try:
+            strength = float(raw.get("profile_backdrop_strength"))
+        except (TypeError, ValueError):
+            raise ValueError("Profile backdrop strength must be a number between 0.0 and 0.55") from None
+        preferences["profile_backdrop_strength"] = max(0.0, min(strength, 0.55))
     if "layout_mode" in raw:
         preferences["layout_mode"] = _normalize_choice(raw.get("layout_mode"), "Layout mode", PANEL_LAYOUT_MODES, "standard")
     if "density" in raw:
@@ -1433,6 +1482,7 @@ async def browser_origin_and_headers(request: Request, call_next):
     try:
         if request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}:
             _ensure_allowed_browser_origin(request)
+        await _touch_request_presence(request)
         response = await call_next(request)
     except HTTPException as exc:
         response = JSONResponse({"detail": exc.detail or "Request blocked"}, status_code=exc.status_code)
@@ -1506,7 +1556,7 @@ async def register_submit(
     site_owner = _is_site_owner_account(account)
     _set_account_session(request, account["username"], account["guild_id"], admin_mode=site_owner, site_owner=site_owner)
     try:
-        await db.touch_account_seen(account["username"], account["guild_id"])
+        await db.touch_account_seen(account["username"], account["guild_id"], min_interval_seconds=0)
     except Exception:
         action_logger.debug("SwarmPanel account presence touch failed after form register.", exc_info=True)
     return RedirectResponse(url="/", status_code=303)
@@ -1557,11 +1607,6 @@ async def api_session_status(request: Request):
     site_owner = _is_site_owner_auth(auth)
     admin_mode = _is_admin_auth(auth)
     account_guild_id = await _resolve_account_guild_id(auth, username)
-    if account_guild_id and username:
-        try:
-            await db.touch_account_seen(username, account_guild_id)
-        except Exception:
-            action_logger.debug("SwarmPanel account presence touch failed for %s.", username, exc_info=True)
     return {
         "authenticated": True,
         "mode": auth.get("mode") or "token",
@@ -1653,7 +1698,7 @@ async def api_session_register(request: Request, payload: SessionRegisterRequest
     site_owner = _is_site_owner_account(account)
     _set_account_session(request, account["username"], account["guild_id"], admin_mode=site_owner, site_owner=site_owner)
     try:
-        await db.touch_account_seen(account["username"], account["guild_id"])
+        await db.touch_account_seen(account["username"], account["guild_id"], min_interval_seconds=0)
     except Exception:
         action_logger.debug("SwarmPanel account presence touch failed after register.", exc_info=True)
     token = issue_api_token(
@@ -1745,11 +1790,6 @@ async def api_resend_session_verification(request: Request):
     profile = await db.get_account_profile(username, scoped_guild_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Account profile not found")
-    try:
-        await db.touch_account_seen(username, scoped_guild_id)
-        profile["is_online"] = True
-    except Exception:
-        action_logger.debug("SwarmPanel account presence touch failed for profile view.", exc_info=True)
     if not profile.get("email"):
         raise HTTPException(status_code=400, detail="This account does not have an email address.")
     if profile.get("email_verified"):

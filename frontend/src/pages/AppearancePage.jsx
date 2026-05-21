@@ -3,7 +3,7 @@ import { Activity, Bot, Database, HeartPulse, Play, RotateCcw, Save, SlidersHori
 import { apiFetch, clearCache } from "../api.js";
 import { DEFAULT_PREFERENCES } from "../config.js";
 import { Choice, Page } from "../components/ui.jsx";
-import { panelStyle } from "../utils/control.js";
+import { panelStyle, profileSurfaceStyle } from "../utils/control.js";
 
 export default function AppearancePage({ ctx }) {
   const [draft, setDraft] = useState(ctx.preferences);
@@ -46,6 +46,13 @@ export default function AppearancePage({ ctx }) {
             <div className="two-col">
               <label className="field color-field color-field-wide"><span>Background Color</span><input type="color" value={draft.background_color || "#0b0e18"} onChange={(event) => setDraft((current) => ({ ...current, background_color: event.target.value, background_mode: "custom_color" }))} /></label>
               <label className="field"><span>Background Image URL</span><input value={draft.background_image_url || ""} onChange={(event) => setDraft((current) => ({ ...current, background_image_url: event.target.value, background_mode: event.target.value ? "custom_image" : current.background_mode }))} /></label>
+            </div>
+          </div>
+          <div className="appearance-cluster">
+            <div className="appearance-cluster-head"><h3>Profile Atmosphere</h3><p>Give public profiles their own ambient backdrop without changing the rest of the control room.</p></div>
+            <div className="two-col">
+              <label className="field"><span>Profile Backdrop URL</span><input value={draft.profile_backdrop_image_url || ""} onChange={(event) => update("profile_backdrop_image_url", event.target.value)} placeholder="https://..." /></label>
+              <label className="field"><span>Backdrop Strength</span><input type="range" min="0" max="0.55" step="0.01" value={draft.profile_backdrop_strength ?? 0.18} onChange={(event) => update("profile_backdrop_strength", Number(event.target.value))} /></label>
             </div>
           </div>
           <div className="appearance-cluster">
@@ -100,6 +107,21 @@ export default function AppearancePage({ ctx }) {
               <Activity size={18} /><strong>Logs</strong><span>live</span>
             </article>
           </div>
+          <section className="appearance-profile-preview" style={profileSurfaceStyle({ ...draft, accent_color: draft.accent_color || "#89b4fa" }, draft.accent_color || "#89b4fa")}>
+            <span className="appearance-profile-kicker">Public Profile Surface</span>
+            <article className="appearance-profile-hero">
+              <div className="appearance-profile-avatar">HX</div>
+              <div className="appearance-profile-copy">
+                <strong>HeavenlyXenusVR</strong>
+                <p>Owner channel / live swarm identity / backdrop enabled</p>
+              </div>
+            </article>
+            <div className="appearance-profile-stats">
+              <span className="appearance-mini-stat">Followers 24</span>
+              <span className="appearance-mini-stat">Friends 12</span>
+              <span className="appearance-mini-stat">Plays 31k</span>
+            </div>
+          </section>
         </aside>
       </section>
     </Page>

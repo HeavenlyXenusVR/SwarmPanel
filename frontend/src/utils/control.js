@@ -44,6 +44,12 @@ function clampNumber(value, fallback, min, max) {
   return Math.min(max, Math.max(min, parsed));
 }
 
+function safeImage(value) {
+  const text = String(value || "").trim();
+  if (!/^https?:\/\//i.test(text)) return "none";
+  return `url("${text.replace(/["\\]/g, "\\$&")}")`;
+}
+
 export function payloadForAction(form) {
   if (form.action === "PLAY") {
     return {
@@ -84,6 +90,14 @@ export function panelStyle(preferences) {
     "--panel-bg-image": useImage ? `url("${imageUrl.replace(/["\\]/g, "\\$&")}")` : "none",
     "--surface-opacity": clampNumber(preferences?.surface_opacity, 0.92, 0.35, 1),
     "--surface-blur": `${clampNumber(preferences?.surface_blur, 18, 0, 36)}px`,
+  };
+}
+
+export function profileSurfaceStyle(preferences, fallbackAccent = "#89b4fa") {
+  return {
+    "--accent": safeHex(preferences?.accent_color, fallbackAccent),
+    "--profile-backdrop": safeImage(preferences?.profile_backdrop_image_url),
+    "--profile-backdrop-strength": `${Math.round(clampNumber(preferences?.profile_backdrop_strength, 0.18, 0, 0.55) * 100)}%`,
   };
 }
 

@@ -16,6 +16,8 @@ export const DEFAULT_PREFERENCES = {
   surface_blur: 18,
   stream_card_style: "telemetry",
   dashboard_density: "command",
+  profile_backdrop_image_url: "",
+  profile_backdrop_strength: 0.18,
 };
 
 export const CONTROL_ACTIONS = [

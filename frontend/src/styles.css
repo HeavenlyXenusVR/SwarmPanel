@@ -1498,7 +1498,12 @@ input[type="range"]::-moz-range-thumb {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: #101720;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, transparent), rgba(16, 23, 32, 0.78)),
+    var(--profile-backdrop, none),
+    #101720;
+  background-size: cover;
+  background-position: center;
 }
 
 .operator-layout-console,
@@ -1525,6 +1530,11 @@ input[type="range"]::-moz-range-thumb {
   margin: 4px 0 0;
 }
 
+.public-profile-shell {
+  display: grid;
+  gap: 14px;
+}
+
 .public-profile-hero {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -1533,8 +1543,11 @@ input[type="range"]::-moz-range-thumb {
   min-height: 210px;
   overflow: hidden;
   background:
-    linear-gradient(135deg, color-mix(in srgb, var(--accent) 24%, transparent), rgba(27, 36, 50, 0.64)),
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) var(--profile-backdrop-strength, 18%), transparent), rgba(27, 36, 50, 0.64)),
+    var(--profile-backdrop, none),
     #101720;
+  background-size: cover;
+  background-position: center;
   padding: 22px;
 }
 
@@ -1542,8 +1555,9 @@ input[type="range"]::-moz-range-thumb {
   background:
     linear-gradient(90deg, rgba(9, 12, 18, 0.82), rgba(9, 12, 18, 0.22)),
     var(--profile-banner-url),
+    var(--profile-backdrop, none),
     #101720;
-  background-size: cover;
+  background-size: cover, cover, cover;
   background-position: center;
 }
 
@@ -1551,11 +1565,19 @@ input[type="range"]::-moz-range-thumb {
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--accent) 28%, transparent), transparent 58%),
     repeating-linear-gradient(90deg, rgba(255,255,255,0.05), rgba(255,255,255,0.05) 1px, transparent 1px, transparent 18px),
+    var(--profile-backdrop, none),
     #101720;
+  background-size: auto, auto, cover, auto;
+  background-position: center;
 }
 
 .public-profile-banner-quiet {
-  background: #101720;
+  background:
+    linear-gradient(180deg, rgba(9, 12, 18, 0.72), rgba(9, 12, 18, 0.82)),
+    var(--profile-backdrop, none),
+    #101720;
+  background-size: cover;
+  background-position: center;
 }
 
 .public-profile-banner-contrast {
@@ -1612,6 +1634,18 @@ input[type="range"]::-moz-range-thumb {
   gap: 12px;
 }
 
+.public-profile-shell .profile-stat-panel,
+.public-profile-shell .form-panel {
+  position: relative;
+  overflow: hidden;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--accent) 9%, transparent), rgba(17, 23, 27, 0.64)),
+    var(--profile-backdrop, none),
+    rgba(17, 23, 27, var(--surface-opacity));
+  background-size: cover;
+  background-position: center;
+}
+
 .profile-stat-panel {
   display: grid;
   gap: 6px;
@@ -1652,6 +1686,10 @@ input[type="range"]::-moz-range-thumb {
 .public-profile-card-terminal {
   border-radius: 4px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.public-profile-preview {
+  border-color: color-mix(in srgb, var(--accent) 26%, var(--line));
 }
 
 .table-wrap {
@@ -2132,7 +2170,8 @@ tbody tr:hover td {
 
 .preview-topline,
 .preview-tabs,
-.preview-card {
+.preview-card,
+.appearance-profile-preview {
   position: relative;
   z-index: 1;
 }
@@ -2232,6 +2271,77 @@ tbody tr:hover td {
 .preview-card p {
   margin: 0;
   color: var(--muted);
+}
+
+.appearance-profile-preview {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--line));
+  border-radius: var(--radius);
+  background:
+    linear-gradient(140deg, color-mix(in srgb, var(--accent) var(--profile-backdrop-strength, 18%), transparent), rgba(12, 18, 24, 0.52)),
+    var(--profile-backdrop, none),
+    rgba(12, 18, 24, 0.62);
+  background-size: cover;
+  background-position: center;
+}
+
+.appearance-profile-kicker {
+  color: var(--accent);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.appearance-profile-hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
+  border-radius: calc(var(--radius) - 4px);
+  background: rgba(12, 18, 24, 0.38);
+}
+
+.appearance-profile-avatar {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 45%, #ffffff));
+  color: #041018;
+  font-size: 0.95rem;
+  font-weight: 900;
+}
+
+.appearance-profile-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.appearance-profile-copy p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.appearance-profile-stats {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.appearance-mini-stat {
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(12, 18, 24, 0.42);
+  color: var(--text);
+  font-size: 0.82rem;
 }
 
 .panel-theme-light input,
