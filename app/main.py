@@ -1470,8 +1470,8 @@ if settings.cors_allowed_origins:
         CORSMiddleware,
         allow_origins=settings.cors_allowed_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-Requested-With", "X-Request-ID"],
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 app.add_middleware(
     SessionMiddleware,
@@ -1481,6 +1481,11 @@ app.add_middleware(
     https_only=settings.session_https_only,
 )
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+
+@app.options("/api/{path:path}", include_in_schema=False)
+async def api_preflight(path: str):
+    return Response(status_code=200)
 
 
 @app.middleware("http")
