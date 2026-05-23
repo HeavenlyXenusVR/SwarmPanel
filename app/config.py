@@ -40,6 +40,16 @@ def _env_int_set(name: str) -> set[int]:
     return values
 
 
+def _env_username_set(name: str) -> set[str]:
+    raw = os.getenv(name, "")
+    values: set[str] = set()
+    for item in raw.split(","):
+        item = item.strip().lstrip("@").lower()
+        if item:
+            values.add(item)
+    return values
+
+
 @dataclass(frozen=True)
 class Settings:
     db_host: str
@@ -67,6 +77,7 @@ class Settings:
     session_https_only: bool
     telegram_bot_token: str
     telegram_allowed_chat_ids: set[int]
+    telegram_allowed_usernames: set[str]
     telegram_polling_enabled: bool
     destructive_confirmation_phrase: str
     api_max_rows: int
@@ -105,6 +116,7 @@ def load_settings() -> Settings:
         session_https_only=_env_bool("PANEL_SESSION_HTTPS_ONLY", False),
         telegram_bot_token=_env("PANEL_TELEGRAM_BOT_TOKEN") or _env("TELEGRAM_BOT_TOKEN"),
         telegram_allowed_chat_ids=_env_int_set("PANEL_TELEGRAM_ALLOWED_CHAT_IDS") or _env_int_set("TELEGRAM_ALLOWED_CHAT_IDS"),
+        telegram_allowed_usernames=_env_username_set("PANEL_TELEGRAM_ALLOWED_USERNAMES") or _env_username_set("TELEGRAM_ALLOWED_USERNAMES"),
         telegram_polling_enabled=_env_bool("PANEL_TELEGRAM_POLLING_ENABLED", bool(_env("PANEL_TELEGRAM_BOT_TOKEN") or _env("TELEGRAM_BOT_TOKEN"))),
         destructive_confirmation_phrase=_env(
             "PANEL_DESTRUCTIVE_CONFIRMATION_PHRASE",
@@ -127,5 +139,9 @@ def validate_settings(settings: Settings) -> None:
         missing.append("PANEL_ADMIN_PASSWORD")
     if not settings.session_secret:
         missing.append("PANEL_SESSION_SECRET")
+    elif len(settings.session_secret) < 32:
+        raise RuntimeError("PANEL_SESSION_SECRET must be at least 32 characters long")
+    if settings.telegram_bot_token and settings.telegram_polling_enabled and not (settings.telegram_allowed_chat_ids or settings.telegram_allowed_usernames):
+        raise RuntimeError("PANEL_TELEGRAM_ALLOWED_CHAT_IDS or PANEL_TELEGRAM_ALLOWED_USERNAMES must be set when Telegram polling is enabled")
     if missing:
         raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")

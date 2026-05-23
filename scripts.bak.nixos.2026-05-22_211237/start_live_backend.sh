@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# NixOS/user-profile friendly PATH. systemd user services do not always inherit
-# the interactive shell PATH, so keep repo-local tools, profile tools, and
-# NixOS system tools visible.
-export PATH="${HOME}/.local/bin:${HOME}/.nix-profile/bin:/etc/profiles/per-user/${USER}/bin:/run/current-system/sw/bin:${PATH:-}"
-
-
 PORT="${1:-8000}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="${ROOT_DIR}/.venv"
@@ -109,10 +103,6 @@ publish_config() {
   fi
   if ! command -v git >/dev/null 2>&1 && ! command -v flatpak-spawn >/dev/null 2>&1; then
     echo "Skipping live-config push because git is unavailable." >&2
-    return
-  fi
-  if ! run_host_git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "Skipping live-config push because ${ROOT_DIR} is not a git work tree." >&2
     return
   fi
   if run_host_git diff --quiet -- live-config.json; then

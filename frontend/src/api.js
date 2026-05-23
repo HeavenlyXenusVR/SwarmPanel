@@ -2,7 +2,8 @@ const TOKEN_KEY = "swarm_panel_remote_token";
 const USER_KEY = "swarm_panel_remote_username";
 const CACHE_TTL = 12_000;
 const CACHE_STALE_TTL = 90_000;
-const CACHE_VERSION = "v3";
+const CACHE_VERSION = "v4";
+const API_FETCH_TIMEOUT_MS = 20_000;
 const CACHE_STORE_PREFIX = "swarm_panel_api_cache:";
 const MAX_STORED_CACHE_BYTES = 450_000;
 const REMOTE_ORIGIN_KEY = "swarm_panel_remote_origin";
@@ -181,7 +182,7 @@ async function loadRemoteOrigin({ force = false } = {}) {
     const response = await fetch(`${remoteConfigUrl()}?t=${Date.now()}`, { cache: "no-store" });
     if (!response.ok) throw new Error(`Remote config failed (${response.status})`);
     const config = await response.json();
-    const origin = String(config.panel_url || config.api_url || "").replace(/\/+$/, "");
+    const origin = normalizeApiOrigin(config.panel_url || config.api_url);
     if (origin) {
       const entry = { origin, localUrls: normalizeLocalUrls(config.local_urls), updatedAt: Date.now() };
       applyRemoteOrigin(entry);
@@ -202,20 +203,44 @@ async function loadRemoteOrigin({ force = false } = {}) {
 async function fetchWithRemoteRetry(path, options, headers) {
   const target = await resolveApiUrl(path);
   try {
-    const response = await fetch(target, { ...options, headers });
+    const response = await fetchWithTimeout(target, { ...options, headers });
     if (shouldRefreshRemoteAfterStatus(response.status, options)) {
       const retryTarget = await retryTargetFor(path, target, options);
       if (retryTarget && retryTarget !== target) {
-        return fetch(retryTarget, { ...options, headers });
+        return fetchWithTimeout(retryTarget, { ...options, headers });
       }
     }
     return response;
   } catch (error) {
     const retryTarget = await retryTargetFor(path, target, options);
     if (retryTarget && retryTarget !== target) {
-      return fetch(retryTarget, { ...options, headers });
+      return fetchWithTimeout(retryTarget, { ...options, headers });
     }
     throw error;
+  }
+}
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timeoutMs = Math.max(5_000, Number(options.timeoutMs) || API_FETCH_TIMEOUT_MS);
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: options.signal || controller.signal });
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+function normalizeApiOrigin(value) {
+  const raw = String(value || "").trim().replace(/\/+$/, "");
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw, window.location.href);
+    if (!/^https?:$/.test(parsed.protocol)) return "";
+    if (window.location.protocol === "https:" && parsed.protocol !== "https:" && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(parsed.hostname)) return "";
+    return parsed.origin.replace(/\/+$/, "");
+  } catch (_error) {
+    return "";
   }
 }
 
@@ -270,13 +295,13 @@ function readRemoteOriginCache() {
     const parsed = JSON.parse(raw);
     if (parsed?.origin) {
       return {
-        origin: String(parsed.origin).replace(/\/+$/, ""),
+        origin: normalizeApiOrigin(parsed.origin),
         localUrls: normalizeLocalUrls(parsed.localUrls || parsed.local_urls),
         updatedAt: Number(parsed.updatedAt || 0),
       };
     }
   } catch (_error) {
-    return { origin: raw.replace(/\/+$/, ""), localUrls: [], updatedAt: 0 };
+    return { origin: normalizeApiOrigin(raw), localUrls: [], updatedAt: 0 };
   }
   return null;
 }
@@ -302,7 +327,7 @@ function clearRemoteOriginCache() {
 function normalizeLocalUrls(urls) {
   if (!Array.isArray(urls)) return [];
   return urls
-    .map((url) => String(url || "").replace(/\/+$/, ""))
+    .map((url) => normalizeApiOrigin(url))
     .filter(Boolean);
 }
 

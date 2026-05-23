@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# NixOS/user-profile friendly PATH. systemd user services do not always inherit
-# the interactive shell PATH, so keep repo-local tools, profile tools, and
-# NixOS system tools visible.
-export PATH="${HOME}/.local/bin:${HOME}/.nix-profile/bin:/etc/profiles/per-user/${USER}/bin:/run/current-system/sw/bin:${PATH:-}"
-
-
 PORT="${1:-8000}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="${ROOT_DIR}/.venv"
@@ -206,31 +200,12 @@ publish_offline_config() {
 }
 
 install_python_deps() {
-  local py="${PANEL_PYTHON:-}"
-  if [[ -z "${py}" ]]; then
-    py="$(command -v python3 || true)"
-  fi
-  if [[ -z "${py}" ]]; then
-    echo "python3 is missing. On NixOS add python311Full or python312Full to environment.systemPackages." >&2
-    exit 1
-  fi
-
   if [[ -x "${VENV_DIR}/bin/python" ]] && ! "${VENV_DIR}/bin/python" -m pip --version >/dev/null 2>&1; then
-    echo "Existing virtualenv cannot run pip; rebuilding ${VENV_DIR}." >&2
     rm -rf "${VENV_DIR}"
   fi
-
   if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
-    if ! "${py}" -m venv "${VENV_DIR}"; then
-      echo "python venv support is unavailable; falling back to --target ${ROOT_DIR}/.runtime/python-packages." >&2
-      rm -rf "${VENV_DIR}"
-      mkdir -p "${ROOT_DIR}/.runtime/python-packages"
-      "${py}" -m pip install --upgrade --target "${ROOT_DIR}/.runtime/python-packages" -r "${ROOT_DIR}/requirements.txt"
-      export PYTHONPATH="${ROOT_DIR}/.runtime/python-packages${PYTHONPATH:+:${PYTHONPATH}}"
-      return
-    fi
+    python3 -m venv "${VENV_DIR}"
   fi
-
   "${VENV_DIR}/bin/python" -m pip install --upgrade pip
   "${VENV_DIR}/bin/python" -m pip install -r "${ROOT_DIR}/requirements.txt"
 }
@@ -247,29 +222,8 @@ cloudflared_bin() {
     return
   fi
 
-  if [[ "${PANEL_ALLOW_CLOUDFLARED_DOWNLOAD:-1}" != "1" ]]; then
-    echo "cloudflared is missing. On NixOS add cloudflared to environment.systemPackages." >&2
-    exit 1
-  fi
-
-  local machine arch url
-  machine="$(uname -m)"
-  arch="amd64"
-  if [[ "${machine}" == "aarch64" || "${machine}" == "arm64" ]]; then
-    arch="arm64"
-  fi
-  url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}"
-  echo "cloudflared not found; downloading local copy to ${local_bin} (${arch})." >&2
-  if command -v curl >/dev/null 2>&1; then
-    curl -L --fail "${url}" -o "${local_bin}"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -O "${local_bin}" "${url}"
-  else
-    echo "Need curl or wget to download cloudflared." >&2
-    exit 1
-  fi
-  chmod +x "${local_bin}"
-  echo "${local_bin}"
+  echo "cloudflared was not found at ${local_bin}. Run scripts/start_live_backend.sh once to download it." >&2
+  exit 1
 }
 
 backend_ready() {
@@ -320,11 +274,7 @@ start_fallback_backend() {
     export PANEL_DB_HOST="127.0.0.1"
   fi
   cd "${ROOT_DIR}"
-  if [[ -x "${VENV_DIR}/bin/python" ]]; then
-    "${VENV_DIR}/bin/python" -m uvicorn app.main:app --host 127.0.0.1 --port "${PORT}" >"${UVICORN_LOG}" 2>&1 &
-  else
-    python3 -m uvicorn app.main:app --host 127.0.0.1 --port "${PORT}" >"${UVICORN_LOG}" 2>&1 &
-  fi
+  "${VENV_DIR}/bin/python" -m uvicorn app.main:app --host 127.0.0.1 --port "${PORT}" >"${UVICORN_LOG}" 2>&1 &
   UVICORN_PID="$!"
 }
 

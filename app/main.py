@@ -288,6 +288,12 @@ def _request_id_for(request: Request) -> str:
     return cleaned or secrets.token_hex(12)
 
 
+def _safe_error_detail(prefix: str, exc: Exception) -> str:
+    request_id = secrets.token_hex(6)
+    action_logger.warning("%s request_id=%s error=%s", prefix, request_id, exc, exc_info=True)
+    return f"{prefix}. Check SwarmPanel logs with request id {request_id}."
+
+
 def _set_no_store_headers(response: Response) -> None:
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
@@ -1427,6 +1433,8 @@ async def lifespan(_: FastAPI):
         name="SwarmPanel",
         handler=_handle_telegram_command,
         allowed_chat_ids=settings.telegram_allowed_chat_ids,
+        allowed_usernames=settings.telegram_allowed_usernames,
+        recipient_store_path=BASE_DIR / ".runtime" / "telegram_recipients.json",
         commands=[
             ("status", "Show SwarmPanel runtime status"),
             ("bots", "Summarize music bot state"),
@@ -2266,6 +2274,7 @@ async def telegram_status(request: Request):
         "running": False,
         "bot_username": "",
         "allowed_chat_count": len(settings.telegram_allowed_chat_ids),
+        "allowed_username_count": len(settings.telegram_allowed_usernames),
         "last_error": "",
         "last_update_at": 0.0,
     }
@@ -2426,7 +2435,7 @@ async def bot_control_state(request: Request, bot_key: str, guild_id: str):
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         action_logger.exception("Failed building control state bot=%s guild=%s: %s", bot_key, guild_id, exc)
-        raise HTTPException(status_code=503, detail=f"Control state unavailable: {exc}")
+        raise HTTPException(status_code=503, detail=_safe_error_detail("Control state unavailable", exc))
 
 
 @app.get("/api/guilds/{guild_id}/control-matrix")
@@ -2477,7 +2486,7 @@ async def music_intelligence(request: Request, guild_id: str | None = None, bot_
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         action_logger.exception("Failed loading music intelligence guild=%s bot=%s: %s", guild_id, bot_key, exc)
-        raise HTTPException(status_code=503, detail=f"Music intelligence unavailable: {exc}")
+        raise HTTPException(status_code=503, detail=_safe_error_detail("Music intelligence unavailable", exc))
 
 
 @app.get("/api/databases")
@@ -2486,7 +2495,7 @@ async def databases(request: Request, include_tables: bool = False):
     try:
         schemas = await db.list_schemas()
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Database unavailable: {exc}")
+        raise HTTPException(status_code=503, detail=_safe_error_detail("Database unavailable", exc))
     if not include_tables:
         return {"schemas": schemas}
 
@@ -2502,7 +2511,7 @@ async def tables(request: Request, schema: str):
     try:
         return {"schema": schema, "tables": await db.list_tables(schema)}
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Database unavailable: {exc}")
+        raise HTTPException(status_code=503, detail=_safe_error_detail("Database unavailable", exc))
 
 
 @app.post("/api/database/truncate-table")
@@ -2523,7 +2532,7 @@ async def truncate_table(request: Request, payload: TruncateTableRequest):
     try:
         await db.truncate_table(payload.schema_name, payload.table_name)
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Database unavailable: {exc}")
+        raise HTTPException(status_code=503, detail=_safe_error_detail("Database unavailable", exc))
     action_logger.warning("truncate_table schema=%s table=%s", payload.schema_name, payload.table_name)
     return {"ok": True, "message": f"Truncated {payload.schema_name}.{payload.table_name}"}
 
@@ -2546,7 +2555,7 @@ async def truncate_schema(request: Request, payload: TruncateSchemaRequest):
     try:
         result = await db.truncate_schema(payload.schema_name)
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Database unavailable: {exc}")
+        raise HTTPException(status_code=503, detail=_safe_error_detail("Database unavailable", exc))
     action_logger.warning("truncate_schema schema=%s tables=%s", payload.schema_name, result["truncated_tables"])
     return {"ok": True, **result}
 
@@ -2571,7 +2580,7 @@ async def get_table_data(
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         action_logger.error("Failed to fetch table data schema=%s table=%s: %s", schema_name, table_name, exc)
-        raise HTTPException(status_code=503, detail=f"Database unavailable: {exc}")
+        raise HTTPException(status_code=503, detail=_safe_error_detail("Database unavailable", exc))
 
 
 @app.get("/api/image-gallery/admin")
@@ -2582,7 +2591,7 @@ async def image_gallery_admin(request: Request, limit: int = 50):
         return {"ok": True, "data": await db.get_image_gallery_admin_data(limit)}
     except Exception as exc:
         action_logger.error("Failed to fetch image gallery admin data: %s", exc)
-        raise HTTPException(status_code=503, detail=f"Image Gallery database unavailable: {exc}")
+        raise HTTPException(status_code=503, detail=_safe_error_detail("Image Gallery database unavailable", exc))
 
 
 @app.get("/api/image-gallery/tables")
@@ -2595,7 +2604,7 @@ async def image_gallery_tables(request: Request):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         action_logger.error("Failed to fetch image gallery tables: %s", exc)
-        raise HTTPException(status_code=503, detail=f"Image Gallery database unavailable: {exc}")
+        raise HTTPException(status_code=503, detail=_safe_error_detail("Image Gallery database unavailable", exc))
 
 
 @app.get("/api/image-gallery/table-data")
@@ -2609,7 +2618,7 @@ async def image_gallery_table_data(request: Request, table_name: str, limit: int
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         action_logger.error("Failed to fetch image gallery table data table=%s: %s", table_name, exc)
-        raise HTTPException(status_code=503, detail=f"Image Gallery database unavailable: {exc}")
+        raise HTTPException(status_code=503, detail=_safe_error_detail("Image Gallery database unavailable", exc))
 
 
 @app.post("/api/image-gallery/users/delete")
@@ -2764,7 +2773,7 @@ async def api_bot_control(request: Request, req: BotControlRequest):
         raise
     except Exception as e:
         await push_feed_event("error", "Bot Control Failed", str(e), source="api")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=_safe_error_detail("Bot control failed", e))
 
 
 
@@ -2782,6 +2791,8 @@ recent_feed_events: deque[dict[str, str]] = deque(maxlen=100)
 dashboard_broadcast_task: asyncio.Task[Any] | None = None
 WS_SEND_TIMEOUT_SECONDS = max(2.0, float(os.getenv("SWARM_WS_SEND_TIMEOUT_SECONDS", "6") or "6"))
 WS_DASHBOARD_BUILD_TIMEOUT_SECONDS = max(5.0, float(os.getenv("SWARM_WS_DASHBOARD_BUILD_TIMEOUT_SECONDS", "25") or "25"))
+WS_RECEIVE_TIMEOUT_SECONDS = max(20.0, float(os.getenv("SWARM_WS_RECEIVE_TIMEOUT_SECONDS", "90") or "90"))
+WS_MAX_INBOUND_CHARS = max(16, int(os.getenv("SWARM_WS_MAX_INBOUND_CHARS", "512") or "512"))
 
 def _remove_connection(connection: dict[str, Any]) -> None:
     try:
@@ -2811,7 +2822,14 @@ async def websocket_endpoint(websocket: WebSocket):
     _ensure_dashboard_broadcast_loop()
     try:
         while True:
-            await websocket.receive_text()
+            try:
+                message = await asyncio.wait_for(websocket.receive_text(), timeout=WS_RECEIVE_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                await websocket.send_text(json.dumps({"type": "ping", "timestamp": datetime.now(timezone.utc).isoformat()}))
+                continue
+            if len(str(message or "")) > WS_MAX_INBOUND_CHARS:
+                await websocket.close(code=4409)
+                break
     except WebSocketDisconnect:
         _remove_connection(connection)
     except Exception:
@@ -2909,7 +2927,7 @@ async def stability_data(request: Request):
         return await db.get_stability_snapshot()
     except Exception as exc:
         action_logger.exception("Failed to build stability snapshot")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=_safe_error_detail("Stability snapshot unavailable", exc))
 
 @app.get("/api/metrics")
 async def metrics_data(request: Request):

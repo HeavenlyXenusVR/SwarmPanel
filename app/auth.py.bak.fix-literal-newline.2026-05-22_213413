@@ -80,8 +80,7 @@ def get_api_auth(
     max_age_seconds: int,
 ) -> dict | None:
     if is_authenticated(request):
-        session = safe_session(request)
-        role = session.get(SESSION_ROLE_KEY) or "admin"
+        session = safe_session(request)\n        role = session.get(SESSION_ROLE_KEY) or "admin"
         guild_id = session.get(SESSION_GUILD_ID_KEY)
         admin_mode = session.get(SESSION_ADMIN_MODE_KEY)
         if admin_mode is None:
