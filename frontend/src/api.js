@@ -2,7 +2,7 @@ const TOKEN_KEY = "swarm_panel_remote_token";
 const USER_KEY = "swarm_panel_remote_username";
 const CACHE_TTL = 12_000;
 const CACHE_STALE_TTL = 90_000;
-const CACHE_VERSION = "v4";
+const CACHE_VERSION = "v5";
 const API_FETCH_TIMEOUT_MS = 20_000;
 const CACHE_STORE_PREFIX = "swarm_panel_api_cache:";
 const MAX_STORED_CACHE_BYTES = 450_000;
@@ -90,6 +90,9 @@ export async function apiFetch(path, options = {}) {
 
 function errorMessage(payload, status) {
   const raw = payload?.detail || payload?.message || payload;
+  if (typeof raw === "string" && /<html[\s>]/i.test(raw) && /405\s+Not\s+Allowed/i.test(raw)) {
+    return "Login request hit a static/proxy server instead of the SwarmPanel API. Refresh live-config.json or restart the live backend/tunnel.";
+  }
   if (!raw) return `Request failed (${status})`;
   if (Array.isArray(raw)) {
     return raw.map((item) => item?.msg || item?.message || JSON.stringify(item)).join("; ");
@@ -179,9 +182,13 @@ async function loadRemoteOrigin({ force = false } = {}) {
     return cached.origin;
   }
   try {
-    const response = await fetch(`${remoteConfigUrl()}?t=${Date.now()}`, { cache: "no-store" });
+    const response = await fetchWithTimeout(`${remoteConfigUrl()}?t=${Date.now()}`, {
+      cache: "no-store",
+      timeoutMs: 8_000,
+      credentials: "omit",
+    });
     if (!response.ok) throw new Error(`Remote config failed (${response.status})`);
-    const config = await response.json();
+    const config = await parseRemoteConfigResponse(response);
     const origin = normalizeApiOrigin(config.panel_url || config.api_url);
     if (origin) {
       const entry = { origin, localUrls: normalizeLocalUrls(config.local_urls), updatedAt: Date.now() };
@@ -200,8 +207,62 @@ async function loadRemoteOrigin({ force = false } = {}) {
   return "";
 }
 
+async function parseRemoteConfigResponse(response) {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch (_error) {
+    const recovered = parseFirstJsonObject(text);
+    if (recovered) return recovered;
+    throw _error;
+  }
+}
+
+function parseFirstJsonObject(text) {
+  const raw = String(text || "");
+  const start = raw.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < raw.length; index += 1) {
+    const char = raw[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === "{") depth += 1;
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          return JSON.parse(raw.slice(start, index + 1));
+        } catch (_error) {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
 async function fetchWithRemoteRetry(path, options, headers) {
+  if (shouldRefreshOriginBeforeRequest(options)) {
+    await refreshRemoteOrigin();
+  }
   const target = await resolveApiUrl(path);
+  if (isRemoteStaticHost() && !originFromUrl(target)) {
+    throw new Error("SwarmPanel live backend is not published yet. Restart the live backend/tunnel so live-config.json points at the FastAPI server.");
+  }
   try {
     const response = await fetchWithTimeout(target, { ...options, headers });
     if (shouldRefreshRemoteAfterStatus(response.status, options)) {
@@ -218,6 +279,12 @@ async function fetchWithRemoteRetry(path, options, headers) {
     }
     throw error;
   }
+}
+
+function shouldRefreshOriginBeforeRequest(options) {
+  if (!isRemoteStaticHost()) return false;
+  const method = String(options.method || "GET").toUpperCase();
+  return method !== "GET" && method !== "HEAD";
 }
 
 async function fetchWithTimeout(url, options = {}) {
@@ -254,12 +321,31 @@ async function retryTargetFor(path, failedTarget, options) {
 }
 
 function shouldRefreshRemoteAfterStatus(status, options) {
-  return canRetryWithFreshRemote(options) && (status === 502 || status === 503 || status === 504 || (status >= 520 && status <= 526));
+  return canRetryWithFreshRemote(options) && (
+    status === 404 ||
+    status === 405 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504 ||
+    (status >= 520 && status <= 526)
+  );
 }
 
 function canRetryWithFreshRemote(options) {
   const method = String(options.method || "GET").toUpperCase();
-  return isRemoteStaticHost() && !options.body && (method === "GET" || method === "HEAD");
+  if (!isRemoteStaticHost()) return false;
+  if (method === "GET" || method === "HEAD") return true;
+  return isReplayableRequestBody(options.body);
+}
+
+function isReplayableRequestBody(body) {
+  if (!body) return true;
+  if (typeof body === "string") return true;
+  if (body instanceof URLSearchParams) return true;
+  if (body instanceof FormData) return true;
+  if (body instanceof Blob) return true;
+  if (body instanceof ArrayBuffer) return true;
+  return false;
 }
 
 function fallbackApiUrl(path, failedOrigin) {

@@ -95,6 +95,27 @@ write_offline_config() {
 EOF
 }
 
+
+validate_config_json() {
+  CONFIG_FILE_PATH="${CONFIG_FILE}" python3 <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+path = Path(os.environ["CONFIG_FILE_PATH"])
+try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print(f"Invalid live-config.json; refusing to publish: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+if not isinstance(payload, dict):
+    print("Invalid live-config.json; root must be an object.", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
 run_host_git() {
   if command -v flatpak-spawn >/dev/null 2>&1; then
     flatpak-spawn --host git -C "${ROOT_DIR}" "$@"
@@ -104,6 +125,7 @@ run_host_git() {
 }
 
 publish_config() {
+  validate_config_json || return
   if [[ "${AUTO_PUSH_CONFIG}" != "1" ]]; then
     return
   fi
