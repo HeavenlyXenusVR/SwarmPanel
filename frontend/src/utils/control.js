@@ -56,17 +56,12 @@ export function payloadForAction(form) {
       source_url: form.source_url,
       voice_channel_id: form.voice_channel_id,
       text_channel_id: form.text_channel_id || 0,
-      loop_mode: "queue",
-      shuffle_before_play: true,
-      save_playlist: true,
     };
   }
   if (form.action === "SMART_RECOMMEND") {
     return {
       voice_channel_id: form.voice_channel_id,
       text_channel_id: form.text_channel_id || 0,
-      loop_mode: "queue",
-      shuffle_before_play: true,
     };
   }
   if (form.action === "SET_HOME") {

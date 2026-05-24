@@ -126,12 +126,8 @@ class RuntimeDiagnosticsService:
 
     @staticmethod
     def _mask_secret(value: str) -> str:
-        value = str(value or "")
-        if not value:
-            return "missing"
-        if len(value) <= 8:
-            return "present"
-        return f"{value[:3]}…{value[-3:]}"
+        # Do not reveal token/password prefixes or suffixes in screenshots, logs, or admin exports.
+        return "present" if str(value or "") else "missing"
 
     @staticmethod
     def _format_central(iso_value: str | None) -> str | None:

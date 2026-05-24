@@ -36,6 +36,7 @@ from .auth import (
     require_api_auth,
     verify_api_token,
     verify_credentials,
+    safe_session,
 )
 from .bots import (
     ALL_BOTS,
@@ -95,8 +96,8 @@ CONTROL_PAYLOAD_KEYS = {
     "filter",
     "filter_mode",
     "loop_mode",
-    "shuffle_before_play",
-    "save_playlist",
+    "force",
+    "vc_id",
     "webhook_url",
 }
 REQUEST_ID_RE = re.compile(r"[^A-Za-z0-9_.:-]+")
@@ -358,14 +359,37 @@ def _request_origin(request: Request) -> str:
     return _normalize_origin(request.headers.get("referer"))
 
 
+def _has_bearer_auth(request: Request) -> bool:
+    return str(request.headers.get("authorization") or "").strip().lower().startswith("bearer ")
+
+
+def _has_session_cookie(request: Request) -> bool:
+    return "session" in request.cookies or bool(safe_session(request).get(SESSION_AUTH_KEY))
+
+
 def _ensure_allowed_browser_origin(request: Request) -> None:
     origin = _request_origin(request)
     if not origin:
+        # Allow CLI/internal calls and bearer-token API calls without browser Origin/Referer.
+        # Authenticated cookie requests must prove they came from the panel origin.
+        if _has_session_cookie(request) and not _has_bearer_auth(request):
+            raise HTTPException(status_code=403, detail="Missing trusted browser origin.")
         return
     current = _normalize_origin(str(request.base_url))
     if origin == current or origin in _allowed_browser_origins():
         return
     raise HTTPException(status_code=403, detail="Blocked cross-origin request.")
+
+
+def _csp_connect_sources(request: Request) -> str:
+    sources = ["'self'"]
+    for origin in _allowed_browser_origins():
+        if origin not in sources:
+            sources.append(origin)
+    current = _normalize_origin(str(request.base_url))
+    if current and current not in sources:
+        sources.append(current)
+    return " ".join(sources)
 
 
 def _ensure_allowed_websocket_origin(websocket: WebSocket) -> bool:
@@ -377,6 +401,7 @@ def _ensure_allowed_websocket_origin(websocket: WebSocket) -> bool:
 
 
 def _security_headers(request: Request, response: Response) -> None:
+    connect_sources = _csp_connect_sources(request)
     csp = "; ".join([
         "default-src 'self'",
         "base-uri 'self'",
@@ -387,8 +412,8 @@ def _security_headers(request: Request, response: Response) -> None:
         "media-src 'self' blob: data: https:",
         "font-src 'self' data: https://fonts.gstatic.com",
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-        "script-src 'self' 'unsafe-inline'",
-        "connect-src 'self' https: http: ws: wss:",
+        "script-src 'self'",
+        f"connect-src {connect_sources}",
     ])
     response.headers.setdefault("Content-Security-Policy", csp)
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
@@ -396,7 +421,10 @@ def _security_headers(request: Request, response: Response) -> None:
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
     response.headers.setdefault("Origin-Agent-Cluster", "?1")
-    response.headers.setdefault("Cross-Origin-Resource-Policy", "cross-origin")
+    response.headers.setdefault(
+        "Cross-Origin-Resource-Policy",
+        "cross-origin" if request.url.path.startswith("/api/") else "same-origin",
+    )
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
     response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
     if getattr(request.state, "request_id", None):
@@ -1965,7 +1993,24 @@ async def api_update_user_panel_preferences(request: Request, payload: PanelPref
     if not scoped_guild_id or not username:
         raise HTTPException(status_code=403, detail="Guild account access required to save panel preferences")
     try:
-        preferences = _clean_panel_preferences(payload)
+        current_profile = await db.get_account_profile(username, scoped_guild_id)
+        if not current_profile:
+            raise HTTPException(status_code=404, detail="Account profile not found")
+        defaults = _clean_panel_preferences(PanelPreferencesUpdateRequest())
+        stored_preferences = current_profile.get("panel_preferences") or {}
+        if isinstance(stored_preferences, str):
+            try:
+                stored_preferences = json.loads(stored_preferences)
+            except Exception:
+                stored_preferences = {}
+        if not isinstance(stored_preferences, dict):
+            stored_preferences = {}
+        try:
+            base_preferences = _clean_panel_preferences(PanelPreferencesUpdateRequest(**stored_preferences)) if stored_preferences else defaults
+        except Exception:
+            base_preferences = defaults
+        requested_updates = payload.model_dump(exclude_unset=True)
+        preferences = _clean_panel_preferences(PanelPreferencesUpdateRequest(**{**base_preferences, **requested_updates}))
         profile = await db.update_account_panel_preferences(username, scoped_guild_id, preferences)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -2115,8 +2160,12 @@ async def api_swarm_accounts_admin(request: Request, query: str = "", limit: int
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        action_logger.error("Failed to fetch SwarmPanel account admin data: %s", exc)
-        raise HTTPException(status_code=503, detail=f"SwarmPanel account database unavailable: {exc}")
+        request_id = getattr(request.state, "request_id", "unknown")
+        action_logger.exception("Failed to fetch SwarmPanel account admin data request_id=%s", request_id)
+        raise HTTPException(
+            status_code=503,
+            detail=f"SwarmPanel account database unavailable. Reference: {request_id}",
+        ) from exc
 
 
 @app.post("/api/swarm-accounts/update")
@@ -2267,8 +2316,12 @@ async def system_diagnostics(request: Request, force: bool = False):
     try:
         return await diagnostics_service.get_snapshot(force=force)
     except Exception as exc:
-        action_logger.exception("Failed collecting diagnostics: %s", exc)
-        raise HTTPException(status_code=503, detail=f"Diagnostics unavailable: {exc}")
+        request_id = getattr(request.state, "request_id", "unknown")
+        action_logger.exception("Failed collecting diagnostics request_id=%s", request_id)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Diagnostics unavailable. Reference: {request_id}",
+        ) from exc
 
 
 @app.get("/api/telegram/status")

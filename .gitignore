@@ -13,3 +13,14 @@ npm-debug.log*
 *.bak
 .aria_patch_backups/
 backups/*.sql
+# Secret/runtime-safe export hygiene
+.env.*
+!.env.example
+env.zip
+live-config.json
+*.pid
+*.tmp
+*.backup
+*.backup.*
+scripts.bak*/
+backups/

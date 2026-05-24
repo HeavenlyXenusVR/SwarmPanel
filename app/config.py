@@ -84,6 +84,7 @@ class Settings:
     bot_control_source_max_chars: int
     login_form_rate_limit_per_15m: int
     register_form_rate_limit_per_hour: int
+    live_mode: bool
 
 
 def load_settings() -> Settings:
@@ -103,9 +104,9 @@ def load_settings() -> Settings:
         cors_allowed_origins=_env_csv("PANEL_CORS_ALLOWED_ORIGINS"),
         trusted_hosts=_env_csv("PANEL_TRUSTED_HOSTS"),
         api_token_ttl_seconds=int(_env("PANEL_API_TOKEN_TTL_SECONDS", "43200")),
-        pages_public_url=_env("PANEL_PAGES_PUBLIC_URL", "https://heavenlyxenusvr.github.io/SwarmPanel/"),
+        pages_public_url=_env("PANEL_PAGES_PUBLIC_URL"),
         image_gallery_schema=_env("IMAGE_GALLERY_DB_SCHEMA") or _env("GALLERY_DB_SCHEMA", "image_gallery"),
-        site_owner_email=(_env("SWARM_PANEL_SITE_OWNER_EMAIL") or _env("IMAGE_GALLERY_OWNER_EMAIL") or "heavenlyxenusvr@icloud.com").lower(),
+        site_owner_email=(_env("SWARM_PANEL_SITE_OWNER_EMAIL") or _env("IMAGE_GALLERY_OWNER_EMAIL")).lower(),
         smtp_host=_env("PANEL_SMTP_HOST") or _env("SMTP_HOST"),
         smtp_port=int(_env("PANEL_SMTP_PORT") or _env("SMTP_PORT") or "587"),
         smtp_username=_env("PANEL_SMTP_USERNAME") or _env("SMTP_USERNAME"),
@@ -126,6 +127,7 @@ def load_settings() -> Settings:
         bot_control_source_max_chars=max(50, min(2000, int(_env("PANEL_BOT_CONTROL_SOURCE_MAX_CHARS", "500")))),
         login_form_rate_limit_per_15m=max(1, int(_env("PANEL_LOGIN_FORM_RATE_LIMIT_PER_15M", "12"))),
         register_form_rate_limit_per_hour=max(1, int(_env("PANEL_REGISTER_FORM_RATE_LIMIT_PER_HOUR", "8"))),
+        live_mode=_env_bool("PANEL_LIVE_MODE", False) or _env_bool("SWARM_PANEL_LIVE_MODE", False),
     )
     validate_settings(settings)
     return settings
@@ -143,5 +145,14 @@ def validate_settings(settings: Settings) -> None:
         raise RuntimeError("PANEL_SESSION_SECRET must be at least 32 characters long")
     if settings.telegram_bot_token and settings.telegram_polling_enabled and not (settings.telegram_allowed_chat_ids or settings.telegram_allowed_usernames):
         raise RuntimeError("PANEL_TELEGRAM_ALLOWED_CHAT_IDS or PANEL_TELEGRAM_ALLOWED_USERNAMES must be set when Telegram polling is enabled")
+    if settings.live_mode:
+        if not settings.pages_public_url:
+            missing.append("PANEL_PAGES_PUBLIC_URL")
+        if not settings.cors_allowed_origins:
+            missing.append("PANEL_CORS_ALLOWED_ORIGINS")
+        if not settings.site_owner_email:
+            missing.append("SWARM_PANEL_SITE_OWNER_EMAIL")
+        if not settings.session_https_only:
+            raise RuntimeError("PANEL_SESSION_HTTPS_ONLY=true is required when PANEL_LIVE_MODE=true")
     if missing:
         raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")

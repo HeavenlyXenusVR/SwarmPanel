@@ -9,13 +9,32 @@ export PATH="${HOME}/.local/bin:${HOME}/.nix-profile/bin:/etc/profiles/per-user/
 
 PORT="${1:-8000}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+read_env_value() {
+  local key="$1"
+  local env_file="${ROOT_DIR}/.env"
+  [[ -f "${env_file}" ]] || return 0
+  grep -E "^${key}=" "${env_file}" | tail -n 1 | cut -d= -f2- | sed -e 's/^\"//' -e 's/\"$//' -e "s/^'//" -e "s/'$//"
+}
 VENV_DIR="${ROOT_DIR}/.venv"
 BIN_DIR="${ROOT_DIR}/.bin"
 PYTHON_BIN="${VENV_DIR}/bin/python"
 PYTHON_TARGET_DIR="${ROOT_DIR}/.runtime/python-packages"
 CONFIG_FILE="${ROOT_DIR}/live-config.json"
-PAGES_ORIGIN="${PANEL_PAGES_ORIGIN:-https://heavenlyxenusvr.github.io}"
-PAGES_URL="${PANEL_PAGES_PUBLIC_URL:-https://heavenlyxenusvr.github.io/SwarmPanel/}"
+PAGES_ORIGIN="${PANEL_PAGES_ORIGIN:-$(read_env_value PANEL_PAGES_ORIGIN)}"
+PAGES_URL="${PANEL_PAGES_PUBLIC_URL:-$(read_env_value PANEL_PAGES_PUBLIC_URL)}"
+if [[ -z "${PAGES_URL}" ]]; then
+  echo "PANEL_PAGES_PUBLIC_URL must be set for live mode, for example: https://YOUR_GITHUB_USERNAME.github.io/SwarmPanel/" >&2
+  exit 1
+fi
+if [[ -z "${PAGES_ORIGIN}" ]]; then
+  PAGES_ORIGIN="$(python3 - "${PAGES_URL}" <<'PY'
+import sys
+from urllib.parse import urlparse
+parsed = urlparse(sys.argv[1] if len(sys.argv) > 1 else '')
+print(f'{parsed.scheme}://{parsed.netloc}' if parsed.scheme and parsed.netloc else '')
+PY
+)"
+fi
 LOG_DIR="${ROOT_DIR}/.runtime"
 UVICORN_LOG="${LOG_DIR}/uvicorn.log"
 TUNNEL_LOG="${LOG_DIR}/cloudflared.log"
@@ -220,6 +239,8 @@ acquire_instance_lock
 install_python_deps
 CLOUDFLARED="$(cloudflared_bin)"
 
+export PANEL_LIVE_MODE="${PANEL_LIVE_MODE:-true}"
+export PANEL_SESSION_HTTPS_ONLY="${PANEL_SESSION_HTTPS_ONLY:-true}"
 export PANEL_PAGES_PUBLIC_URL="${PAGES_URL}"
 export PANEL_CORS_ALLOWED_ORIGINS="${PANEL_CORS_ALLOWED_ORIGINS:-${PAGES_ORIGIN},${PAGES_URL%/},http://127.0.0.1:${PORT},http://localhost:${PORT}}"
 if [[ -z "${PANEL_DB_HOST:-}" || "${PANEL_DB_HOST}" == "host.docker.internal" ]]; then

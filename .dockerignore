@@ -15,3 +15,10 @@ node_modules/
 *.pid
 *.backup*
 *.bak
+# Never ship local secrets or runtime state into Docker build context
+env.zip
+live-config.json
+swarm_panel.log
+scripts.bak*/
+backups/
+*.tmp

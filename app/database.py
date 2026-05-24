@@ -3436,7 +3436,7 @@ class PanelDatabase:
         except Exception:
             pass
 
-    async def _shuffle_live_queue(self, cur: aiomysql.DictCursor, schema: str, prefix: str, gid: int, bot_key: str) -> int:
+    async def _shuffle_live_queue(self, cur: aiomysql.DictCursor, schema: str, prefix: str, gid: int, bot_key: str, *, manage_transaction: bool = True) -> int:
         await cur.execute(
             f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_queue` "
             "(id INT AUTO_INCREMENT PRIMARY KEY, guild_id BIGINT, "
@@ -3463,7 +3463,8 @@ class PanelDatabase:
         # the old pre-shuffle order.
         insert_values = [tuple(row[column] for column in cols) for row in rows]
         try:
-            await cur.execute("START TRANSACTION")
+            if manage_transaction:
+                await cur.execute("START TRANSACTION")
             await cur.execute(f"DELETE FROM `{schema}`.`{prefix}_queue` WHERE guild_id = %s AND bot_name = %s", (gid, bot_key))
             if insert_values:
                 await cur.executemany(
@@ -3489,23 +3490,25 @@ class PanelDatabase:
                     gid,
                     exc_info=True,
                 )
-            await cur.execute("COMMIT")
+            if manage_transaction:
+                await cur.execute("COMMIT")
         except Exception:
-            try:
-                await cur.execute("ROLLBACK")
-            except Exception:
-                pass
+            if manage_transaction:
+                try:
+                    await cur.execute("ROLLBACK")
+                except Exception:
+                    pass
             raise
         return len(rows)
 
-    async def _prime_panel_playback_defaults(self, cur: aiomysql.DictCursor, schema: str, prefix: str, gid: int, bot_key: str) -> int:
+    async def _prime_panel_playback_defaults(self, cur: aiomysql.DictCursor, schema: str, prefix: str, gid: int, bot_key: str, *, manage_transaction: bool = True) -> int:
         await self._ensure_music_guild_settings_schema(cur, schema, prefix)
         await cur.execute(
             f"INSERT INTO `{schema}`.`{prefix}_guild_settings` (guild_id, loop_mode) VALUES (%s, %s) "
             f"ON DUPLICATE KEY UPDATE loop_mode = VALUES(loop_mode)",
             (gid, "queue"),
         )
-        return await self._shuffle_live_queue(cur, schema, prefix, gid, bot_key)
+        return await self._shuffle_live_queue(cur, schema, prefix, gid, bot_key, manage_transaction=manage_transaction)
 
     async def control_bot(self, bot_key: str, guild_id: str, action: str, payload: Any = None) -> dict[str, Any]:
         bot = BOT_INDEX.get(bot_key)
@@ -3525,314 +3528,322 @@ class PanelDatabase:
         async with self.pool.acquire() as conn:
             # Explicit DictCursor fixes Shuffle crashes, explicit commit fixes silent rollbacks
             async with conn.cursor(aiomysql.DictCursor) as cur:
-                if action in ["PAUSE", "RESUME", "SKIP", "STOP"]:
-                    await self._clear_pending_orders(cur, schema, prefix, gid, bot_key)
-                    await asyncio.wait_for(cur.execute(f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_overrides` (guild_id BIGINT, bot_name VARCHAR(50), command VARCHAR(20), PRIMARY KEY(guild_id, bot_name))"), timeout=15)
-                    await cur.execute(f"REPLACE INTO `{schema}`.`{prefix}_swarm_overrides` (guild_id, bot_name, command) VALUES (%s, %s, %s)", (gid, bot_key, action))
-                    # Mirror the intended pause/resume state immediately so the panel does not lag behind Discord.
-                    try:
-                        await cur.execute(f"ALTER TABLE `{schema}`.`{prefix}_playback_state` ADD COLUMN is_paused BOOLEAN DEFAULT FALSE")
-                    except Exception:
-                        pass
-                    if action == "PAUSE":
-                        await cur.execute(
-                            f"UPDATE `{schema}`.`{prefix}_playback_state` SET is_paused = TRUE, is_playing = FALSE WHERE guild_id = %s AND bot_name = %s",
-                            (gid, bot_key),
-                        )
-                    elif action == "RESUME":
-                        await cur.execute(
-                            f"UPDATE `{schema}`.`{prefix}_playback_state` SET is_paused = FALSE, is_playing = TRUE WHERE guild_id = %s AND bot_name = %s",
-                            (gid, bot_key),
-                        )
-                    elif action in {"STOP", "SKIP"}:
-                        await cur.execute(
-                            f"UPDATE `{schema}`.`{prefix}_playback_state` SET is_paused = FALSE WHERE guild_id = %s AND bot_name = %s",
-                            (gid, bot_key),
-                        )
-                    result["message"] = f"{bot.display_name} will {action.lower()} in guild {gid}."
+                await cur.execute("START TRANSACTION")
+                try:
+                    if action in ["PAUSE", "RESUME", "SKIP", "STOP"]:
+                        await self._clear_pending_orders(cur, schema, prefix, gid, bot_key)
+                        await asyncio.wait_for(cur.execute(f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_overrides` (guild_id BIGINT, bot_name VARCHAR(50), command VARCHAR(20), PRIMARY KEY(guild_id, bot_name))"), timeout=15)
+                        await cur.execute(f"REPLACE INTO `{schema}`.`{prefix}_swarm_overrides` (guild_id, bot_name, command) VALUES (%s, %s, %s)", (gid, bot_key, action))
+                        # Mirror the intended pause/resume state immediately so the panel does not lag behind Discord.
+                        try:
+                            await cur.execute(f"ALTER TABLE `{schema}`.`{prefix}_playback_state` ADD COLUMN is_paused BOOLEAN DEFAULT FALSE")
+                        except Exception:
+                            pass
+                        if action == "PAUSE":
+                            await cur.execute(
+                                f"UPDATE `{schema}`.`{prefix}_playback_state` SET is_paused = TRUE, is_playing = FALSE WHERE guild_id = %s AND bot_name = %s",
+                                (gid, bot_key),
+                            )
+                        elif action == "RESUME":
+                            await cur.execute(
+                                f"UPDATE `{schema}`.`{prefix}_playback_state` SET is_paused = FALSE, is_playing = TRUE WHERE guild_id = %s AND bot_name = %s",
+                                (gid, bot_key),
+                            )
+                        elif action in {"STOP", "SKIP"}:
+                            await cur.execute(
+                                f"UPDATE `{schema}`.`{prefix}_playback_state` SET is_paused = FALSE WHERE guild_id = %s AND bot_name = %s",
+                                (gid, bot_key),
+                            )
+                        result["message"] = f"{bot.display_name} will {action.lower()} in guild {gid}."
                 
-                elif action == "RESTART":
-                    await self._clear_pending_orders(cur, schema, prefix, 0, bot_key)
-                    # BUG FIX: bots poll swarm_overrides every 2 s, but they NEVER read
-                    # swarm_health for a RESTART signal.  Writing to swarm_health was a
-                    # silent no-op.  Corrected: write RESTART to swarm_overrides (guild 0)
-                    # so aria_command_listener picks it up and calls sys.exit(0).
-                    await cur.execute(
-                        f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_overrides` "
-                        "(guild_id BIGINT, bot_name VARCHAR(50), command VARCHAR(20), "
-                        "PRIMARY KEY(guild_id, bot_name))"
-                    )
-                    await cur.execute(
-                        f"REPLACE INTO `{schema}`.`{prefix}_swarm_overrides` "
-                        "(guild_id, bot_name, command) VALUES (%s, %s, %s)",
-                        (0, bot_key, "RESTART"),
-                    )
-                    # Mark only this bot's runtime flags stale without wiping recovery metadata for other bots.
-                    try:
+                    elif action == "RESTART":
+                        await self._clear_pending_orders(cur, schema, prefix, 0, bot_key)
+                        # BUG FIX: bots poll swarm_overrides every 2 s, but they NEVER read
+                        # swarm_health for a RESTART signal.  Writing to swarm_health was a
+                        # silent no-op.  Corrected: write RESTART to swarm_overrides (guild 0)
+                        # so aria_command_listener picks it up and calls sys.exit(0).
                         await cur.execute(
-                            f"UPDATE `{schema}`.`{prefix}_playback_state` SET is_playing = FALSE, is_paused = FALSE WHERE bot_name = %s",
-                            (bot_key,),
+                            f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_overrides` "
+                            "(guild_id BIGINT, bot_name VARCHAR(50), command VARCHAR(20), "
+                            "PRIMARY KEY(guild_id, bot_name))"
                         )
-                    except Exception:
-                        pass
-                    result["message"] = f"Restart signal queued for {bot.display_name}."
+                        await cur.execute(
+                            f"REPLACE INTO `{schema}`.`{prefix}_swarm_overrides` "
+                            "(guild_id, bot_name, command) VALUES (%s, %s, %s)",
+                            (0, bot_key, "RESTART"),
+                        )
+                        # Mark only this bot's runtime flags stale without wiping recovery metadata for other bots.
+                        try:
+                            await cur.execute(
+                                f"UPDATE `{schema}`.`{prefix}_playback_state` SET is_playing = FALSE, is_paused = FALSE WHERE bot_name = %s",
+                                (bot_key,),
+                            )
+                        except Exception:
+                            pass
+                        result["message"] = f"Restart signal queued for {bot.display_name}."
 
-                elif action == "CLEAR":
-                    await self._clear_pending_orders(cur, schema, prefix, gid, bot_key)
-                    await asyncio.wait_for(cur.execute(f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_overrides` (guild_id BIGINT, bot_name VARCHAR(50), command VARCHAR(20), PRIMARY KEY(guild_id, bot_name))"), timeout=15)
-                    await cur.execute(
-                        f"REPLACE INTO `{schema}`.`{prefix}_swarm_overrides` (guild_id, bot_name, command) VALUES (%s, %s, %s)",
-                        (gid, bot_key, "STOP"),
-                    )
-                    await cur.execute(
-                        f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_queue` "
-                        "(id INT AUTO_INCREMENT PRIMARY KEY, guild_id BIGINT, "
-                        "bot_name VARCHAR(50), video_url TEXT, title TEXT, requester_id BIGINT DEFAULT NULL)"
-                    )
-                    # Scope every clear by bot_name; clear backup + voice desired state so cleared tracks do not resurrect.
-                    await cur.execute(f"DELETE FROM `{schema}`.`{prefix}_queue` WHERE guild_id = %s AND bot_name = %s", (gid, bot_key))
-                    try:
-                        await cur.execute(f"DELETE FROM `{schema}`.`{prefix}_queue_backup` WHERE guild_id = %s AND bot_name = %s", (gid, bot_key))
-                    except Exception:
-                        pass
-                    try:
+                    elif action == "CLEAR":
+                        await self._clear_pending_orders(cur, schema, prefix, gid, bot_key)
+                        await asyncio.wait_for(cur.execute(f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_overrides` (guild_id BIGINT, bot_name VARCHAR(50), command VARCHAR(20), PRIMARY KEY(guild_id, bot_name))"), timeout=15)
                         await cur.execute(
-                            f"UPDATE `{schema}`.`{prefix}_playback_state` "
-                            "SET title = NULL, video_url = NULL, position_seconds = 0, is_playing = FALSE, is_paused = FALSE "
-                            "WHERE guild_id = %s AND bot_name = %s",
-                            (gid, bot_key),
+                            f"REPLACE INTO `{schema}`.`{prefix}_swarm_overrides` (guild_id, bot_name, command) VALUES (%s, %s, %s)",
+                            (gid, bot_key, "STOP"),
                         )
-                    except Exception:
+                        await cur.execute(
+                            f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_queue` "
+                            "(id INT AUTO_INCREMENT PRIMARY KEY, guild_id BIGINT, "
+                            "bot_name VARCHAR(50), video_url TEXT, title TEXT, requester_id BIGINT DEFAULT NULL)"
+                        )
+                        # Scope every clear by bot_name; clear backup + voice desired state so cleared tracks do not resurrect.
+                        await cur.execute(f"DELETE FROM `{schema}`.`{prefix}_queue` WHERE guild_id = %s AND bot_name = %s", (gid, bot_key))
+                        try:
+                            await cur.execute(f"DELETE FROM `{schema}`.`{prefix}_queue_backup` WHERE guild_id = %s AND bot_name = %s", (gid, bot_key))
+                        except Exception:
+                            pass
                         try:
                             await cur.execute(
                                 f"UPDATE `{schema}`.`{prefix}_playback_state` "
-                                "SET title = NULL, position_seconds = 0, is_playing = FALSE, is_paused = FALSE "
+                                "SET title = NULL, video_url = NULL, position_seconds = 0, is_playing = FALSE, is_paused = FALSE "
+                                "WHERE guild_id = %s AND bot_name = %s",
+                                (gid, bot_key),
+                            )
+                        except Exception:
+                            try:
+                                await cur.execute(
+                                    f"UPDATE `{schema}`.`{prefix}_playback_state` "
+                                    "SET title = NULL, position_seconds = 0, is_playing = FALSE, is_paused = FALSE "
+                                    "WHERE guild_id = %s AND bot_name = %s",
+                                    (gid, bot_key),
+                                )
+                            except Exception:
+                                pass
+                        try:
+                            await cur.execute(
+                                f"UPDATE `{schema}`.`{prefix}_voice_state` SET desired_connected = FALSE, connected_channel_id = NULL, disconnected_at = CURRENT_TIMESTAMP "
                                 "WHERE guild_id = %s AND bot_name = %s",
                                 (gid, bot_key),
                             )
                         except Exception:
                             pass
-                    try:
+                        result["message"] = f"Cleared the queue and current playback for guild {gid} on {bot.display_name}."
+
+                    elif action == "LOOP":
+                        mode = _normalize_loop_mode(payload.get("loop_mode") if isinstance(payload, dict) else payload)
+                        await self._ensure_music_guild_settings_schema(cur, schema, prefix)
                         await cur.execute(
-                            f"UPDATE `{schema}`.`{prefix}_voice_state` SET desired_connected = FALSE, connected_channel_id = NULL, disconnected_at = CURRENT_TIMESTAMP "
-                            "WHERE guild_id = %s AND bot_name = %s",
+                            f"INSERT INTO `{schema}`.`{prefix}_guild_settings` (guild_id, loop_mode) VALUES (%s, %s) "
+                            f"ON DUPLICATE KEY UPDATE loop_mode = VALUES(loop_mode)",
+                            (gid, mode),
+                        )
+                        result["loop_mode"] = mode
+                        result["message"] = f"Loop mode set to {mode} for guild {gid} on {bot.display_name}."
+
+                    elif action == "FILTER":
+                        mode = _normalize_filter_mode(payload.get("filter_mode") if isinstance(payload, dict) else payload)
+                        await self._ensure_music_guild_settings_schema(cur, schema, prefix)
+                        await cur.execute(
+                            f"INSERT INTO `{schema}`.`{prefix}_guild_settings` (guild_id, filter_mode) VALUES (%s, %s) "
+                            f"ON DUPLICATE KEY UPDATE filter_mode = VALUES(filter_mode)",
+                            (gid, mode),
+                        )
+                        await cur.execute(
+                            f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_overrides` "
+                            "(guild_id BIGINT, bot_name VARCHAR(50), command VARCHAR(20), PRIMARY KEY(guild_id, bot_name))"
+                        )
+                        await cur.execute(
+                            f"REPLACE INTO `{schema}`.`{prefix}_swarm_overrides` (guild_id, bot_name, command) VALUES (%s, %s, %s)",
+                            (gid, bot_key, "UPDATE_FILTER"),
+                        )
+                        result["filter_mode"] = mode
+                        result["message"] = f"Filter mode set to {mode} for guild {gid} on {bot.display_name}."
+
+                    elif action == "SHUFFLE":
+                        shuffled_count = await self._shuffle_live_queue(cur, schema, prefix, gid, bot_key, manage_transaction=False)
+                        result["queue_count"] = shuffled_count
+                        result["message"] = f"Shuffled {shuffled_count} queued tracks for guild {gid} on {bot.display_name}."
+
+                    elif action == "SMART_RECOMMEND":
+                        if not isinstance(payload, dict):
+                            raise ValueError("SMART_RECOMMEND payload must be an object with voice_channel_id")
+                        await self._clear_pending_orders(cur, schema, prefix, gid, bot_key)
+                        await self._ensure_music_intelligence_schema(cur, schema, prefix)
+                        voice_channel_id = _coerce_int(payload.get("voice_channel_id"), "voice_channel_id")
+                        text_channel_raw = payload.get("text_channel_id")
+                        text_channel_id = _coerce_int(text_channel_raw, "text_channel_id") if text_channel_raw not in (None, "", 0, "0") else 0
+                        requester_raw = payload.get("requester_id")
+                        requester_id = _coerce_int(requester_raw, "requester_id") if requester_raw not in (None, "", 0, "0") else None
+                        shuffled_count = await self._prime_panel_playback_defaults(cur, schema, prefix, gid, bot_key, manage_transaction=False)
+
+                        seed = None
+                        reason = "server_favorite"
+                        if requester_id:
+                            await cur.execute(
+                                f"""
+                                SELECT title, video_url, score
+                                FROM `{schema}`.`{prefix}_user_track_affinity`
+                                WHERE guild_id = %s AND user_id = %s AND dislike_count <= like_count
+                                ORDER BY score DESC, last_requested DESC
+                                LIMIT 1
+                                """,
+                                (gid, requester_id),
+                            )
+                            seed = await cur.fetchone()
+                            if seed:
+                                reason = "personal_taste"
+                        if not seed:
+                            await cur.execute(
+                                f"""
+                                SELECT title, video_url,
+                                       ((finish_count * 3) + (like_count * 5) + play_count - (skip_count * 2) - (dislike_count * 5)) AS smart_score
+                                FROM `{schema}`.`{prefix}_track_intelligence`
+                                WHERE guild_id = %s AND dislike_count <= like_count
+                                ORDER BY smart_score DESC, updated_at DESC
+                                LIMIT 1
+                                """,
+                                (gid,),
+                            )
+                            seed = await cur.fetchone()
+                        if not seed:
+                            raise ValueError("No smart recommendation seed exists for this bot and guild yet")
+
+                        seed_title = str(seed.get("title") or seed.get("video_url") or "").strip()
+                        query_text = f"ytmsearch:{_smart_query_from_title(seed_title)} radio"
+                        await cur.execute(
+                            f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_direct_orders` ("
+                            "id INT AUTO_INCREMENT PRIMARY KEY, "
+                            "bot_name VARCHAR(50), guild_id BIGINT, vc_id BIGINT, text_channel_id BIGINT, "
+                            "command VARCHAR(50), data TEXT, attempts INT NOT NULL DEFAULT 0, last_error TEXT NULL)"
+                        )
+                        await cur.execute(
+                            f"INSERT INTO `{schema}`.`{prefix}_swarm_direct_orders` "
+                            "(bot_name, guild_id, vc_id, text_channel_id, command, data) "
+                            "VALUES (%s, %s, %s, %s, %s, %s)",
+                            (bot_key, gid, voice_channel_id, text_channel_id, "PLAY", query_text),
+                        )
+                        await cur.execute(
+                            f"""
+                            INSERT INTO `{schema}`.`{prefix}_smart_recommendations`
+                            (guild_id, requester_id, seed_title, seed_url, query_text, reason)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                            """,
+                            (gid, requester_id, seed_title, seed.get("video_url"), query_text, reason),
+                        )
+                        result["seed_title"] = seed_title
+                        result["query_text"] = query_text
+                        result["reason"] = reason
+                        result["loop_mode"] = "queue"
+                        result["shuffled_queue_count"] = shuffled_count
+                        result["message"] = f"Queued a smart recommendation for {bot.display_name} in guild {gid} using {seed_title[:120]}."
+
+                    elif action == "PLAY":
+                        await self._clear_pending_orders(cur, schema, prefix, gid, bot_key)
+                        if not isinstance(payload, dict):
+                            raise ValueError("PLAY payload must be an object with source_url and voice_channel_id")
+
+                        source_url = str(payload.get("source_url") or payload.get("query") or "").strip()
+                        if not source_url:
+                            raise ValueError("Missing source_url for PLAY action")
+
+                        voice_channel_id = _coerce_int(payload.get("voice_channel_id"), "voice_channel_id")
+                        text_channel_raw = payload.get("text_channel_id")
+                        text_channel_id = _coerce_int(text_channel_raw, "text_channel_id") if text_channel_raw not in (None, "", 0, "0") else 0
+                        shuffled_count = await self._prime_panel_playback_defaults(cur, schema, prefix, gid, bot_key, manage_transaction=False)
+
+                        await cur.execute(
+                            f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_direct_orders` ("
+                            "id INT AUTO_INCREMENT PRIMARY KEY, "
+                            "bot_name VARCHAR(50), guild_id BIGINT, vc_id BIGINT, text_channel_id BIGINT, "
+                            "command VARCHAR(50), data TEXT, attempts INT NOT NULL DEFAULT 0, last_error TEXT NULL)"
+                        )
+                        await cur.execute(
+                            f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_overrides` "
+                            "(guild_id BIGINT, bot_name VARCHAR(50), command VARCHAR(20), PRIMARY KEY(guild_id, bot_name))"
+                        )
+                        await cur.execute(
+                            f"DELETE FROM `{schema}`.`{prefix}_swarm_overrides` WHERE guild_id = %s AND bot_name = %s",
                             (gid, bot_key),
                         )
+                        await cur.execute(
+                            f"DELETE FROM `{schema}`.`{prefix}_swarm_direct_orders` WHERE guild_id = %s AND bot_name = %s AND command = %s",
+                            (gid, bot_key, action),
+                        )
+                        await cur.execute(
+                            f"INSERT INTO `{schema}`.`{prefix}_swarm_direct_orders` "
+                            "(bot_name, guild_id, vc_id, text_channel_id, command, data) "
+                            "VALUES (%s, %s, %s, %s, %s, %s)",
+                            (bot_key, gid, voice_channel_id, text_channel_id, "PLAY", source_url),
+                        )
+                        result["loop_mode"] = "queue"
+                        result["shuffled_queue_count"] = shuffled_count
+                        result["message"] = f"Queued a direct PLAY order for {bot.display_name} in guild {gid}."
+
+                    elif action == "RECOVER":
+                        recover_voice_channel_id = 0
+                        if isinstance(payload, dict):
+                            raw_recover_vc = payload.get("voice_channel_id") or payload.get("vc_id")
+                            recover_voice_channel_id = _coerce_int(raw_recover_vc, "voice_channel_id") if raw_recover_vc not in (None, "", 0, "0") else 0
+                        await cur.execute(
+                            f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_direct_orders` ("
+                            "id INT AUTO_INCREMENT PRIMARY KEY, "
+                            "bot_name VARCHAR(50), guild_id BIGINT, vc_id BIGINT, text_channel_id BIGINT, "
+                            "command VARCHAR(50), data TEXT, attempts INT NOT NULL DEFAULT 0, last_error TEXT NULL)"
+                        )
+                        await cur.execute(
+                            f"INSERT INTO `{schema}`.`{prefix}_swarm_direct_orders` "
+                            "(bot_name, guild_id, vc_id, text_channel_id, command, data) "
+                            "VALUES (%s, %s, %s, %s, %s, %s)",
+                            (bot_key, gid, recover_voice_channel_id, 0, "RECOVER", "panel"),
+                        )
+                        result["message"] = f"Queued a direct RECOVER order for {bot.display_name} in guild {gid}."
+
+                    elif action == "LEAVE":
+                        await self._clear_pending_orders(cur, schema, prefix, gid, bot_key)
+                        force_leave = False
+                        if isinstance(payload, dict):
+                            force_leave = bool(payload.get("force"))
+                        await cur.execute(
+                            f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_direct_orders` ("
+                            "id INT AUTO_INCREMENT PRIMARY KEY, "
+                            "bot_name VARCHAR(50), guild_id BIGINT, vc_id BIGINT, text_channel_id BIGINT, "
+                            "command VARCHAR(50), data TEXT, attempts INT NOT NULL DEFAULT 0, last_error TEXT NULL)"
+                        )
+                        await cur.execute(
+                            f"DELETE FROM `{schema}`.`{prefix}_swarm_direct_orders` WHERE guild_id = %s AND bot_name = %s AND command = %s",
+                            (gid, bot_key, action),
+                        )
+                        await cur.execute(
+                            f"INSERT INTO `{schema}`.`{prefix}_swarm_direct_orders` "
+                            "(bot_name, guild_id, vc_id, text_channel_id, command, data) "
+                            "VALUES (%s, %s, %s, %s, %s, %s)",
+                            (bot_key, gid, 0, 0, "LEAVE", "force" if force_leave else ""),
+                        )
+                        result["message"] = f"Queued a direct LEAVE order for {bot.display_name} in guild {gid}."
+
+                    elif action == "SET_HOME":
+                        if not isinstance(payload, dict):
+                            raise ValueError("SET_HOME payload must be an object with voice_channel_id")
+
+                        voice_channel_id = _coerce_int(payload.get("voice_channel_id"), "voice_channel_id")
+                        await cur.execute(
+                            f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_bot_home_channels` "
+                            "(guild_id BIGINT, bot_name VARCHAR(50), home_vc_id BIGINT, PRIMARY KEY (guild_id, bot_name))"
+                        )
+                        await cur.execute(
+                            f"REPLACE INTO `{schema}`.`{prefix}_bot_home_channels` (guild_id, bot_name, home_vc_id) VALUES (%s, %s, %s)",
+                            (gid, bot_key, voice_channel_id),
+                        )
+                        result["voice_channel_id"] = voice_channel_id
+                        result["message"] = f"Set home channel for {bot.display_name} in guild {gid}."
+
+                    else:
+                        raise ValueError(f"Unsupported action: {action}")
+            
+                    await cur.execute("COMMIT")
+                except Exception:
+                    try:
+                        await cur.execute("ROLLBACK")
                     except Exception:
                         pass
-                    result["message"] = f"Cleared the queue and current playback for guild {gid} on {bot.display_name}."
-
-                elif action == "LOOP":
-                    mode = _normalize_loop_mode(payload.get("loop_mode") if isinstance(payload, dict) else payload)
-                    await self._ensure_music_guild_settings_schema(cur, schema, prefix)
-                    await cur.execute(
-                        f"INSERT INTO `{schema}`.`{prefix}_guild_settings` (guild_id, loop_mode) VALUES (%s, %s) "
-                        f"ON DUPLICATE KEY UPDATE loop_mode = VALUES(loop_mode)",
-                        (gid, mode),
-                    )
-                    result["loop_mode"] = mode
-                    result["message"] = f"Loop mode set to {mode} for guild {gid} on {bot.display_name}."
-
-                elif action == "FILTER":
-                    mode = _normalize_filter_mode(payload.get("filter_mode") if isinstance(payload, dict) else payload)
-                    await self._ensure_music_guild_settings_schema(cur, schema, prefix)
-                    await cur.execute(
-                        f"INSERT INTO `{schema}`.`{prefix}_guild_settings` (guild_id, filter_mode) VALUES (%s, %s) "
-                        f"ON DUPLICATE KEY UPDATE filter_mode = VALUES(filter_mode)",
-                        (gid, mode),
-                    )
-                    await cur.execute(
-                        f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_overrides` "
-                        "(guild_id BIGINT, bot_name VARCHAR(50), command VARCHAR(20), PRIMARY KEY(guild_id, bot_name))"
-                    )
-                    await cur.execute(
-                        f"REPLACE INTO `{schema}`.`{prefix}_swarm_overrides` (guild_id, bot_name, command) VALUES (%s, %s, %s)",
-                        (gid, bot_key, "UPDATE_FILTER"),
-                    )
-                    result["filter_mode"] = mode
-                    result["message"] = f"Filter mode set to {mode} for guild {gid} on {bot.display_name}."
-
-                elif action == "SHUFFLE":
-                    shuffled_count = await self._shuffle_live_queue(cur, schema, prefix, gid, bot_key)
-                    result["queue_count"] = shuffled_count
-                    result["message"] = f"Shuffled {shuffled_count} queued tracks for guild {gid} on {bot.display_name}."
-
-                elif action == "SMART_RECOMMEND":
-                    if not isinstance(payload, dict):
-                        raise ValueError("SMART_RECOMMEND payload must be an object with voice_channel_id")
-                    await self._clear_pending_orders(cur, schema, prefix, gid, bot_key)
-                    await self._ensure_music_intelligence_schema(cur, schema, prefix)
-                    voice_channel_id = _coerce_int(payload.get("voice_channel_id"), "voice_channel_id")
-                    text_channel_raw = payload.get("text_channel_id")
-                    text_channel_id = _coerce_int(text_channel_raw, "text_channel_id") if text_channel_raw not in (None, "", 0, "0") else 0
-                    requester_raw = payload.get("requester_id")
-                    requester_id = _coerce_int(requester_raw, "requester_id") if requester_raw not in (None, "", 0, "0") else None
-                    shuffled_count = await self._prime_panel_playback_defaults(cur, schema, prefix, gid, bot_key)
-
-                    seed = None
-                    reason = "server_favorite"
-                    if requester_id:
-                        await cur.execute(
-                            f"""
-                            SELECT title, video_url, score
-                            FROM `{schema}`.`{prefix}_user_track_affinity`
-                            WHERE guild_id = %s AND user_id = %s AND dislike_count <= like_count
-                            ORDER BY score DESC, last_requested DESC
-                            LIMIT 1
-                            """,
-                            (gid, requester_id),
-                        )
-                        seed = await cur.fetchone()
-                        if seed:
-                            reason = "personal_taste"
-                    if not seed:
-                        await cur.execute(
-                            f"""
-                            SELECT title, video_url,
-                                   ((finish_count * 3) + (like_count * 5) + play_count - (skip_count * 2) - (dislike_count * 5)) AS smart_score
-                            FROM `{schema}`.`{prefix}_track_intelligence`
-                            WHERE guild_id = %s AND dislike_count <= like_count
-                            ORDER BY smart_score DESC, updated_at DESC
-                            LIMIT 1
-                            """,
-                            (gid,),
-                        )
-                        seed = await cur.fetchone()
-                    if not seed:
-                        raise ValueError("No smart recommendation seed exists for this bot and guild yet")
-
-                    seed_title = str(seed.get("title") or seed.get("video_url") or "").strip()
-                    query_text = f"ytmsearch:{_smart_query_from_title(seed_title)} radio"
-                    await cur.execute(
-                        f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_direct_orders` ("
-                        "id INT AUTO_INCREMENT PRIMARY KEY, "
-                        "bot_name VARCHAR(50), guild_id BIGINT, vc_id BIGINT, text_channel_id BIGINT, "
-                        "command VARCHAR(50), data TEXT, attempts INT NOT NULL DEFAULT 0, last_error TEXT NULL)"
-                    )
-                    await cur.execute(
-                        f"INSERT INTO `{schema}`.`{prefix}_swarm_direct_orders` "
-                        "(bot_name, guild_id, vc_id, text_channel_id, command, data) "
-                        "VALUES (%s, %s, %s, %s, %s, %s)",
-                        (bot_key, gid, voice_channel_id, text_channel_id, "PLAY", query_text),
-                    )
-                    await cur.execute(
-                        f"""
-                        INSERT INTO `{schema}`.`{prefix}_smart_recommendations`
-                        (guild_id, requester_id, seed_title, seed_url, query_text, reason)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        """,
-                        (gid, requester_id, seed_title, seed.get("video_url"), query_text, reason),
-                    )
-                    result["seed_title"] = seed_title
-                    result["query_text"] = query_text
-                    result["reason"] = reason
-                    result["loop_mode"] = "queue"
-                    result["shuffled_queue_count"] = shuffled_count
-                    result["message"] = f"Queued a smart recommendation for {bot.display_name} in guild {gid} using {seed_title[:120]}."
-
-                elif action == "PLAY":
-                    await self._clear_pending_orders(cur, schema, prefix, gid, bot_key)
-                    if not isinstance(payload, dict):
-                        raise ValueError("PLAY payload must be an object with source_url and voice_channel_id")
-
-                    source_url = str(payload.get("source_url") or payload.get("query") or "").strip()
-                    if not source_url:
-                        raise ValueError("Missing source_url for PLAY action")
-
-                    voice_channel_id = _coerce_int(payload.get("voice_channel_id"), "voice_channel_id")
-                    text_channel_raw = payload.get("text_channel_id")
-                    text_channel_id = _coerce_int(text_channel_raw, "text_channel_id") if text_channel_raw not in (None, "", 0, "0") else 0
-                    shuffled_count = await self._prime_panel_playback_defaults(cur, schema, prefix, gid, bot_key)
-
-                    await cur.execute(
-                        f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_direct_orders` ("
-                        "id INT AUTO_INCREMENT PRIMARY KEY, "
-                        "bot_name VARCHAR(50), guild_id BIGINT, vc_id BIGINT, text_channel_id BIGINT, "
-                        "command VARCHAR(50), data TEXT, attempts INT NOT NULL DEFAULT 0, last_error TEXT NULL)"
-                    )
-                    await cur.execute(
-                        f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_overrides` "
-                        "(guild_id BIGINT, bot_name VARCHAR(50), command VARCHAR(20), PRIMARY KEY(guild_id, bot_name))"
-                    )
-                    await cur.execute(
-                        f"DELETE FROM `{schema}`.`{prefix}_swarm_overrides` WHERE guild_id = %s AND bot_name = %s",
-                        (gid, bot_key),
-                    )
-                    await cur.execute(
-                        f"DELETE FROM `{schema}`.`{prefix}_swarm_direct_orders` WHERE guild_id = %s AND bot_name = %s AND command = %s",
-                        (gid, bot_key, action),
-                    )
-                    await cur.execute(
-                        f"INSERT INTO `{schema}`.`{prefix}_swarm_direct_orders` "
-                        "(bot_name, guild_id, vc_id, text_channel_id, command, data) "
-                        "VALUES (%s, %s, %s, %s, %s, %s)",
-                        (bot_key, gid, voice_channel_id, text_channel_id, "PLAY", source_url),
-                    )
-                    result["loop_mode"] = "queue"
-                    result["shuffled_queue_count"] = shuffled_count
-                    result["message"] = f"Queued a direct PLAY order for {bot.display_name} in guild {gid}."
-
-                elif action == "RECOVER":
-                    recover_voice_channel_id = 0
-                    if isinstance(payload, dict):
-                        raw_recover_vc = payload.get("voice_channel_id") or payload.get("vc_id")
-                        recover_voice_channel_id = _coerce_int(raw_recover_vc, "voice_channel_id") if raw_recover_vc not in (None, "", 0, "0") else 0
-                    await cur.execute(
-                        f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_direct_orders` ("
-                        "id INT AUTO_INCREMENT PRIMARY KEY, "
-                        "bot_name VARCHAR(50), guild_id BIGINT, vc_id BIGINT, text_channel_id BIGINT, "
-                        "command VARCHAR(50), data TEXT, attempts INT NOT NULL DEFAULT 0, last_error TEXT NULL)"
-                    )
-                    await cur.execute(
-                        f"INSERT INTO `{schema}`.`{prefix}_swarm_direct_orders` "
-                        "(bot_name, guild_id, vc_id, text_channel_id, command, data) "
-                        "VALUES (%s, %s, %s, %s, %s, %s)",
-                        (bot_key, gid, recover_voice_channel_id, 0, "RECOVER", "panel"),
-                    )
-                    result["message"] = f"Queued a direct RECOVER order for {bot.display_name} in guild {gid}."
-
-                elif action == "LEAVE":
-                    await self._clear_pending_orders(cur, schema, prefix, gid, bot_key)
-                    force_leave = False
-                    if isinstance(payload, dict):
-                        force_leave = bool(payload.get("force"))
-                    await cur.execute(
-                        f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_direct_orders` ("
-                        "id INT AUTO_INCREMENT PRIMARY KEY, "
-                        "bot_name VARCHAR(50), guild_id BIGINT, vc_id BIGINT, text_channel_id BIGINT, "
-                        "command VARCHAR(50), data TEXT, attempts INT NOT NULL DEFAULT 0, last_error TEXT NULL)"
-                    )
-                    await cur.execute(
-                        f"DELETE FROM `{schema}`.`{prefix}_swarm_direct_orders` WHERE guild_id = %s AND bot_name = %s AND command = %s",
-                        (gid, bot_key, action),
-                    )
-                    await cur.execute(
-                        f"INSERT INTO `{schema}`.`{prefix}_swarm_direct_orders` "
-                        "(bot_name, guild_id, vc_id, text_channel_id, command, data) "
-                        "VALUES (%s, %s, %s, %s, %s, %s)",
-                        (bot_key, gid, 0, 0, "LEAVE", "force" if force_leave else ""),
-                    )
-                    result["message"] = f"Queued a direct LEAVE order for {bot.display_name} in guild {gid}."
-
-                elif action == "SET_HOME":
-                    if not isinstance(payload, dict):
-                        raise ValueError("SET_HOME payload must be an object with voice_channel_id")
-
-                    voice_channel_id = _coerce_int(payload.get("voice_channel_id"), "voice_channel_id")
-                    await cur.execute(
-                        f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_bot_home_channels` "
-                        "(guild_id BIGINT, bot_name VARCHAR(50), home_vc_id BIGINT, PRIMARY KEY (guild_id, bot_name))"
-                    )
-                    await cur.execute(
-                        f"REPLACE INTO `{schema}`.`{prefix}_bot_home_channels` (guild_id, bot_name, home_vc_id) VALUES (%s, %s, %s)",
-                        (gid, bot_key, voice_channel_id),
-                    )
-                    result["voice_channel_id"] = voice_channel_id
-                    result["message"] = f"Set home channel for {bot.display_name} in guild {gid}."
-
-                else:
-                    raise ValueError(f"Unsupported action: {action}")
-            
-            await conn.commit() # FORCE COMMIT TO DATABASE
+                    raise
         self._invalidate_hot_caches()
         return result

@@ -15,31 +15,58 @@ const inFlightFetches = new Map();
 let remoteOriginPromise = null;
 let remoteOriginRefreshAfter = 0;
 let remoteConfig = null;
+let inMemoryToken = "";
 
-export function readToken() {
+function safeRemove(storage, key) {
   try {
-    return localStorage.getItem(TOKEN_KEY) || "";
+    storage?.removeItem(key);
   } catch (_error) {
-    return "";
+    // Storage can be unavailable in hardened browser contexts.
   }
 }
 
-export function writeToken(token) {
+export function readToken() {
+  if (inMemoryToken) return inMemoryToken;
   try {
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
+    const sessionToken = sessionStorage.getItem(TOKEN_KEY) || "";
+    if (sessionToken) {
+      inMemoryToken = sessionToken;
+      return sessionToken;
+    }
+    // One-time migration: stop keeping bearer tokens in persistent localStorage.
+    const legacyToken = localStorage.getItem(TOKEN_KEY) || "";
+    if (legacyToken) {
+      inMemoryToken = legacyToken;
+      sessionStorage.setItem(TOKEN_KEY, legacyToken);
+      localStorage.removeItem(TOKEN_KEY);
+      return legacyToken;
+    }
   } catch (_error) {
     // Some browser contexts block storage.
   }
+  return "";
+}
+
+export function writeToken(token) {
+  inMemoryToken = String(token || "");
+  try {
+    if (inMemoryToken) sessionStorage.setItem(TOKEN_KEY, inMemoryToken);
+    else sessionStorage.removeItem(TOKEN_KEY);
+  } catch (_error) {
+    // Some browser contexts block storage.
+  }
+  // Never persist bearer tokens beyond the active tab/session.
+  safeRemove(localStorage, TOKEN_KEY);
 }
 
 export function writeUsername(username) {
   try {
-    if (username) localStorage.setItem(USER_KEY, username);
-    else localStorage.removeItem(USER_KEY);
+    if (username) sessionStorage.setItem(USER_KEY, username);
+    else sessionStorage.removeItem(USER_KEY);
   } catch (_error) {
     // Some browser contexts block storage.
   }
+  safeRemove(localStorage, USER_KEY);
 }
 
 export function clearCache(prefix = "") {
