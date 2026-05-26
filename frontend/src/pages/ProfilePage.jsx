@@ -154,6 +154,7 @@ export default function ProfilePage({ ctx }) {
   const tags = Array.isArray(profile.profile_tags) ? profile.profile_tags : [];
   const links = Array.isArray(profile.profile_links) ? profile.profile_links : [];
   const activity = profile.activity || {};
+  const socialPermissions = data.social_permissions || {};
   const storedProfilePreferences = profile.panel_preferences && typeof profile.panel_preferences === "object" ? profile.panel_preferences : {};
   const profilePreferences = { ...ctx.preferences, ...storedProfilePreferences };
   const profileAccent = profile.theme_accent || profilePreferences.accent_color || ctx.preferences.accent_color || "#89b4fa";
@@ -185,9 +186,9 @@ export default function ProfilePage({ ctx }) {
             <div className="chip-row"><PresencePill user={profile} />{tags.map((tag) => <span key={tag}>{tag}</span>)}<span>{profile.favorite_bot || "swarm"}</span><span>{profile.server_name || `Guild ${profile.guild_id || "server"}`}</span></div>
           </div>
           <div className="public-profile-actions">
-            {publicMode ? <button type="button" onClick={follow}><Heart size={16} />{profile.followed_by_me ? "Unfollow" : "Follow"}</button> : null}
-            {publicMode ? <button type="button" onClick={friend} disabled={["friends", "pending_out", "self"].includes(profile.friend_status)}><UserPlus size={16} />{profile.friend_status === "friends" ? "Friends" : profile.friend_status === "pending_out" ? "Pending" : "Friend"}</button> : null}
-            {publicMode ? <Link className="button-link primary" to="/messages" state={{ user: profile }}><MessageCircle size={16} />Message</Link> : null}
+            {publicMode ? <button type="button" onClick={follow} disabled={!profile.followed_by_me && !socialPermissions.can_follow}><Heart size={16} />{profile.followed_by_me ? "Unfollow" : "Follow"}</button> : null}
+            {publicMode ? <button type="button" onClick={friend} disabled={!socialPermissions.can_friend || ["friends", "pending_out", "self"].includes(profile.friend_status)}><UserPlus size={16} />{profile.friend_status === "friends" ? "Friends" : profile.friend_status === "pending_out" ? "Pending" : "Friend"}</button> : null}
+            {publicMode ? (socialPermissions.can_message ? <Link className="button-link primary" to="/messages" state={{ user: profile }}><MessageCircle size={16} />Message</Link> : <button type="button" disabled><MessageCircle size={16} />Message Locked</button>) : null}
             {!publicMode && profile.id ? <Link className="button-link" to={`/users/${profile.id}`}><ExternalLink size={16} />Public View</Link> : null}
           </div>
         </section>
@@ -260,7 +261,7 @@ export default function ProfilePage({ ctx }) {
             <div className="panel form-panel">
               <h2><ShieldCheck size={18} /> Account</h2>
               <form className="mini-form" onSubmit={saveEmail}><label className="field"><span>Email</span><input type="email" value={identity.email} onChange={(event) => setIdentity((current) => ({ ...current, email: event.target.value }))} disabled={!editable} /></label><button type="submit" disabled={!editable || busy === "email"}><Mail size={16} />{busy === "email" ? "Saving" : "Save Email"}</button></form>
-              <form className="mini-form" onSubmit={verifyEmail}><label className="field"><span>Code</span><input value={identity.code} onChange={(event) => setIdentity((current) => ({ ...current, code: event.target.value }))} disabled={!editable} /></label><button type="submit" disabled={!editable || busy === "verify"}><Check size={16} />{busy === "verify" ? "Checking" : "Verify"}</button></form>
+              <form className="mini-form" onSubmit={verifyEmail}><label className="field"><span>Code</span><input value={identity.code} onChange={(event) => setIdentity((current) => ({ ...current, code: event.target.value }))} inputMode="numeric" maxLength={8} disabled={!editable} /></label><button type="submit" disabled={!editable || busy === "verify"}><Check size={16} />{busy === "verify" ? "Checking" : "Verify"}</button></form>
               <form className="mini-form" onSubmit={changePassword}><label className="field"><span>Current</span><input type="password" value={identity.current_password} onChange={(event) => setIdentity((current) => ({ ...current, current_password: event.target.value }))} disabled={!editable} /></label><label className="field"><span>New</span><input type="password" value={identity.new_password} onChange={(event) => setIdentity((current) => ({ ...current, new_password: event.target.value }))} disabled={!editable} /></label><button type="submit" disabled={!editable || busy === "password"}><KeyRound size={16} />{busy === "password" ? "Saving" : "Change"}</button></form>
             </div>
           </section>

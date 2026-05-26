@@ -39,6 +39,8 @@ SwarmPanel is the React and FastAPI command center for Aria and the 12-node musi
 - Destructive database actions require explicit owner confirmation.
 - Secrets belong in ignored environment files, never in committed code.
 - Admin mode is treated as owner-only authority, not a regular user feature.
+- Owner elevation requires a verified email that matches `SWARM_PANEL_SITE_OWNER_EMAIL`.
+- Guild account registration requires a Discord webhook proof from the target server.
 - External bot tokens are not surfaced in the frontend or README.
 - Queue and Medic data should be treated as operational telemetry, not decoration.
 

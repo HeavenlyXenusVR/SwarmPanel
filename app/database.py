@@ -35,6 +35,7 @@ ACCOUNT_PROFILE_COLUMNS = (
     ("email", "VARCHAR(255) NULL"),
     ("email_verified_at", "TIMESTAMP NULL DEFAULT NULL"),
     ("email_verification_token_hash", "CHAR(64) NULL"),
+    ("email_verification_code_hash", "CHAR(64) NULL"),
     ("email_verification_sent_at", "TIMESTAMP NULL DEFAULT NULL"),
     ("display_name", "VARCHAR(80) NULL"),
     ("avatar_url", "TEXT NULL"),
@@ -688,6 +689,7 @@ class PanelDatabase:
         password: str,
         email: str | None = None,
         email_verification_token: str | None = None,
+        email_verification_code: str | None = None,
     ) -> dict[str, Any]:
         username = _normalize_account_username(username)
         gid = _coerce_int(guild_id, "guild_id")
@@ -695,6 +697,7 @@ class PanelDatabase:
         password_hash = _account_password_hash(normalized_password)
         email = _normalize_email(email)
         token_hash = _verification_token_hash(email_verification_token) if email and email_verification_token else None
+        code_hash = _verification_token_hash(email_verification_code) if email and email_verification_code else None
         await self._ensure_connected()
         async with self.pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
@@ -727,11 +730,11 @@ class PanelDatabase:
                     await asyncio.wait_for(cur.execute(
                         f"""
                         INSERT INTO `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}` (
-                            username, guild_id, password_hash, email, email_verification_token_hash, email_verification_sent_at
+                            username, guild_id, password_hash, email, email_verification_token_hash, email_verification_code_hash, email_verification_sent_at
                         )
-                        VALUES (%s, %s, %s, %s, %s, CASE WHEN %s IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END)
+                        VALUES (%s, %s, %s, %s, %s, %s, CASE WHEN %s IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END)
                         """,
-                        (username, gid, password_hash, email, token_hash, token_hash),
+                        (username, gid, password_hash, email, token_hash, code_hash, token_hash),
                     ), timeout=15)
                     await asyncio.wait_for(conn.commit(), timeout=15)
                 except ValueError:
@@ -749,40 +752,53 @@ class PanelDatabase:
                     raise
         return {"username": username, "guild_id": str(gid), "email": email}
 
-    async def verify_account_email_by_token(self, token: str) -> dict[str, Any] | None:
+    async def verify_account_email_by_token(self, token: str, max_age_seconds: int) -> dict[str, Any] | None:
         token_hash = _verification_token_hash(token)
         row = await self._fetchone(
             f"""
             SELECT username, guild_id
             FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
             WHERE email_verification_token_hash = %s
+              AND email_verification_sent_at IS NOT NULL
+              AND email_verification_sent_at >= TIMESTAMPADD(SECOND, -%s, CURRENT_TIMESTAMP)
             LIMIT 1
             """,
-            (token_hash,),
+            (token_hash, max(1, int(max_age_seconds or 1))),
         )
         if not row:
             return None
         await self._execute(
             f"""
             UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
-            SET email_verified_at = CURRENT_TIMESTAMP, email_verification_token_hash = NULL
+            SET email_verified_at = CURRENT_TIMESTAMP,
+                email_verification_token_hash = NULL,
+                email_verification_code_hash = NULL
             WHERE username = %s AND guild_id = %s
             """,
             (row["username"], row["guild_id"]),
         )
         return {"username": row["username"], "guild_id": str(row["guild_id"])}
 
-    async def issue_account_email_verification_token(self, username: str, guild_id: str | int, token: str) -> dict[str, Any] | None:
+    async def issue_account_email_verification_token(
+        self,
+        username: str,
+        guild_id: str | int,
+        token: str,
+        code: str,
+    ) -> dict[str, Any] | None:
         username = _normalize_account_username(username)
         gid = _coerce_int(guild_id, "guild_id")
         token_hash = _verification_token_hash(token)
+        code_hash = _verification_token_hash(code)
         await self._execute(
             f"""
             UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
-            SET email_verification_token_hash = %s, email_verification_sent_at = CURRENT_TIMESTAMP
+            SET email_verification_token_hash = %s,
+                email_verification_code_hash = %s,
+                email_verification_sent_at = CURRENT_TIMESTAMP
             WHERE username = %s AND guild_id = %s AND email IS NOT NULL AND email_verified_at IS NULL
             """,
-            (token_hash, username, gid),
+            (token_hash, code_hash, username, gid),
         )
         return await self.get_account_profile(username, gid)
 
@@ -793,14 +809,24 @@ class PanelDatabase:
         await self._execute(
             f"""
             UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
-            SET email = %s, email_verified_at = NULL, email_verification_token_hash = NULL, email_verification_sent_at = NULL
+            SET email = %s,
+                email_verified_at = NULL,
+                email_verification_token_hash = NULL,
+                email_verification_code_hash = NULL,
+                email_verification_sent_at = NULL
             WHERE username = %s AND guild_id = %s
             """,
             (normalized, username, gid),
         )
         return await self.get_account_profile(username, gid)
 
-    async def verify_account_email_code(self, username: str, guild_id: str | int, code: str) -> dict[str, Any] | None:
+    async def verify_account_email_code(
+        self,
+        username: str,
+        guild_id: str | int,
+        code: str,
+        max_age_seconds: int,
+    ) -> dict[str, Any] | None:
         username = _normalize_account_username(username)
         gid = _coerce_int(guild_id, "guild_id")
         token_hash = _verification_token_hash(code)
@@ -808,17 +834,24 @@ class PanelDatabase:
             f"""
             SELECT username, guild_id
             FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
-            WHERE username = %s AND guild_id = %s AND email IS NOT NULL AND email_verification_token_hash = %s
+            WHERE username = %s
+              AND guild_id = %s
+              AND email IS NOT NULL
+              AND email_verification_code_hash = %s
+              AND email_verification_sent_at IS NOT NULL
+              AND email_verification_sent_at >= TIMESTAMPADD(SECOND, -%s, CURRENT_TIMESTAMP)
             LIMIT 1
             """,
-            (username, gid, token_hash),
+            (username, gid, token_hash, max(1, int(max_age_seconds or 1))),
         )
         if not row:
             return None
         await self._execute(
             f"""
             UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
-            SET email_verified_at = CURRENT_TIMESTAMP, email_verification_token_hash = NULL
+            SET email_verified_at = CURRENT_TIMESTAMP,
+                email_verification_token_hash = NULL,
+                email_verification_code_hash = NULL
             WHERE username = %s AND guild_id = %s
             """,
             (username, gid),
@@ -1090,6 +1123,7 @@ class PanelDatabase:
             cleaned["email"] = email
             cleaned["email_verified_at"] = None
             cleaned["email_verification_token_hash"] = None
+            cleaned["email_verification_code_hash"] = None
             cleaned["email_verification_sent_at"] = None
         if "display_name" in updates:
             cleaned["display_name"] = str(updates.get("display_name") or "").strip()[:80] or None
@@ -1235,10 +1269,16 @@ class PanelDatabase:
             f"""
             UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
             SET email_verified_at = CASE WHEN %s THEN CURRENT_TIMESTAMP ELSE NULL END,
-                email_verification_token_hash = CASE WHEN %s THEN NULL ELSE email_verification_token_hash END
+                email_verification_token_hash = CASE WHEN %s THEN NULL ELSE email_verification_token_hash END,
+                email_verification_code_hash = CASE WHEN %s THEN NULL ELSE email_verification_code_hash END
             WHERE id = %s
             """,
-            (1 if verified else 0, 1 if verified else 0, _coerce_int(account_id, "account_id")),
+            (
+                1 if verified else 0,
+                1 if verified else 0,
+                1 if verified else 0,
+                _coerce_int(account_id, "account_id"),
+            ),
         )
         return await self.get_account_admin(account_id)
 
@@ -1285,15 +1325,23 @@ class PanelDatabase:
         )
         return await self.get_account_admin(safe_account_id)
 
-    async def issue_account_email_verification_token_by_id(self, account_id: int, token: str) -> dict[str, Any] | None:
+    async def issue_account_email_verification_token_by_id(
+        self,
+        account_id: int,
+        token: str,
+        code: str,
+    ) -> dict[str, Any] | None:
         token_hash = _verification_token_hash(token)
+        code_hash = _verification_token_hash(code)
         await self._execute(
             f"""
             UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
-            SET email_verification_token_hash = %s, email_verification_sent_at = CURRENT_TIMESTAMP
+            SET email_verification_token_hash = %s,
+                email_verification_code_hash = %s,
+                email_verification_sent_at = CURRENT_TIMESTAMP
             WHERE id = %s AND email IS NOT NULL AND email_verified_at IS NULL
             """,
-            (token_hash, _coerce_int(account_id, "account_id")),
+            (token_hash, code_hash, _coerce_int(account_id, "account_id")),
         )
         return await self.get_account_admin(account_id)
 

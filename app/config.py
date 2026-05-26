@@ -84,6 +84,7 @@ class Settings:
     bot_control_source_max_chars: int
     login_form_rate_limit_per_15m: int
     register_form_rate_limit_per_hour: int
+    email_verification_ttl_seconds: int
     live_mode: bool
 
 
@@ -127,6 +128,7 @@ def load_settings() -> Settings:
         bot_control_source_max_chars=max(50, min(2000, int(_env("PANEL_BOT_CONTROL_SOURCE_MAX_CHARS", "500")))),
         login_form_rate_limit_per_15m=max(1, int(_env("PANEL_LOGIN_FORM_RATE_LIMIT_PER_15M", "12"))),
         register_form_rate_limit_per_hour=max(1, int(_env("PANEL_REGISTER_FORM_RATE_LIMIT_PER_HOUR", "8"))),
+        email_verification_ttl_seconds=max(300, int(_env("PANEL_EMAIL_VERIFICATION_TTL_SECONDS", "86400"))),
         live_mode=_env_bool("PANEL_LIVE_MODE", False) or _env_bool("SWARM_PANEL_LIVE_MODE", False),
     )
     validate_settings(settings)

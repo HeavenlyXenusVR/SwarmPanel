@@ -46,6 +46,7 @@ def send_verification_email(settings: Settings, to_email: str, verify_url: str, 
         "Enter this code in SwarmPanel to verify your email address.\n\n"
         "You can also verify by opening the link below:\n\n"
         f"{verify_url}\n\n"
+        "This verification code and link expire automatically.\n\n"
         "If you did not create this account, you can ignore this message.",
     )
 

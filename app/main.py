@@ -257,7 +257,48 @@ def _image_gallery_verification_url(request: Request, token: str) -> str:
 
 
 def _verification_code() -> str:
-    return f"{secrets.randbelow(1_000_000):06d}"
+    return f"{secrets.randbelow(100_000_000):08d}"
+
+
+def _verification_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def _verification_material() -> tuple[str, str]:
+    return _verification_token(), _verification_code()
+
+
+async def _verify_guild_registration_proof(guild_id: str | int, proof_url: Any) -> dict[str, str]:
+    verified_guild_id = str(int(str(guild_id).strip()))
+    normalized_url = _validate_discord_webhook_url(proof_url)
+    parsed = urlparse(normalized_url)
+    parts = [part for part in parsed.path.split("/") if part]
+    webhook_id = parts[2]
+    webhook_token = parts[3]
+    lookup_url = f"https://discord.com/api/v10/webhooks/{quote(webhook_id, safe='')}/{quote(webhook_token, safe='')}"
+    timeout = aiohttp.ClientTimeout(total=10)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(lookup_url) as response:
+                if response.status >= 400:
+                    raise ValueError("The Discord webhook proof could not be verified. Create a new webhook in that server and try again.")
+                payload = await response.json(content_type=None)
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("The Discord webhook proof could not be verified right now. Try again in a moment.") from exc
+
+    resolved_guild_id = str(payload.get("guild_id") or "").strip()
+    if resolved_guild_id != verified_guild_id:
+        raise ValueError("The Discord webhook proof belongs to a different guild.")
+    channel_id = str(payload.get("channel_id") or "").strip()
+    if not channel_id:
+        raise ValueError("The Discord webhook proof did not return a channel binding.")
+    return {
+        "guild_id": resolved_guild_id,
+        "channel_id": channel_id,
+        "webhook_name": str(payload.get("name") or "Webhook").strip()[:80],
+    }
 
 
 def _client_ip(request: Request) -> str:
@@ -486,6 +527,7 @@ class SessionRegisterRequest(BaseModel):
     guild_id: str | int
     password: str
     email: str | None = None
+    registration_proof_url: str
 
 
 class SessionAdminModeRequest(BaseModel):
@@ -676,7 +718,7 @@ def _is_site_owner_email(email: Any) -> bool:
 
 
 def _owner_email_requires_verification() -> bool:
-    return str(os.getenv("SWARM_PANEL_OWNER_EMAIL_REQUIRES_VERIFICATION", "0") or "").strip().lower() in {"1", "true", "yes", "on"}
+    return str(os.getenv("SWARM_PANEL_OWNER_EMAIL_REQUIRES_VERIFICATION", "1") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _is_site_owner_account(account: dict[str, Any] | None) -> bool:
@@ -720,6 +762,54 @@ async def _account_id_for_auth(auth: dict[str, Any]) -> int:
     if not profile:
         raise HTTPException(status_code=404, detail="Account profile not found")
     return int(profile["id"])
+
+
+def _social_mode(profile: dict[str, Any] | None) -> str:
+    mode = str((profile or {}).get("profile_social_mode") or "open").strip().lower()
+    return mode if mode in PROFILE_SOCIAL_MODES else "open"
+
+
+def _friend_status(profile: dict[str, Any] | None) -> str:
+    return str((profile or {}).get("friend_status") or "none").strip().lower()
+
+
+def _can_access_social_target(profile: dict[str, Any] | None, action: str) -> bool:
+    status = _friend_status(profile)
+    if status == "self":
+        return True
+
+    public_profile = bool((profile or {}).get("public_profile"))
+    mode = _social_mode(profile)
+    is_friend = status == "friends"
+    normalized_action = str(action or "").strip().lower()
+
+    if not public_profile:
+        return is_friend and normalized_action in {"message", "view_friends"}
+    if mode == "quiet":
+        return False
+    if mode == "friends":
+        if normalized_action == "friend_request":
+            return status not in {"friends", "pending_out", "pending_in", "self"}
+        return is_friend
+    return True
+
+
+def _social_permissions(profile: dict[str, Any] | None) -> dict[str, bool]:
+    status = _friend_status(profile)
+    return {
+        "can_follow": _can_access_social_target(profile, "follow") and status not in {"self", "pending_out"},
+        "can_friend": _can_access_social_target(profile, "friend_request"),
+        "can_message": _can_access_social_target(profile, "message") and status != "self",
+        "can_view_friends": _can_access_social_target(profile, "view_friends"),
+    }
+
+
+async def _load_social_target_profile(account_id: int, viewer_id: int | None) -> dict[str, Any]:
+    profile = await db.get_account_by_id(account_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    profile.update(await db.get_account_social_snapshot(int(profile["id"]), viewer_id))
+    return profile
 
 
 def _public_scoped_guild_id(auth: dict[str, Any] | None) -> str | None:
@@ -1579,21 +1669,30 @@ async def register_submit(
     guild_id: str = Form(...),
     password: str = Form(...),
     email: str = Form(""),
+    registration_proof_url: str = Form(...),
 ):
     ip = _client_ip(request)
     _rate_limit_auth(f"register-form:{ip}", limit=settings.register_form_rate_limit_per_hour, window_seconds=3600)
-    email_token = _verification_code() if email else None
+    email_token, email_code = _verification_material() if email else (None, None)
     try:
         registerable_guild_id = await _ensure_registerable_guild(guild_id)
-        account = await db.register_account_login(username, registerable_guild_id, password, email, email_token)
+        await _verify_guild_registration_proof(registerable_guild_id, registration_proof_url)
+        account = await db.register_account_login(
+            username,
+            registerable_guild_id,
+            password,
+            email,
+            email_token,
+            email_code,
+        )
     except ValueError as exc:
         return RedirectResponse(url=f"/login?mode=register&error={quote(str(exc)[:220])}", status_code=303)
     except Exception as exc:
         action_logger.warning("SwarmPanel registration failed for %s: %s", username, exc)
         return RedirectResponse(url="/login?mode=register&error=registration-failed", status_code=303)
 
-    if account.get("email") and email_token:
-        send_verification_email(settings, account["email"], _verification_url(request, email_token), email_token)
+    if account.get("email") and email_token and email_code:
+        send_verification_email(settings, account["email"], _verification_url(request, email_token), email_code)
     site_owner = _is_site_owner_account(account)
     _set_account_session(request, account["username"], account["guild_id"], admin_mode=site_owner, site_owner=site_owner)
     try:
@@ -1725,16 +1824,24 @@ async def api_session_login(request: Request, payload: SessionLoginRequest):
 async def api_session_register(request: Request, payload: SessionRegisterRequest):
     ip = _client_ip(request)
     _rate_limit_auth(f"register-api:{ip}", limit=10, window_seconds=3600)
-    email_token = _verification_code() if payload.email else None
+    email_token, email_code = _verification_material() if payload.email else (None, None)
     try:
         registerable_guild_id = await _ensure_registerable_guild(payload.guild_id)
-        account = await db.register_account_login(payload.username, registerable_guild_id, payload.password, payload.email, email_token)
+        await _verify_guild_registration_proof(registerable_guild_id, payload.registration_proof_url)
+        account = await db.register_account_login(
+            payload.username,
+            registerable_guild_id,
+            payload.password,
+            payload.email,
+            email_token,
+            email_code,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
     verification_sent = False
-    if account.get("email") and email_token:
-        verification_sent = send_verification_email(settings, account["email"], _verification_url(request, email_token), email_token)
+    if account.get("email") and email_token and email_code:
+        verification_sent = send_verification_email(settings, account["email"], _verification_url(request, email_token), email_code)
 
     site_owner = _is_site_owner_account(account)
     _set_account_session(request, account["username"], account["guild_id"], admin_mode=site_owner, site_owner=site_owner)
@@ -1810,7 +1917,11 @@ async def api_session_admin_mode(request: Request, payload: SessionAdminModeRequ
 
 @app.get("/api/session/verify-email", name="api_verify_session_email")
 async def api_verify_session_email(request: Request, token: str):
-    account = await db.verify_account_email_by_token(token)
+    token = str(token or "").strip()[:200]
+    if not token:
+        raise HTTPException(status_code=400, detail="Missing verification token.")
+    _rate_limit_auth(f"session-email-link:{_client_ip(request)}", limit=30, window_seconds=3600)
+    account = await db.verify_account_email_by_token(token, settings.email_verification_ttl_seconds)
     if not account:
         if _wants_json(request):
             raise HTTPException(status_code=400, detail="Invalid or expired verification link.")
@@ -1835,9 +1946,9 @@ async def api_resend_session_verification(request: Request):
         raise HTTPException(status_code=400, detail="This account does not have an email address.")
     if profile.get("email_verified"):
         return {"ok": True, "email_verification_sent": False, "already_verified": True}
-    email_token = _verification_code()
-    profile = await db.issue_account_email_verification_token(username, scoped_guild_id, email_token)
-    verification_sent = bool(profile and send_verification_email(settings, profile["email"], _verification_url(request, email_token), email_token))
+    email_token, email_code = _verification_material()
+    profile = await db.issue_account_email_verification_token(username, scoped_guild_id, email_token, email_code)
+    verification_sent = bool(profile and send_verification_email(settings, profile["email"], _verification_url(request, email_token), email_code))
     return {"ok": verification_sent, "email_verification_sent": verification_sent, "already_verified": False}
 
 
@@ -1855,9 +1966,9 @@ async def api_update_session_email(request: Request, payload: SessionEmailUpdate
         raise HTTPException(status_code=400, detail=str(exc))
     verification_sent = False
     if profile and profile.get("email"):
-        email_token = _verification_code()
-        profile = await db.issue_account_email_verification_token(username, scoped_guild_id, email_token)
-        verification_sent = bool(profile and send_verification_email(settings, profile["email"], _verification_url(request, email_token), email_token))
+        email_token, email_code = _verification_material()
+        profile = await db.issue_account_email_verification_token(username, scoped_guild_id, email_token, email_code)
+        verification_sent = bool(profile and send_verification_email(settings, profile["email"], _verification_url(request, email_token), email_code))
     _sync_account_session_owner_state(request, profile)
     return {"ok": True, "profile": profile, "email_verification_sent": verification_sent}
 
@@ -1870,10 +1981,10 @@ async def api_verify_session_email_code(request: Request, payload: SessionEmailC
     username = str(auth.get("username") or "")
     if not scoped_guild_id or not username:
         raise HTTPException(status_code=403, detail="Guild account access required")
-    code = re.sub(r"\D+", "", str(payload.code or ""))[:12]
+    code = re.sub(r"\D+", "", str(payload.code or ""))[:16]
     if not code:
         raise HTTPException(status_code=400, detail="Enter the verification code from your email.")
-    profile = await db.verify_account_email_code(username, scoped_guild_id, code)
+    profile = await db.verify_account_email_code(username, scoped_guild_id, code, settings.email_verification_ttl_seconds)
     if not profile:
         raise HTTPException(status_code=400, detail="Invalid verification code.")
     _sync_account_session_owner_state(request, profile)
@@ -2058,11 +2169,13 @@ async def api_public_user_profile(account_id: int, request: Request):
     profile = await db.get_public_account_profile(account_id, viewer_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
-    friends = await db.list_account_friends(int(profile["id"])) if profile.get("profile_social_mode") != "quiet" else []
+    permissions = _social_permissions(profile)
+    friends = await db.list_account_friends(int(profile["id"])) if permissions["can_view_friends"] else []
     return {
         "ok": True,
         "profile": profile,
         "friends": friends[:12],
+        "social_permissions": permissions,
         "favorite_bot_options": [
             {"key": bot.key, "display_name": bot.display_name, "kind": bot.kind}
             for bot in ALL_BOTS
@@ -2074,6 +2187,9 @@ async def api_public_user_profile(account_id: int, request: Request):
 async def api_follow_account(account_id: int, request: Request, payload: SocialFollowRequest):
     auth = await _hydrate_site_owner_auth(request, _require_api_auth(request))
     actor_id = await _account_id_for_auth(auth)
+    target_profile = await _load_social_target_profile(account_id, actor_id)
+    if payload.following and not _social_permissions(target_profile)["can_follow"]:
+        raise HTTPException(status_code=403, detail="This profile is not accepting follows.")
     try:
         return {"ok": True, **await db.set_account_follow(actor_id, account_id, payload.following)}
     except ValueError as exc:
@@ -2084,6 +2200,9 @@ async def api_follow_account(account_id: int, request: Request, payload: SocialF
 async def api_send_account_friend_request(account_id: int, request: Request):
     auth = await _hydrate_site_owner_auth(request, _require_api_auth(request))
     actor_id = await _account_id_for_auth(auth)
+    target_profile = await _load_social_target_profile(account_id, actor_id)
+    if not _social_permissions(target_profile)["can_friend"]:
+        raise HTTPException(status_code=403, detail="This profile is not accepting friend requests.")
     try:
         return {"ok": True, **await db.send_account_friend_request(actor_id, account_id)}
     except ValueError as exc:
@@ -2132,6 +2251,9 @@ async def api_account_message_threads(request: Request):
 async def api_account_messages(account_id: int, request: Request, limit: int = 80):
     auth = await _hydrate_site_owner_auth(request, _require_api_auth(request))
     actor_id = await _account_id_for_auth(auth)
+    target_profile = await _load_social_target_profile(account_id, actor_id)
+    if not _social_permissions(target_profile)["can_message"]:
+        raise HTTPException(status_code=403, detail="This profile is not accepting direct messages.")
     try:
         messages = await db.list_account_messages(actor_id, account_id, limit=limit)
     except ValueError as exc:
@@ -2143,6 +2265,9 @@ async def api_account_messages(account_id: int, request: Request, limit: int = 8
 async def api_send_account_message(account_id: int, request: Request, payload: SocialMessageRequest):
     auth = await _hydrate_site_owner_auth(request, _require_api_auth(request))
     actor_id = await _account_id_for_auth(auth)
+    target_profile = await _load_social_target_profile(account_id, actor_id)
+    if not _social_permissions(target_profile)["can_message"]:
+        raise HTTPException(status_code=403, detail="This profile is not accepting direct messages.")
     try:
         message = await db.send_account_message(actor_id, account_id, payload.body)
     except ValueError as exc:
@@ -2215,9 +2340,9 @@ async def api_swarm_accounts_resend_verification(request: Request, payload: Swar
         raise HTTPException(status_code=400, detail="This SwarmPanel account does not have an email address.")
     if account.get("email_verified_at"):
         return {"ok": True, "email_verification_sent": False, "already_verified": True}
-    email_token = _verification_code()
-    account = await db.issue_account_email_verification_token_by_id(payload.account_id, email_token)
-    verification_sent = bool(account and send_verification_email(settings, account["email"], _verification_url(request, email_token), email_token))
+    email_token, email_code = _verification_material()
+    account = await db.issue_account_email_verification_token_by_id(payload.account_id, email_token, email_code)
+    verification_sent = bool(account and send_verification_email(settings, account["email"], _verification_url(request, email_token), email_code))
     action_logger.warning("swarm_account_resend_verification account_id=%s sent=%s", payload.account_id, verification_sent)
     return {"ok": verification_sent, "email_verification_sent": verification_sent, "already_verified": False}
 
@@ -2299,7 +2424,7 @@ async def list_bots(request: Request):
         ],
         # Build identity-backed invite cards concurrently so the panel does not
         # wait on nine Discord identity requests in series.
-        "invite_bots": list(await asyncio.gather(*(invite_payload(bot) for bot in ALL_BOTS))),
+        "invite_bots": list(await asyncio.gather(*(invite_payload(bot) for bot in visible_bots))),
         "scoped_guild_id": scoped_guild_id,
     }
 
