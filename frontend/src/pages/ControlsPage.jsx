@@ -44,7 +44,10 @@ export default function ControlsPage({ ctx }) {
   const [busy, setBusy] = useState(false);
 
   const loadBase = useCallback(async () => {
-    const [bots, dash] = await Promise.all([cachedFetch("/api/bots", { ttl: 30_000 }), apiFetch("/api/dashboard")]);
+    const [bots, dash] = await Promise.all([
+      cachedFetch("/api/bots", { ttl: 30_000 }),
+      cachedFetch("/api/dashboard", { ttl: 8_000, staleTtl: 45_000 }),
+    ]);
     const musicBots = (bots.bots || []).filter((bot) => bot.kind === "music");
     setCatalog({ bots: musicBots, loading: false });
     setDashboard(dash);

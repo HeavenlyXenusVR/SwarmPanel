@@ -232,9 +232,22 @@ export function ControlState({ state, compact = false }) {
 }
 
 export function InviteCard({ bot }) {
+  const accent = bot.accent || "#89b4fa";
+  const identityLabel = bot.identity_name || bot.display_name || bot.name || bot.key;
+  const statusTone = bot.token_configured ? (bot.connected_to_session_guild ? "live" : "soft") : "danger";
+  const statusLabel = bot.token_configured
+    ? (bot.connected_to_session_guild ? "Ready Here" : "Ready")
+    : "Token Missing";
   return (
-    <article className="invite-card">
-      <div className="bot-head"><span className="bot-dot" /><h3>{bot.display_name}</h3><small>{bot.token_configured ? "token ready" : "missing token"}</small></div>
+    <article className="invite-card" style={{ "--card-accent": accent }}>
+      <div className="bot-head invite-card-head">
+        <IdentityAvatar src={bot.icon_url} label={identityLabel} className="avatar invite-avatar" showPresence={false} />
+        <div className="bot-head-copy invite-card-copy">
+          <h3>{bot.display_name}</h3>
+          <small>{bot.identity_name || (bot.token_configured ? "Discord application ready" : "Discord token missing")}</small>
+        </div>
+        <span className={`data-pill data-pill-${statusTone}`}>{statusLabel}</span>
+      </div>
       <p>{bot.capability_summary}</p>
       <div className="chip-row">{(bot.permissions || []).slice(0, 6).map((permission) => <span key={permission}>{permission}</span>)}</div>
       {bot.invite_url ? <a className="button-link primary" href={bot.invite_url} target="_blank" rel="noreferrer"><PlugZap size={16} />Invite</a> : <button disabled>Invite unavailable</button>}

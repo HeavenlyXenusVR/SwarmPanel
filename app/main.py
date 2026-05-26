@@ -150,6 +150,8 @@ DISCORD_INVITE_HOSTS = {
     "www.discordapp.com",
 }
 OWNER_SCOPE_SENTINEL = "__site_owner_only__"
+DISCORD_IDENTITY_LOOKUP_TIMEOUT_SECONDS = max(1.0, float(os.getenv("SWARM_PANEL_DISCORD_IDENTITY_TIMEOUT_SECONDS", "4.0") or "4.0"))
+DISCORD_NAME_RESOLUTION_TIMEOUT_SECONDS = max(1.5, float(os.getenv("SWARM_PANEL_DISCORD_NAME_RESOLUTION_TIMEOUT_SECONDS", "6.0") or "6.0"))
 
 
 def _app_shell_path() -> Path:
@@ -236,9 +238,38 @@ def _normalize_panel_look_choice(value: Any, field_name: str, key: str, allowed:
     return choice
 
 
+def _normalize_public_base_url(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = urlparse(raw)
+    except Exception:
+        return ""
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path.rstrip('/')}"
+
+
+def _external_base_url(request: Request) -> str:
+    configured = _normalize_public_base_url(settings.pages_public_url)
+    if configured:
+        return configured
+
+    forwarded_proto = str(request.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip().lower()
+    forwarded_host = str(request.headers.get("x-forwarded-host") or "").split(",", 1)[0].strip()
+    if forwarded_proto in {"http", "https"} and forwarded_host:
+        root_path = str(request.scope.get("root_path") or "").rstrip("/")
+        return f"{forwarded_proto}://{forwarded_host}{root_path}".rstrip("/")
+
+    base = str(request.base_url).rstrip("/")
+    if settings.session_https_only and base.startswith("http://"):
+        return "https://" + base[len("http://"):]
+    return base
+
+
 def _verification_url(request: Request, token: str) -> str:
-    base = str(request.url_for("api_verify_session_email"))
-    return base.replace("http://", "https://") + f"?token={token}"
+    return f"{_external_base_url(request)}/api/session/verify-email?token={quote(token, safe='')}"
 
 
 def _image_gallery_verification_url(request: Request, token: str) -> str:
@@ -251,9 +282,8 @@ def _image_gallery_verification_url(request: Request, token: str) -> str:
         except Exception:
             origin = ""
     if origin:
-        return f"{origin}/api/auth/verify-email?token={token}"
-    base = str(request.url_for("image_gallery_admin")).replace("/api/image-gallery/admin", "")
-    return base.replace("http://", "https://").rstrip("/") + f"/api/auth/verify-email?token={token}"
+        return f"{origin}/api/auth/verify-email?token={quote(token, safe='')}"
+    return f"{_external_base_url(request)}/api/auth/verify-email?token={quote(token, safe='')}"
 
 
 def _verification_code() -> str:
@@ -867,6 +897,23 @@ async def _touch_request_presence(request: Request) -> None:
         )
 
 
+def _background_task(task: asyncio.Task[Any], *, label: str) -> asyncio.Task[Any]:
+    def _consume_result(done: asyncio.Task[Any]) -> None:
+        try:
+            done.result()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            action_logger.debug("Detached background task failed: %s", label, exc_info=True)
+
+    task.add_done_callback(_consume_result)
+    return task
+
+
+def _schedule_presence_touch(request: Request) -> None:
+    _background_task(asyncio.create_task(_touch_request_presence(request)), label="presence-touch")
+
+
 def _client_id_from_token(token: str) -> str | None:
     token_head = str(token or "").split(".", 1)[0].strip()
     if not token_head:
@@ -1238,17 +1285,22 @@ async def _build_dashboard_payload(auth: dict[str, Any], *, enrich_discord: bool
 
     flattened_sessions: list[dict[str, Any]] = []
     seen_session_keys: set[tuple[str, str]] = set()
-    for bot in data.get("bots", []):
+    bots = list(data.get("bots", []))
+    identity_tasks: dict[str, asyncio.Task[dict[str, Any]]] = {}
+    name_tasks: dict[str, tuple[dict[str, Any], list[dict[str, Any]], asyncio.Task[dict[tuple[int, int | None], dict[str, str | None]]]]] = {}
+    for bot in bots:
         bot.setdefault("name", bot.get("display_name"))
         bot.setdefault("guild_count", bot.get("known_guild_count", 0))
+        token = settings.bot_tokens.get(bot["key"], "")
         if enrich_discord:
-            token = settings.bot_tokens.get(bot["key"], "")
             bot["discord"] = {"token_configured": bool(token)}
             if token:
-                try:
-                    bot["discord"]["identity"] = await discord_service.fetch_identity(token)
-                except Exception as exc:
-                    bot["discord"]["error"] = str(exc)
+                identity_tasks[bot["key"]] = asyncio.create_task(
+                    asyncio.wait_for(
+                        discord_service.fetch_identity(token),
+                        timeout=DISCORD_IDENTITY_LOOKUP_TIMEOUT_SECONDS,
+                    )
+                )
         sessions = bot.get("sessions", [])
         for session in sessions:
             session.setdefault("bot_key", bot.get("key"))
@@ -1259,10 +1311,7 @@ async def _build_dashboard_payload(auth: dict[str, Any], *, enrich_discord: bool
                 continue
             seen_session_keys.add(session_key)
             flattened_sessions.append(session)
-        if not enrich_discord or not sessions:
-            continue
-        token = settings.bot_tokens.get(bot["key"], "")
-        if not token:
+        if not enrich_discord or not sessions or not token:
             continue
         placements = []
         for session in sessions:
@@ -1271,8 +1320,38 @@ async def _build_dashboard_payload(auth: dict[str, Any], *, enrich_discord: bool
                 placements.append((guild_id, str(session["channel_id"])))
             if session.get("home_channel_id"):
                 placements.append((guild_id, str(session["home_channel_id"])))
-        try:
-            name_map = await discord_service.resolve_guild_channel_names(token, placements)
+        if placements:
+            name_tasks[bot["key"]] = (
+                bot,
+                sessions,
+                asyncio.create_task(
+                    asyncio.wait_for(
+                        discord_service.resolve_guild_channel_names(token, placements),
+                        timeout=DISCORD_NAME_RESOLUTION_TIMEOUT_SECONDS,
+                    )
+                ),
+            )
+
+    if identity_tasks:
+        identity_results = await asyncio.gather(*identity_tasks.values(), return_exceptions=True)
+        for bot_key, result in zip(identity_tasks.keys(), identity_results):
+            bot = next((item for item in bots if item.get("key") == bot_key), None)
+            if not bot:
+                continue
+            bot.setdefault("discord", {})
+            if isinstance(result, Exception):
+                bot["discord"]["error"] = "Discord identity lookup timed out." if isinstance(result, asyncio.TimeoutError) else str(result)
+                continue
+            bot["discord"]["identity"] = result
+
+    if name_tasks:
+        name_results = await asyncio.gather(*(task for _bot, _sessions, task in name_tasks.values()), return_exceptions=True)
+        for (bot_key, (bot, sessions, _task)), result in zip(name_tasks.items(), name_results):
+            bot.setdefault("discord", {})
+            if isinstance(result, Exception):
+                bot["discord"]["name_resolution_error"] = "Discord channel lookup timed out." if isinstance(result, asyncio.TimeoutError) else str(result)
+                continue
+            name_map = result
             for session in sessions:
                 guild_id = str(session["guild_id"])
                 channel_key = (guild_id, str(session["channel_id"])) if session.get("channel_id") else None
@@ -1287,10 +1366,8 @@ async def _build_dashboard_payload(auth: dict[str, Any], *, enrich_discord: bool
                 if home_names:
                     session["guild_name"] = session.get("guild_name") or home_names.get("guild_name")
                     session["home_channel_name"] = home_names.get("channel_name")
-        except Exception as exc:
-            bot.setdefault("discord", {})
-            bot["discord"]["name_resolution_error"] = str(exc)
 
+    data["bots"] = bots
     data["sessions"] = flattened_sessions
     return data
 
@@ -1613,7 +1690,7 @@ async def browser_origin_and_headers(request: Request, call_next):
     try:
         if request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}:
             _ensure_allowed_browser_origin(request)
-        await _touch_request_presence(request)
+        _schedule_presence_touch(request)
         response = await call_next(request)
     except HTTPException as exc:
         response = JSONResponse({"detail": exc.detail or "Request blocked"}, status_code=exc.status_code)
@@ -2385,10 +2462,13 @@ async def list_bots(request: Request):
         identity: dict[str, Any] = {}
         if token:
             try:
-                identity = await discord_service.fetch_identity(token)
+                identity = await asyncio.wait_for(
+                    discord_service.fetch_identity(token),
+                    timeout=DISCORD_IDENTITY_LOOKUP_TIMEOUT_SECONDS,
+                )
                 client_id = identity.get("id") or client_id
             except Exception as exc:
-                identity = {"error": str(exc)}
+                identity = {"error": "Discord identity lookup timed out." if isinstance(exc, asyncio.TimeoutError) else str(exc)}
         permissions = permissions_for_bot(bot)
         permission_integer = permission_value(permissions)
         return {

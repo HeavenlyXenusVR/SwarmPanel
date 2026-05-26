@@ -61,7 +61,7 @@ export default function DashboardPage({ ctx }) {
     const guildId = ctx.session.guild_id || ctx.session.account_guild_id;
     try {
       const [dashboard, bots, intelligence, telegram] = await Promise.allSettled([
-        apiFetch("/api/dashboard"),
+        cachedFetch("/api/dashboard", { ttl: 8_000, staleTtl: 45_000 }),
         cachedFetch("/api/bots", { ttl: 30_000, staleTtl: 180_000, storage: "local" }),
         apiFetch(`/api/music-intelligence${query({ guild_id: guildId, limit: 10 })}`).catch((error) => ({ error: error.message })),
         ctx.isAdmin ? apiFetch("/api/telegram/status").catch((error) => ({ error: error.message })) : Promise.resolve(null),

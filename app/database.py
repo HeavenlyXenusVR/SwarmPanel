@@ -772,7 +772,8 @@ class PanelDatabase:
             UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
             SET email_verified_at = CURRENT_TIMESTAMP,
                 email_verification_token_hash = NULL,
-                email_verification_code_hash = NULL
+                email_verification_code_hash = NULL,
+                email_verification_sent_at = NULL
             WHERE username = %s AND guild_id = %s
             """,
             (row["username"], row["guild_id"]),
@@ -806,18 +807,37 @@ class PanelDatabase:
         username = _normalize_account_username(username)
         gid = _coerce_int(guild_id, "guild_id")
         normalized = _normalize_email(email)
-        await self._execute(
+        current = await self._fetchone(
             f"""
-            UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
-            SET email = %s,
-                email_verified_at = NULL,
-                email_verification_token_hash = NULL,
-                email_verification_code_hash = NULL,
-                email_verification_sent_at = NULL
+            SELECT email
+            FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
             WHERE username = %s AND guild_id = %s
+            LIMIT 1
             """,
-            (normalized, username, gid),
+            (username, gid),
         )
+        if not current:
+            return None
+        if _normalize_email(current.get("email")) == normalized:
+            return await self.get_account_profile(username, gid)
+        try:
+            await self._execute(
+                f"""
+                UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
+                SET email = %s,
+                    email_verified_at = NULL,
+                    email_verification_token_hash = NULL,
+                    email_verification_code_hash = NULL,
+                    email_verification_sent_at = NULL
+                WHERE username = %s AND guild_id = %s
+                """,
+                (normalized, username, gid),
+            )
+        except Exception as exc:
+            message = str(exc).lower()
+            if "duplicate" in message or "1062" in message:
+                raise ValueError("That email is already registered.") from exc
+            raise
         return await self.get_account_profile(username, gid)
 
     async def verify_account_email_code(
@@ -851,7 +871,8 @@ class PanelDatabase:
             UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
             SET email_verified_at = CURRENT_TIMESTAMP,
                 email_verification_token_hash = NULL,
-                email_verification_code_hash = NULL
+                email_verification_code_hash = NULL,
+                email_verification_sent_at = NULL
             WHERE username = %s AND guild_id = %s
             """,
             (username, gid),
@@ -1153,9 +1174,16 @@ class PanelDatabase:
                     if not current:
                         raise ValueError("SwarmPanel account not found.")
 
+                    if "email" in updates and _normalize_email(current.get("email")) == cleaned.get("email"):
+                        cleaned.pop("email", None)
+                        cleaned.pop("email_verified_at", None)
+                        cleaned.pop("email_verification_token_hash", None)
+                        cleaned.pop("email_verification_code_hash", None)
+                        cleaned.pop("email_verification_sent_at", None)
+
                     next_username = cleaned.get("username", current["username"])
                     next_guild_id = cleaned.get("guild_id", current["guild_id"])
-                    next_email = cleaned["email"] if "email" in updates else current.get("email")
+                    next_email = cleaned["email"] if "email" in cleaned else current.get("email")
 
                     await asyncio.wait_for(cur.execute(
                         f"""

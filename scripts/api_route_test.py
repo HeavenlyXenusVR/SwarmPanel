@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 
 os.environ.setdefault("PANEL_DB_PASSWORD", "route-test-db-password")
@@ -13,6 +14,7 @@ os.environ.setdefault("PANEL_DESTRUCTIVE_CONFIRMATION_PHRASE", "route-test-owner
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 import app.main as main
 
@@ -77,6 +79,33 @@ def main_test() -> None:
     assert dummy_db.table_reads[-1] == ("discord_music_gws", "gws_queue", main.settings.api_max_rows)
 
     assert main._bounded_query_limit(9999, default=24, max_limit=50) == 50
+    verification_request = Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/api/session",
+            "raw_path": b"/api/session",
+            "query_string": b"",
+            "headers": [(b"host", b"127.0.0.1:8000")],
+            "client": ("127.0.0.1", 54321),
+            "server": ("127.0.0.1", 8000),
+            "root_path": "",
+            "app": main.app,
+            "router": main.app.router,
+        }
+    )
+    original_settings = main.settings
+    main.settings = replace(main.settings, pages_public_url="https://panel.example.com/panel")
+    try:
+        assert (
+            main._verification_url(verification_request, "abc 123")
+            == "https://panel.example.com/panel/api/session/verify-email?token=abc%20123"
+        )
+    finally:
+        main.settings = original_settings
+
     too_long_source = "x" * (main.settings.bot_control_source_max_chars + 1)
     try:
         main._normalize_control_source(too_long_source)
