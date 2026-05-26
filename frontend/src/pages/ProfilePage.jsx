@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Check, ExternalLink, Heart, KeyRound, Mail, MessageCircle, Music2, Save, ShieldCheck, UserPlus } from "lucide-react";
+import { Check, ExternalLink, Eye, Heart, KeyRound, Mail, MessageCircle, Music2, RefreshCw, Save, ShieldCheck, Sparkles, UserPlus } from "lucide-react";
 import { apiFetch, cachedFetch, clearCache } from "../api.js";
-import { EmptyState, Page, SkeletonGrid } from "../components/ui.jsx";
+import { EmptyState, Notice, Page, SkeletonGrid } from "../components/ui.jsx";
 import { IdentityAvatar, PresencePill } from "../components/swarm.jsx";
 import { useLiveRefresh } from "../hooks/useLiveRefresh.js";
 import { pick } from "../utils/format.js";
@@ -36,6 +36,13 @@ function formToPayload(form) {
 function ProfileAvatar({ profile }) {
   const src = profile?.avatar_url || profile?.server_icon_url;
   return <IdentityAvatar src={src} label={profile?.display_name || profile?.username || "SP"} online={profile?.is_online} className="avatar profile-avatar-xl avatar-presence" />;
+}
+
+function socialModeLabel(value) {
+  const normalized = String(value || "open").trim().toLowerCase();
+  if (normalized === "friends") return "Friends Only";
+  if (normalized === "quiet") return "Quiet";
+  return "Open";
 }
 
 export default function ProfilePage({ ctx }) {
@@ -128,6 +135,18 @@ export default function ProfilePage({ ctx }) {
     }
   }
 
+  async function resendVerification() {
+    setBusy("resend");
+    try {
+      const updated = await apiFetch("/api/session/resend-verification", { method: "POST" });
+      ctx.showToast(updated.email_verification_sent ? "Verification sent." : "Already verified.", "success");
+    } catch (error) {
+      ctx.showToast(error.message, "error");
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function follow() {
     try {
       await apiFetch(`/api/users/${data.profile.id}/follow`, { method: "POST", body: JSON.stringify({ following: !data.profile.followed_by_me }) });
@@ -165,9 +184,16 @@ export default function ProfilePage({ ctx }) {
     { ...profilePreferences, accent_color: form.theme_accent || profileAccent },
     form.theme_accent || profileAccent,
   );
+  const previewProfile = { ...profile, ...form };
+  const previewTags = String(form.profile_tags_text || "").split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 5);
+  const previewLinks = (Array.isArray(form.profile_links) ? form.profile_links : []).filter((link) => String(link?.label || "").trim() && String(link?.url || "").trim());
   const bannerStyle = {
     ...profileSurface,
     "--profile-banner-url": profile.profile_banner_url ? `url("${String(profile.profile_banner_url).replace(/["\\]/g, "\\$&")}")` : "none",
+  };
+  const previewBannerStyle = {
+    ...previewSurface,
+    "--profile-banner-url": previewProfile.profile_banner_url ? `url("${String(previewProfile.profile_banner_url).replace(/["\\]/g, "\\$&")}")` : "none",
   };
 
   return (
@@ -221,10 +247,42 @@ export default function ProfilePage({ ctx }) {
         {!publicMode ? (
           <section className={`settings-grid ${layoutClass}`}>
             <form className="panel form-panel profile-editor" onSubmit={save}>
-              <div className="profile-preview public-profile-preview" style={previewSurface}>
-                <ProfileAvatar profile={{ ...profile, ...form }} />
-                <div><strong>{form.display_name || data.username}</strong><p className="muted">{form.profile_headline || form.server_name || `Guild ${data.guild_id || data.account_guild_id || "profile"}`}</p></div>
+              <div className={`profile-preview-shell ${layoutClass}`}>
+                <div className="profile-preview-header">
+                  <div>
+                    <strong>Live Public Card Preview</strong>
+                    <p className="muted">This is the profile surface other SwarmPanel users will see after you save.</p>
+                  </div>
+                  {!publicMode && profile.id ? <Link className="button-link" to={`/users/${profile.id}`}><Eye size={16} />Open Public View</Link> : null}
+                </div>
+                <article
+                  className={`panel public-profile-hero public-profile-preview-card public-profile-card-${previewProfile.profile_card_style || "solid"} public-profile-banner-${previewProfile.profile_banner_mode || "gradient"}`}
+                  style={previewBannerStyle}
+                >
+                  <ProfileAvatar profile={previewProfile} />
+                  <div className="public-profile-copy">
+                    <h2>{previewProfile.profile_headline || previewProfile.display_name || previewProfile.username || "Your Headline"}</h2>
+                    <p>{previewProfile.bio || previewProfile.server_name || `Guild ${data.guild_id || data.account_guild_id || "profile"}`}</p>
+                    <div className="chip-row">
+                      <PresencePill user={previewProfile} />
+                      {previewTags.map((tag) => <span key={tag}>{tag}</span>)}
+                      <span>{previewProfile.favorite_bot || "favorite bot"}</span>
+                      <span>{socialModeLabel(previewProfile.profile_social_mode)}</span>
+                    </div>
+                  </div>
+                  <div className="public-profile-actions">
+                    <button type="button" disabled><Heart size={16} />Follow</button>
+                    <button type="button" disabled><UserPlus size={16} />Friend</button>
+                    <button type="button" disabled><MessageCircle size={16} />Message</button>
+                  </div>
+                </article>
+                <div className="profile-preview-meta">
+                  <span><Sparkles size={14} /> {previewLinks.length} custom links</span>
+                  <span><ShieldCheck size={14} /> {previewProfile.public_profile !== false ? "Public profile enabled" : "Private profile"}</span>
+                  <span><ExternalLink size={14} /> {previewProfile.server_invite_url ? "Discord invite linked" : "No Discord invite"}</span>
+                </div>
               </div>
+              {!profile.email_verified && identity.email ? <Notice>Profile owner features stay limited until this email is verified.</Notice> : null}
               <label className="field"><span>Display Name</span><input value={form.display_name || ""} onChange={(event) => setForm((current) => ({ ...current, display_name: event.target.value }))} disabled={!editable} /></label>
               <label className="field"><span>Headline</span><input value={form.profile_headline || ""} onChange={(event) => setForm((current) => ({ ...current, profile_headline: event.target.value }))} disabled={!editable} /></label>
               <label className="field"><span>Bio</span><textarea value={form.bio || ""} onChange={(event) => setForm((current) => ({ ...current, bio: event.target.value }))} disabled={!editable} /></label>
@@ -260,8 +318,13 @@ export default function ProfilePage({ ctx }) {
             </form>
             <div className="panel form-panel">
               <h2><ShieldCheck size={18} /> Account</h2>
+              <div className="account-status-stack">
+                <Notice tone={profile.email_verified ? "info" : "error"}>
+                  {profile.email_verified ? "Email verified. Owner-safe features can unlock when your email matches the configured site owner address." : "Email not verified yet. Check your inbox for the code or resend a fresh verification email."}
+                </Notice>
+              </div>
               <form className="mini-form" onSubmit={saveEmail}><label className="field"><span>Email</span><input type="email" value={identity.email} onChange={(event) => setIdentity((current) => ({ ...current, email: event.target.value }))} disabled={!editable} /></label><button type="submit" disabled={!editable || busy === "email"}><Mail size={16} />{busy === "email" ? "Saving" : "Save Email"}</button></form>
-              <form className="mini-form" onSubmit={verifyEmail}><label className="field"><span>Code</span><input value={identity.code} onChange={(event) => setIdentity((current) => ({ ...current, code: event.target.value }))} inputMode="numeric" maxLength={8} disabled={!editable} /></label><button type="submit" disabled={!editable || busy === "verify"}><Check size={16} />{busy === "verify" ? "Checking" : "Verify"}</button></form>
+              <form className="mini-form" onSubmit={verifyEmail}><label className="field"><span>Code</span><input value={identity.code} onChange={(event) => setIdentity((current) => ({ ...current, code: event.target.value }))} inputMode="numeric" maxLength={8} disabled={!editable} /></label><button type="submit" disabled={!editable || busy === "verify"}><Check size={16} />{busy === "verify" ? "Checking" : "Verify"}</button><button type="button" onClick={resendVerification} disabled={!editable || !identity.email || busy === "resend"}><RefreshCw size={16} />{busy === "resend" ? "Sending" : "Resend"}</button></form>
               <form className="mini-form" onSubmit={changePassword}><label className="field"><span>Current</span><input type="password" value={identity.current_password} onChange={(event) => setIdentity((current) => ({ ...current, current_password: event.target.value }))} disabled={!editable} /></label><label className="field"><span>New</span><input type="password" value={identity.new_password} onChange={(event) => setIdentity((current) => ({ ...current, new_password: event.target.value }))} disabled={!editable} /></label><button type="submit" disabled={!editable || busy === "password"}><KeyRound size={16} />{busy === "password" ? "Saving" : "Change"}</button></form>
             </div>
           </section>

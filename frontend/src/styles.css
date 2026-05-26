@@ -268,6 +268,7 @@ a {
   padding: 28px;
   opacity: 1;
   transition: opacity var(--motion-med), visibility var(--motion-med);
+  contain: layout paint;
 }
 
 .swarm-loading-screen.is-leaving {
@@ -302,6 +303,7 @@ a {
     0 30px 90px rgba(0, 0, 0, 0.42),
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
   overflow: hidden;
+  will-change: opacity, transform;
 }
 
 .swarm-loading-panel::before {
@@ -1530,6 +1532,35 @@ input[type="range"]::-moz-range-thumb {
   margin: 4px 0 0;
 }
 
+.profile-preview-shell {
+  display: grid;
+  gap: 12px;
+}
+
+.profile-preview-header,
+.profile-preview-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.profile-preview-meta {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.profile-preview-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(16, 23, 32, 0.6);
+}
+
 .public-profile-shell {
   display: grid;
   gap: 14px;
@@ -1690,6 +1721,16 @@ input[type="range"]::-moz-range-thumb {
 
 .public-profile-preview {
   border-color: color-mix(in srgb, var(--accent) 26%, var(--line));
+}
+
+.public-profile-preview-card {
+  min-height: 220px;
+}
+
+.account-status-stack {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
 .table-wrap {
@@ -1898,6 +1939,71 @@ tbody tr:hover td {
   width: min(460px, 100%);
   margin: 20px auto;
   padding: 18px;
+}
+
+.auth-proof-guide {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));
+  border-radius: var(--radius);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 65%),
+    rgba(13, 19, 27, 0.72);
+}
+
+.auth-proof-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.auth-proof-head p,
+.auth-proof-steps p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.auth-proof-steps {
+  display: grid;
+  gap: 10px;
+}
+
+.auth-proof-steps article {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) - 4px);
+  background: rgba(16, 23, 32, 0.6);
+}
+
+.auth-proof-steps span {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.auth-proof-footnote {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.auth-proof-footnote span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .segmented {
@@ -2171,7 +2277,8 @@ tbody tr:hover td {
 .preview-topline,
 .preview-tabs,
 .preview-card,
-.appearance-profile-preview {
+.appearance-profile-preview,
+.appearance-preview-actions {
   position: relative;
   z-index: 1;
 }
@@ -2219,6 +2326,17 @@ tbody tr:hover td {
   margin: 0;
   color: var(--muted);
   line-height: 1.55;
+}
+
+.appearance-preview-actions {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.appearance-preview-actions p {
+  margin: 0;
+  line-height: 1.5;
 }
 
 .command-preview-grid {
@@ -2382,6 +2500,8 @@ tbody tr:hover td {
 .panel-theme-light .chip-row span,
 .panel-theme-light .profile-preview,
 .panel-theme-light .profile-link-list a,
+.panel-theme-light .profile-preview-meta span,
+.panel-theme-light .auth-proof-steps article,
 .panel-theme-light .table-wrap,
   .panel-theme-light .live-defaults,
 .panel-theme-light .json-panel,
@@ -2429,6 +2549,8 @@ tbody tr:hover td {
   .panel-theme-system .chip-row span,
   .panel-theme-system .profile-preview,
   .panel-theme-system .profile-link-list a,
+  .panel-theme-system .profile-preview-meta span,
+  .panel-theme-system .auth-proof-steps article,
   .panel-theme-system .table-wrap,
   .panel-theme-system .live-defaults,
   .panel-theme-system .json-panel,
@@ -2658,8 +2780,30 @@ tbody tr:hover td {
 .perf-lite .control-state,
 .perf-lite .event,
 .perf-lite .auth-card,
+.perf-lite .swarm-loading-panel,
 .perf-lite .toast {
   box-shadow: none;
+}
+
+.perf-lite .swarm-loading-backdrop,
+.perf-lite .swarm-loading-panel,
+.perf-lite .swarm-loading-status-grid article {
+  backdrop-filter: none;
+}
+
+.perf-lite .swarm-loading-panel::before,
+.perf-lite .swarm-loading-sweep,
+.perf-lite .swarm-loading-ring {
+  display: none;
+}
+
+.perf-lite .swarm-loading-radar {
+  width: 112px;
+  box-shadow: none;
+}
+
+.perf-lite .swarm-loading-progress span {
+  width: 72%;
 }
 
 @media (max-width: 1180px) {
@@ -2813,7 +2957,24 @@ tbody tr:hover td {
 
   .user-card,
   .public-profile-hero,
+  .public-profile-preview-card,
   .swarm-loading-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-preview-header,
+  .profile-preview-meta {
+    align-items: stretch;
+  }
+
+  .profile-preview-meta span,
+  .auth-proof-footnote span {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .auth-proof-head,
+  .auth-proof-steps article {
     grid-template-columns: 1fr;
   }
 

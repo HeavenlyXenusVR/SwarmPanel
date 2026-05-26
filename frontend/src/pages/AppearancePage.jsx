@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { Activity, Bot, Database, HeartPulse, Play, RotateCcw, Save, SlidersHorizontal } from "lucide-react";
 import { apiFetch, clearCache } from "../api.js";
 import { DEFAULT_PREFERENCES } from "../config.js";
@@ -122,6 +123,10 @@ export default function AppearancePage({ ctx }) {
               <span className="appearance-mini-stat">Plays 31k</span>
             </div>
           </section>
+          <div className="appearance-preview-actions">
+            <Link className="button-link" to="/profile">Open Profile Styling</Link>
+            <p className="muted">Use the Profile page for banner style, card style, public links, social visibility, and profile-specific accent choices.</p>
+          </div>
         </aside>
       </section>
     </Page>

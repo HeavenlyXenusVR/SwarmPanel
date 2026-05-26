@@ -36,6 +36,13 @@ const BOOT_TIPS = [
   "Saved homes, feedback channels, and queue defaults are prefetched during startup.",
   "Admin mode unlocks diagnostics, account tools, and gallery command routing.",
 ];
+const BOOT_MIN_VISIBLE_MS = 700;
+const BOOT_GUEST_MIN_VISIBLE_MS = 360;
+const BOOT_MAX_BLOCKING_WAIT_MS = 1800;
+
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 function App() {
   const navigate = useNavigate();
@@ -57,7 +64,7 @@ function App() {
 
   const loadSession = useCallback(async () => {
     try {
-      const data = await apiFetch("/api/session");
+      const data = await apiFetch("/api/session", { timeoutMs: 12_000 });
       if (data.authenticated && data.token) {
         writeToken(data.token);
         writeUsername(data.username);
@@ -121,10 +128,10 @@ function App() {
     let cancelled = false;
     const startedAt = Date.now();
     const guildId = session.guild_id || session.account_guild_id;
-    const finishBoot = async () => {
-      const remaining = Math.max(0, 1550 - (Date.now() - startedAt));
+    const finishBoot = async (minimumVisibleMs = BOOT_MIN_VISIBLE_MS) => {
+      const remaining = Math.max(0, minimumVisibleMs - (Date.now() - startedAt));
       if (remaining) {
-        await new Promise((resolve) => window.setTimeout(resolve, remaining));
+        await delay(remaining);
       }
       if (cancelled) return;
       setBootLeaving(true);
@@ -138,19 +145,24 @@ function App() {
     const primeDeck = async () => {
       if (!session.authenticated || !token) {
         setBootPhase("Opening guest deck");
-        await finishBoot();
+        await finishBoot(BOOT_GUEST_MIN_VISIBLE_MS);
         return;
       }
-      setBootPhase("Syncing fleet telemetry");
-      await Promise.allSettled([
+      const criticalWarmups = [
         cachedFetch("/api/users/preferences", { ttl: 30_000, staleTtl: 180_000, storage: "local" }),
         cachedFetch("/api/bots", { ttl: 30_000, staleTtl: 180_000, storage: "local" }),
-        apiFetch("/api/dashboard"),
-        apiFetch("/api/users/me"),
-        apiFetch(`/api/music-intelligence${query({ guild_id: guildId, limit: 10 })}`),
-        isAdmin ? apiFetch("/api/telegram/status") : Promise.resolve(null),
+        cachedFetch("/api/dashboard", { ttl: 8_000, staleTtl: 45_000 }),
+      ];
+      prefetchFetch("/api/users/me", { ttl: 30_000, staleTtl: 120_000 });
+      prefetchFetch(`/api/music-intelligence${query({ guild_id: guildId, limit: 10 })}`, { ttl: 20_000, staleTtl: 120_000 });
+      if (isAdmin) prefetchFetch("/api/telegram/status", { ttl: 30_000, staleTtl: 120_000 });
+      setBootPhase("Caching command deck");
+      await Promise.race([
+        Promise.allSettled(criticalWarmups),
+        delay(BOOT_MAX_BLOCKING_WAIT_MS),
       ]);
       if (cancelled) return;
+      setBootPhase("Streaming live telemetry");
       setBootPhase("Projecting command deck");
       await finishBoot();
     };
@@ -291,8 +303,8 @@ function SwarmBootOverlay({ phase, tip, authenticated, leaving }) {
             <strong>{phase}</strong>
             <p>
               {authenticated
-                ? "Live controls, fleet pulse, and queue telemetry are loading behind the glass."
-                : "The panel shell is coming online and preparing a public deck."}
+                ? "The command deck is opening now. Slower telemetry can keep hydrating in the background after the shell appears."
+                : "The panel shell is coming online and preparing a guest deck."}
             </p>
           </div>
         </div>
@@ -304,8 +316,8 @@ function SwarmBootOverlay({ phase, tip, authenticated, leaving }) {
           </article>
           <article>
             <span>Telemetry</span>
-            <strong>Hydrating</strong>
-            <small>Bot state, session lanes, and cached cards are syncing now.</small>
+            <strong>Progressive Load</strong>
+            <small>Core cards unlock first, then live queue and fleet telemetry continue warming behind the shell.</small>
           </article>
           <article>
             <span>Tip Deck</span>

@@ -17,6 +17,19 @@ let remoteOriginRefreshAfter = 0;
 let remoteConfig = null;
 let inMemoryToken = "";
 
+function requestError(message, details = {}) {
+  const error = new Error(message);
+  Object.assign(error, details);
+  return error;
+}
+
+function isAbortLike(error) {
+  if (!error) return false;
+  const name = String(error.name || "");
+  const message = String(error.message || "");
+  return name === "AbortError" || /abort/i.test(name) || /aborted|abort/i.test(message);
+}
+
 function safeRemove(storage, key) {
   try {
     storage?.removeItem(key);
@@ -300,6 +313,7 @@ async function fetchWithRemoteRetry(path, options, headers) {
     }
     return response;
   } catch (error) {
+    if (error?.isAbort && !error?.retriable) throw error;
     const retryTarget = await retryTargetFor(path, target, options);
     if (retryTarget && retryTarget !== target) {
       return fetchWithTimeout(retryTarget, { ...options, headers });
@@ -316,13 +330,69 @@ function shouldRefreshOriginBeforeRequest(options) {
 
 async function fetchWithTimeout(url, options = {}) {
   const controller = new AbortController();
+  const merged = mergeAbortSignals(options.signal, controller.signal);
   const timeoutMs = Math.max(5_000, Number(options.timeoutMs) || API_FETCH_TIMEOUT_MS);
-  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const timer = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
   try {
-    return await fetch(url, { ...options, signal: options.signal || controller.signal });
+    return await fetch(url, { ...options, signal: merged.signal });
+  } catch (error) {
+    if (timedOut) {
+      throw requestError("SwarmPanel request timed out while waiting for the live backend.", {
+        code: "TIMEOUT",
+        status: 408,
+        retriable: true,
+      });
+    }
+    if (options.signal?.aborted && isAbortLike(error)) {
+      throw requestError("Request cancelled.", { code: "ABORTED", isAbort: true, silent: true });
+    }
+    if (isAbortLike(error)) {
+      throw requestError("The SwarmPanel request was interrupted before the backend replied.", {
+        code: "ABORTED",
+        isAbort: true,
+      });
+    }
+    throw error;
   } finally {
     window.clearTimeout(timer);
+    merged.cleanup();
   }
+}
+
+function mergeAbortSignals(...signals) {
+  const activeSignals = signals.filter(Boolean);
+  if (!activeSignals.length) {
+    return { signal: undefined, cleanup() {} };
+  }
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.any === "function") {
+    return { signal: AbortSignal.any(activeSignals), cleanup() {} };
+  }
+  const controller = new AbortController();
+  const listeners = [];
+  const abortFrom = (signal) => {
+    if (!controller.signal.aborted) controller.abort(signal?.reason);
+  };
+  for (const signal of activeSignals) {
+    if (signal.aborted) {
+      abortFrom(signal);
+      break;
+    }
+    const listener = () => abortFrom(signal);
+    signal.addEventListener("abort", listener, { once: true });
+    listeners.push([signal, listener]);
+  }
+  return {
+    signal: controller.signal,
+    cleanup() {
+      for (const [signal, listener] of listeners) {
+        signal.removeEventListener("abort", listener);
+      }
+    },
+  };
 }
 
 function normalizeApiOrigin(value) {
