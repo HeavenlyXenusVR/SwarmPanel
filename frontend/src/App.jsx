@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import {
   apiFetch,
   cachedFetch,
@@ -46,6 +46,7 @@ function delay(ms) {
 
 function App() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [token, setToken] = useState(() => readToken());
   const [session, setSession] = useState({ authenticated: false, loading: true });
   const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
@@ -247,25 +248,7 @@ function App() {
   return (
     <div className={panelClassName(preferences)} style={panelStyle(preferences)}>
       <Shell ctx={ctx}>
-        <Routes>
-          <Route path="/" element={<Protected ctx={ctx}><DashboardPage ctx={ctx} /></Protected>} />
-          <Route path="/dashboard" element={<Navigate to="/" replace />} />
-          <Route path="/controls" element={<Protected ctx={ctx}><ControlsPage ctx={ctx} /></Protected>} />
-          <Route path="/invites" element={<Protected ctx={ctx}><InvitesPage ctx={ctx} /></Protected>} />
-          <Route path="/users" element={<Protected ctx={ctx}><UsersPage ctx={ctx} /></Protected>} />
-          <Route path="/friends" element={<Protected ctx={ctx}><FriendsPage ctx={ctx} /></Protected>} />
-          <Route path="/messages" element={<Protected ctx={ctx}><MessagesPage ctx={ctx} /></Protected>} />
-          <Route path="/profile" element={<Protected ctx={ctx}><ProfilePage ctx={ctx} /></Protected>} />
-          <Route path="/users/:accountId" element={<Protected ctx={ctx}><ProfilePage ctx={ctx} /></Protected>} />
-          <Route path="/appearance" element={<Protected ctx={ctx}><AppearancePage ctx={ctx} /></Protected>} />
-          <Route path="/diagnostics" element={<Protected ctx={ctx} admin><DiagnosticsPage ctx={ctx} /></Protected>} />
-          <Route path="/accounts" element={<Protected ctx={ctx} admin><AccountsPage ctx={ctx} /></Protected>} />
-          <Route path="/databases" element={<Protected ctx={ctx} admin><DatabasesPage ctx={ctx} /></Protected>} />
-          <Route path="/gallery-admin" element={<Protected ctx={ctx} gallery><GalleryAdminPage ctx={ctx} /></Protected>} />
-          <Route path="/intel" element={<Protected ctx={ctx} admin><IntelPage ctx={ctx} /></Protected>} />
-          <Route path="/login" element={ctx.session.authenticated ? <Navigate to="/" replace /> : <AuthPage ctx={ctx} />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+        <RouteViewport ctx={ctx} pathname={location.pathname} />
       </Shell>
       {!bootDismissed ? (
         <SwarmBootOverlay
@@ -372,3 +355,108 @@ function Protected({ ctx, children, admin = false, gallery = false }) {
 }
 
 export default App;
+
+function normalizePathname(pathname) {
+  const normalized = String(pathname || "").replace(/\/+$/, "");
+  return normalized || "/";
+}
+
+function RouteViewport({ ctx, pathname }) {
+  const currentPath = normalizePathname(pathname);
+
+  if (currentPath === "/login") {
+    return ctx.session.authenticated ? <Navigate to="/" replace /> : <AuthPage ctx={ctx} />;
+  }
+  if (currentPath === "/" || currentPath === "/dashboard") {
+    return (
+      <Protected ctx={ctx}>
+        <DashboardPage ctx={ctx} />
+      </Protected>
+    );
+  }
+  if (currentPath === "/controls") {
+    return (
+      <Protected ctx={ctx}>
+        <ControlsPage ctx={ctx} />
+      </Protected>
+    );
+  }
+  if (currentPath === "/invites") {
+    return (
+      <Protected ctx={ctx}>
+        <InvitesPage ctx={ctx} />
+      </Protected>
+    );
+  }
+  if (currentPath === "/users") {
+    return (
+      <Protected ctx={ctx}>
+        <UsersPage ctx={ctx} />
+      </Protected>
+    );
+  }
+  if (currentPath === "/friends") {
+    return (
+      <Protected ctx={ctx}>
+        <FriendsPage ctx={ctx} />
+      </Protected>
+    );
+  }
+  if (currentPath === "/messages") {
+    return (
+      <Protected ctx={ctx}>
+        <MessagesPage ctx={ctx} />
+      </Protected>
+    );
+  }
+  if (currentPath === "/profile" || /^\/users\/[^/]+$/.test(currentPath)) {
+    return (
+      <Protected ctx={ctx}>
+        <ProfilePage ctx={ctx} />
+      </Protected>
+    );
+  }
+  if (currentPath === "/appearance") {
+    return (
+      <Protected ctx={ctx}>
+        <AppearancePage ctx={ctx} />
+      </Protected>
+    );
+  }
+  if (currentPath === "/diagnostics") {
+    return (
+      <Protected ctx={ctx} admin>
+        <DiagnosticsPage ctx={ctx} />
+      </Protected>
+    );
+  }
+  if (currentPath === "/accounts") {
+    return (
+      <Protected ctx={ctx} admin>
+        <AccountsPage ctx={ctx} />
+      </Protected>
+    );
+  }
+  if (currentPath === "/databases") {
+    return (
+      <Protected ctx={ctx} admin>
+        <DatabasesPage ctx={ctx} />
+      </Protected>
+    );
+  }
+  if (currentPath === "/gallery-admin") {
+    return (
+      <Protected ctx={ctx} gallery>
+        <GalleryAdminPage ctx={ctx} />
+      </Protected>
+    );
+  }
+  if (currentPath === "/intel") {
+    return (
+      <Protected ctx={ctx} admin>
+        <IntelPage ctx={ctx} />
+      </Protected>
+    );
+  }
+  return <NotFound />;
+}
