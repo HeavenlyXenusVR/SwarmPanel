@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Heart, MessageCircle, Music2, PlugZap, UserPlus } from "lucide-react";
 import { apiFetch, clearCache } from "../api.js";
