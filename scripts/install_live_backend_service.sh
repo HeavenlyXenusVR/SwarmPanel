@@ -22,11 +22,11 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=${ROOT_DIR}
-Environment=PANEL_SERVICE_START_BACKEND_IF_MISSING=0
+Environment=PANEL_SERVICE_START_BACKEND_IF_MISSING=1
 Environment=PANEL_PUSH_OFFLINE_CONFIG=0
 Environment=PANEL_CLOUDFLARE_PROTOCOL=http2
 Environment=PATH=%h/.local/bin:%h/.nix-profile/bin:/etc/profiles/per-user/%u/bin:/run/current-system/sw/bin:/usr/bin:/bin
-Environment=PANEL_KILL_STALE_PORT=0
+Environment=PANEL_KILL_STALE_PORT=1
 ExecStart=/run/current-system/sw/bin/env bash -lc 'cd "${ROOT_DIR}" && exec bash ./scripts/start_live_tunnel_service.sh 8000'
 Restart=always
 RestartSec=15

@@ -13,7 +13,7 @@ read_env_value() {
   local key="$1"
   local env_file="${ROOT_DIR}/.env"
   [[ -f "${env_file}" ]] || return 0
-  grep -E "^${key}=" "${env_file}" | tail -n 1 | cut -d= -f2- | sed -e 's/^\"//' -e 's/\"$//' -e "s/^'//" -e "s/'$//"
+  grep -E "^${key}=" "${env_file}" | tail -n 1 | cut -d= -f2- | sed -e 's/^\"//' -e 's/\"$//' -e "s/^'//" -e "s/'$//" || true
 }
 VENV_DIR="${ROOT_DIR}/.venv"
 BIN_DIR="${ROOT_DIR}/.bin"
@@ -166,6 +166,10 @@ publish_config() {
 }
 
 install_python_deps() {
+  if [[ -x "${VENV_DIR}/bin/python" ]] && ! "${VENV_DIR}/bin/python" -c 'import sys; print(sys.executable)' >/dev/null 2>&1; then
+    echo "Existing virtualenv Python wrapper is unusable; rebuilding ${VENV_DIR}..." >&2
+    rm -rf "${VENV_DIR}"
+  fi
   if [[ -x "${VENV_DIR}/bin/python" ]] && ! "${VENV_DIR}/bin/python" -m pip --version >/dev/null 2>&1; then
     echo "Existing virtualenv cannot run pip; rebuilding ${VENV_DIR}..." >&2
     rm -rf "${VENV_DIR}"
@@ -180,6 +184,11 @@ install_python_deps() {
       export PYTHONPATH="${PYTHON_TARGET_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
       return
     fi
+  fi
+  if ! "${VENV_DIR}/bin/python" -c 'import sys; print(sys.executable)' >/dev/null 2>&1; then
+    echo "Virtualenv Python wrapper is still unusable after creation; rebuilding ${VENV_DIR} with symlinks." >&2
+    rm -rf "${VENV_DIR}"
+    python3 -m venv --symlinks "${VENV_DIR}"
   fi
   PYTHON_BIN="${VENV_DIR}/bin/python"
   "${PYTHON_BIN}" -m pip install --upgrade pip
