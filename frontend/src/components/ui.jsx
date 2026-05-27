@@ -71,6 +71,49 @@ export function SkeletonGrid({ count = 6 }) {
   );
 }
 
+export function SectionLoadingScreen({
+  title = "Loading section",
+  tip = "SwarmPanel is syncing the latest data for this view.",
+  count = 3,
+  compact = false,
+}) {
+  return (
+    <div className={`section-loading-screen ${compact ? "compact" : ""}`}>
+      <div className="section-loading-copy">
+        <strong>{title}</strong>
+        <p>{tip}</p>
+      </div>
+      <div className={`section-loading-grid ${compact ? "compact" : ""}`}>
+        {Array.from({ length: count }, (_, index) => <div className="section-loading-card" key={index} />)}
+      </div>
+    </div>
+  );
+}
+
+export function LoadingSection({
+  loading = false,
+  title,
+  tip,
+  count = 3,
+  compact = false,
+  className = "",
+  minHeight = 220,
+  children,
+}) {
+  return (
+    <div
+      className={`loading-section ${loading ? "is-loading" : "is-ready"} ${className}`.trim()}
+      style={{ "--loading-min-height": `${Math.max(120, Number(minHeight) || 220)}px` }}
+      aria-busy={loading ? "true" : "false"}
+    >
+      <div className="loading-section-content">{children}</div>
+      <div className="loading-section-overlay" aria-hidden={loading ? "false" : "true"}>
+        <SectionLoadingScreen title={title} tip={tip} count={count} compact={compact} />
+      </div>
+    </div>
+  );
+}
+
 export function Segmented({ value, onChange, options }) {
   return <div className="segmented">{options.map(([key, label]) => <button className={value === key ? "active" : ""} type="button" onClick={() => onChange(key)} key={key}>{label}</button>)}</div>;
 }

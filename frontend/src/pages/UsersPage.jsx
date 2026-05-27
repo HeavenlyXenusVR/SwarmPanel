@@ -1,16 +1,23 @@
 import { useEffect, useState } from "react";
 import { Search } from "lucide-react";
-import { apiFetch, cachedFetch, query } from "../api.js";
+import { cachedFetch, query } from "../api.js";
 import { UserCard } from "../components/swarm.jsx";
-import { EmptyState, Page } from "../components/ui.jsx";
+import { EmptyState, LoadingSection, Page } from "../components/ui.jsx";
 import { directoryLayoutClass } from "../utils/control.js";
 
 export default function UsersPage({ ctx }) {
   const [q, setQ] = useState("");
   const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+
   function loadUsers() {
-    cachedFetch(`/api/users/directory${query({ q })}`, { ttl: 20_000, staleTtl: 120_000 }).then((data) => setUsers(data.users || [])).catch((error) => ctx.showToast(error.message, "error"));
+    setLoading(true);
+    cachedFetch(`/api/users/directory${query({ q })}`, { ttl: 20_000, staleTtl: 120_000 })
+      .then((data) => setUsers(data.users || []))
+      .catch((error) => ctx.showToast(error.message, "error"))
+      .finally(() => setLoading(false));
   }
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       loadUsers();
@@ -31,8 +38,16 @@ export default function UsersPage({ ctx }) {
           <span>{q ? "filtered" : "all public"}</span>
         </div>
       </div>
-      <div className={`user-grid directory-grid ${directoryLayoutClass(ctx.preferences)}`}>{users.map((user) => <UserCard user={user} ctx={ctx} onChanged={loadUsers} key={`${user.username}-${user.guild_id}`} />)}</div>
-      {!users.length ? <EmptyState title="No users found" /> : null}
+      <LoadingSection
+        loading={loading}
+        title="Scanning swarm directory"
+        tip="Public identities, guild presence, and profile cards are loading into the roster."
+        count={4}
+        minHeight={320}
+      >
+        <div className={`user-grid directory-grid ${directoryLayoutClass(ctx.preferences)}`}>{users.map((user) => <UserCard user={user} ctx={ctx} onChanged={loadUsers} key={`${user.username}-${user.guild_id}`} />)}</div>
+        {!loading && !users.length ? <EmptyState title="No users found" /> : null}
+      </LoadingSection>
     </Page>
   );
 }

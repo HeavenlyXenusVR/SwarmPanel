@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Check, RefreshCw, X } from "lucide-react";
 import { apiFetch } from "../api.js";
 import { useLiveRefresh } from "../hooks/useLiveRefresh.js";
-import { EmptyState, Page, SkeletonGrid } from "../components/ui.jsx";
+import { EmptyState, LoadingSection, Page } from "../components/ui.jsx";
 import { initials } from "../utils/format.js";
 
 export default function FriendsPage({ ctx }) {
@@ -35,13 +35,19 @@ export default function FriendsPage({ ctx }) {
 
   return (
     <Page title="Friends" eyebrow="Swarm Social" actions={<button type="button" onClick={() => load()}><RefreshCw size={16} />Refresh</button>}>
-      {loading ? <SkeletonGrid count={3} /> : (
+      <LoadingSection
+        loading={loading}
+        title="Syncing social graph"
+        tip="Incoming requests, outgoing requests, and your confirmed swarm friends are loading."
+        count={3}
+        minHeight={300}
+      >
         <section className="settings-grid">
           <FriendColumn title="Incoming" rows={state.incoming} action={(row) => <><button type="button" onClick={() => respond(row.id, "accept")}><Check size={16} />Accept</button><button type="button" onClick={() => respond(row.id, "decline")}><X size={16} />Decline</button></>} />
           <FriendColumn title="Outgoing" rows={state.outgoing} action={(row) => <button type="button" onClick={() => respond(row.id, "cancel")}><X size={16} />Cancel</button>} />
           <FriendColumn title="Friends" rows={state.friends} action={() => null} />
         </section>
-      )}
+      </LoadingSection>
     </Page>
   );
 }

@@ -4,7 +4,7 @@ import { apiFetch, cachedFetch, clearCache, query } from "../api.js";
 import { useLiveRefresh } from "../hooks/useLiveRefresh.js";
 import { CONTROL_ACTIONS } from "../config.js";
 import { ChannelSelect, ControlState } from "../components/swarm.jsx";
-import { Page, SectionHead } from "../components/ui.jsx";
+import { LoadingSection, Page, SectionHead } from "../components/ui.jsx";
 import { payloadForAction } from "../utils/control.js";
 import { uniqueBy } from "../utils/format.js";
 
@@ -31,6 +31,8 @@ export default function ControlsPage({ ctx }) {
   const [inventory, setInventory] = useState(null);
   const [controlState, setControlState] = useState(null);
   const [matrix, setMatrix] = useState(null);
+  const [inventoryLoading, setInventoryLoading] = useState(false);
+  const [readinessLoading, setReadinessLoading] = useState(false);
   const [form, setForm] = useState({
     bot_key: "",
     guild_id: ctx.session.guild_id || ctx.session.account_guild_id || "",
@@ -44,6 +46,7 @@ export default function ControlsPage({ ctx }) {
   const [busy, setBusy] = useState(false);
 
   const loadBase = useCallback(async () => {
+    setCatalog((current) => ({ ...current, loading: true }));
     const [bots, dash] = await Promise.all([
       cachedFetch("/api/bots", { ttl: 30_000 }),
       cachedFetch("/api/dashboard", { ttl: 12_000, staleTtl: 60_000 }),
@@ -64,17 +67,23 @@ export default function ControlsPage({ ctx }) {
 
   useEffect(() => {
     if (!form.bot_key) return;
-    apiFetch(`/api/bots/${form.bot_key}/inventory`).then(setInventory).catch((error) => setInventory({ error: error.message, guilds: [] }));
+    setInventoryLoading(true);
+    apiFetch(`/api/bots/${form.bot_key}/inventory`)
+      .then(setInventory)
+      .catch((error) => setInventory({ error: error.message, guilds: [] }))
+      .finally(() => setInventoryLoading(false));
   }, [form.bot_key]);
 
   const loadReadiness = useCallback(async () => {
     if (!form.bot_key || !form.guild_id) return;
+    setReadinessLoading(true);
     const [state, controlMatrix] = await Promise.allSettled([
       apiFetch(`/api/bots/${form.bot_key}/control-state${query({ guild_id: form.guild_id })}`),
       apiFetch(`/api/guilds/${form.guild_id}/control-matrix`),
     ]);
     setControlState(state.status === "fulfilled" ? state.value : { error: state.reason.message });
     setMatrix(controlMatrix.status === "fulfilled" ? controlMatrix.value : { error: controlMatrix.reason.message, bots: [] });
+    setReadinessLoading(false);
   }, [form.bot_key, form.guild_id]);
 
   useEffect(() => {
@@ -133,36 +142,53 @@ export default function ControlsPage({ ctx }) {
   return (
     <Page title="Direct Playback Control" eyebrow="Controls" actions={<button type="button" onClick={loadBase}><RefreshCw size={16} />Refresh</button>}>
       <section className="control-layout">
-        <form className="panel form-panel" onSubmit={submit}>
-          <label className="field"><span>Bot</span><select value={form.bot_key} onChange={(event) => update("bot_key", event.target.value)}>{catalog.bots.map((bot) => <option value={bot.key} key={bot.key}>{bot.display_name}</option>)}</select></label>
-          <label className="field"><span>Guild</span><input value={form.guild_id} onChange={(event) => update("guild_id", event.target.value)} list="known-guilds" required /><datalist id="known-guilds">{sessionGuilds.map((guild) => <option key={guild.id} value={guild.id}>{guild.name}</option>)}</datalist></label>
-          <label className="field"><span>Action</span><select value={form.action} onChange={(event) => update("action", event.target.value)}>{CONTROL_ACTIONS.filter((action) => ctx.isAdmin || action !== "RESTART").map((action) => <option key={action} value={action}>{action}</option>)}</select></label>
-          {form.action === "PLAY" ? <label className="field"><span>Source URL or search</span><input value={form.source_url} onChange={(event) => update("source_url", event.target.value)} placeholder="https://youtube.com/... or search terms" /></label> : null}
-          {["PLAY", "SET_HOME", "SMART_RECOMMEND"].includes(form.action) ? (
-            <div className="two-col">
-              <label className="field"><span>Voice</span><ChannelSelect value={form.voice_channel_id} channels={voiceChannels} onChange={(value) => update("voice_channel_id", value)} /></label>
-              <label className="field"><span>Text</span><ChannelSelect value={form.text_channel_id} channels={textChannels} onChange={(value) => update("text_channel_id", value)} optional /></label>
+        <LoadingSection
+          loading={catalog.loading || inventoryLoading}
+          title="Preparing control lane"
+          tip="Bot inventory, guild routes, and channel choices are loading for this command path."
+          count={3}
+          minHeight={420}
+        >
+          <form className="panel form-panel" onSubmit={submit}>
+            <label className="field"><span>Bot</span><select value={form.bot_key} onChange={(event) => update("bot_key", event.target.value)}>{catalog.bots.map((bot) => <option value={bot.key} key={bot.key}>{bot.display_name}</option>)}</select></label>
+            <label className="field"><span>Guild</span><input value={form.guild_id} onChange={(event) => update("guild_id", event.target.value)} list="known-guilds" required /><datalist id="known-guilds">{sessionGuilds.map((guild) => <option key={guild.id} value={guild.id}>{guild.name}</option>)}</datalist></label>
+            <label className="field"><span>Action</span><select value={form.action} onChange={(event) => update("action", event.target.value)}>{CONTROL_ACTIONS.filter((action) => ctx.isAdmin || action !== "RESTART").map((action) => <option key={action} value={action}>{action}</option>)}</select></label>
+            {form.action === "PLAY" ? <label className="field"><span>Source URL or search</span><input value={form.source_url} onChange={(event) => update("source_url", event.target.value)} placeholder="https://youtube.com/... or search terms" /></label> : null}
+            {["PLAY", "SET_HOME", "SMART_RECOMMEND"].includes(form.action) ? (
+              <div className="two-col">
+                <label className="field"><span>Voice</span><ChannelSelect value={form.voice_channel_id} channels={voiceChannels} onChange={(value) => update("voice_channel_id", value)} /></label>
+                <label className="field"><span>Text</span><ChannelSelect value={form.text_channel_id} channels={textChannels} onChange={(value) => update("text_channel_id", value)} optional /></label>
+              </div>
+            ) : null}
+            {form.action === "LOOP" ? <label className="field"><span>Loop</span><select value={form.loop_mode} onChange={(event) => update("loop_mode", event.target.value)}><option value="off">Off</option><option value="song">Song</option><option value="queue">Queue</option></select></label> : null}
+            {form.action === "FILTER" ? <label className="field"><span>Filter</span><select value={form.filter_mode} onChange={(event) => update("filter_mode", event.target.value)}>{FILTER_OPTIONS.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label> : null}
+            <div className="live-defaults">
+              <strong>Live defaults</strong>
+              <span>Voice: {controlState?.session?.home_channel_name || controlState?.session?.channel_name || form.voice_channel_id || "unknown"}</span>
+              <span>Text: {controlState?.session?.feedback_channel_name || form.text_channel_id || "none"}</span>
+              <span>Loop: {form.loop_mode || "queue"} / Filter: {form.filter_mode || "none"}</span>
             </div>
-          ) : null}
-          {form.action === "LOOP" ? <label className="field"><span>Loop</span><select value={form.loop_mode} onChange={(event) => update("loop_mode", event.target.value)}><option value="off">Off</option><option value="song">Song</option><option value="queue">Queue</option></select></label> : null}
-          {form.action === "FILTER" ? <label className="field"><span>Filter</span><select value={form.filter_mode} onChange={(event) => update("filter_mode", event.target.value)}>{FILTER_OPTIONS.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label> : null}
-          <div className="live-defaults">
-            <strong>Live defaults</strong>
-            <span>Voice: {controlState?.session?.home_channel_name || controlState?.session?.channel_name || form.voice_channel_id || "unknown"}</span>
-            <span>Text: {controlState?.session?.feedback_channel_name || form.text_channel_id || "none"}</span>
-            <span>Loop: {form.loop_mode || "queue"} / Filter: {form.filter_mode || "none"}</span>
-          </div>
-          <div className="actions-row">
-            <button className="primary" type="submit" disabled={busy}><Send size={16} />{busy ? "Sending" : "Send Control"}</button>
-            <button type="button" onClick={() => update("action", "SMART_RECOMMEND")}><WandSparkles size={16} />Smart Rec</button>
-          </div>
-        </form>
-        <aside className="panel">
-          <SectionHead title="Readiness" />
-          <ControlState state={controlState} />
-          <SectionHead title="Guild Matrix" count={matrix?.bots?.length || 0} />
-          <div className="mini-stack">{(matrix?.bots || []).map((bot) => <ControlState state={bot} compact key={bot.key} />)}</div>
-        </aside>
+            <div className="actions-row">
+              <button className="primary" type="submit" disabled={busy}><Send size={16} />{busy ? "Sending" : "Send Control"}</button>
+              <button type="button" onClick={() => update("action", "SMART_RECOMMEND")}><WandSparkles size={16} />Smart Rec</button>
+            </div>
+          </form>
+        </LoadingSection>
+        <LoadingSection
+          loading={readinessLoading && !controlState && !matrix}
+          title="Checking route readiness"
+          tip="SwarmPanel is validating the selected guild lane, queue state, and recovery matrix."
+          count={3}
+          compact
+          minHeight={340}
+        >
+          <aside className="panel">
+            <SectionHead title="Readiness" />
+            <ControlState state={controlState} />
+            <SectionHead title="Guild Matrix" count={matrix?.bots?.length || 0} />
+            <div className="mini-stack">{(matrix?.bots || []).map((bot) => <ControlState state={bot} compact key={bot.key} />)}</div>
+          </aside>
+        </LoadingSection>
       </section>
     </Page>
   );
