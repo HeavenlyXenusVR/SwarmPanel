@@ -3,7 +3,7 @@ const USER_KEY = "swarm_panel_remote_username";
 const CACHE_TTL = 12_000;
 const CACHE_STALE_TTL = 90_000;
 const CACHE_VERSION = "v5";
-const API_FETCH_TIMEOUT_MS = 20_000;
+const API_FETCH_TIMEOUT_MS = 30_000;
 const CACHE_STORE_PREFIX = "swarm_panel_api_cache:";
 const MAX_STORED_CACHE_BYTES = 450_000;
 const REMOTE_ORIGIN_KEY = "swarm_panel_remote_origin";
@@ -224,7 +224,7 @@ async function loadRemoteOrigin({ force = false } = {}) {
   try {
     const response = await fetchWithTimeout(`${remoteConfigUrl()}?t=${Date.now()}`, {
       cache: "no-store",
-      timeoutMs: 8_000,
+      timeoutMs: 12_000,
       credentials: "omit",
     });
     if (!response.ok) throw new Error(`Remote config failed (${response.status})`);

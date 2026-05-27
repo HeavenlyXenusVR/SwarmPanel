@@ -1,9 +1,9 @@
-import { memo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Heart, MessageCircle, Music2, PlugZap, UserPlus } from "lucide-react";
 import { apiFetch, clearCache } from "../api.js";
 import { EmptyState, Notice } from "./ui.jsx";
-import { formatCell, formatTime, initials, number, pick, titleCase, unique } from "../utils/format.js";
+import { formatCell, formatDurationSeconds, formatTime, initials, number, pick, titleCase, unique } from "../utils/format.js";
 
 const COLUMN_LABELS = {
   account_id: "Account",
@@ -155,12 +155,73 @@ function bestSession(bot) {
   return sessions.find((session) => session.is_playing) || sessions[0] || null;
 }
 
+function sessionDurationSeconds(session) {
+  return Math.max(0, Math.floor(Number(session?.duration_seconds) || 0));
+}
+
+function sessionObservedAtMs(session) {
+  const raw = session?.position_observed_at || session?.updated_at || "";
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function livePlaybackPositionSeconds(session, nowMs = Date.now()) {
+  const basePosition = Math.max(0, Math.floor(Number(session?.position_seconds) || 0));
+  const duration = sessionDurationSeconds(session);
+  const isActive = Boolean(session?.is_playing || session?.session_state === "playing");
+  const observedAtMs = sessionObservedAtMs(session);
+  let position = basePosition;
+  if (isActive && observedAtMs > 0) {
+    position += Math.max(0, Math.floor((nowMs - observedAtMs) / 1000));
+  }
+  if (duration > 0) position = Math.min(position, duration);
+  return position;
+}
+
+function playbackProgressPercent(session, positionSeconds) {
+  const duration = sessionDurationSeconds(session);
+  if (!duration) return 0;
+  return Math.max(0, Math.min(100, (positionSeconds / duration) * 100));
+}
+
 export function BotCard({ bot }) {
   const sessions = bot.sessions || [];
   const session = bestSession(bot);
   const accent = bot.accent || "#89b4fa";
   const thumbnail = session?.thumbnail || session?.thumbnail_url || "";
   const badge = playbackBadge(session, bot);
+  const [playbackNowMs, setPlaybackNowMs] = useState(() => Date.now());
+  const livePositionSeconds = livePlaybackPositionSeconds(session, playbackNowMs);
+  const durationSeconds = sessionDurationSeconds(session);
+  const progressPercent = playbackProgressPercent(session, livePositionSeconds);
+  const playbackBarWidth = durationSeconds
+    ? `${progressPercent}%`
+    : (session?.is_playing || session?.session_state === "playing")
+      ? "100%"
+      : livePositionSeconds > 0
+        ? "100%"
+        : "0%";
+  const playbackLabel = durationSeconds
+    ? `${formatDurationSeconds(livePositionSeconds)} / ${formatDurationSeconds(durationSeconds)}`
+    : formatDurationSeconds(livePositionSeconds);
+  const playbackMeta = session?.is_paused
+    ? "paused"
+    : (session?.is_playing || session?.session_state === "playing")
+      ? "advancing live"
+      : session
+        ? "last reported position"
+        : "awaiting playback";
+
+  useEffect(() => {
+    if (!(session?.is_playing || session?.session_state === "playing")) return undefined;
+    const timer = window.setInterval(() => setPlaybackNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [session?.is_playing, session?.session_state, session?.position_observed_at, session?.updated_at]);
+
+  useEffect(() => {
+    setPlaybackNowMs(Date.now());
+  }, [session?.position_seconds, session?.position_observed_at, session?.updated_at, session?.duration_seconds, session?.title]);
+
   return (
     <article className="bot-card" style={{ "--card-accent": accent }}>
       <div className="bot-head">
@@ -183,6 +244,17 @@ export function BotCard({ bot }) {
           <small>{session?.guild_name || session?.channel_name || "Live state will fill in automatically."}</small>
         </div>
       </div>
+      {session ? (
+        <div className="bot-playback">
+          <div className="bot-playback-head">
+            <strong>{playbackLabel}</strong>
+            <small>{playbackMeta}</small>
+          </div>
+          <div className="bot-playback-bar" aria-hidden="true">
+            <span style={{ width: playbackBarWidth }} />
+          </div>
+        </div>
+      ) : null}
       <div className="chip-row">
         <span>{bot.active_playing_count || sessions.filter((session) => session.is_playing).length} live</span>
         <span>{bot.known_guild_count || bot.guild_count || 0} guilds</span>

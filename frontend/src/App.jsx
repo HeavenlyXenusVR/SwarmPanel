@@ -64,7 +64,7 @@ function App() {
 
   const loadSession = useCallback(async () => {
     try {
-      const data = await apiFetch("/api/session", { timeoutMs: 12_000 });
+      const data = await apiFetch("/api/session", { timeoutMs: 18_000 });
       if (data.authenticated && data.token) {
         writeToken(data.token);
         writeUsername(data.username);
@@ -101,7 +101,7 @@ function App() {
     if (!token) return;
     const guildId = session.guild_id || session.account_guild_id;
     prefetchFetch("/api/bots", { ttl: 60_000, staleTtl: 300_000, storage: "local" });
-    prefetchFetch("/api/dashboard", { ttl: 8_000, staleTtl: 30_000 });
+    prefetchFetch("/api/dashboard", { ttl: 12_000, staleTtl: 60_000 });
     prefetchFetch("/api/users/me", { ttl: 30_000, staleTtl: 120_000 });
     prefetchFetch(`/api/music-intelligence${query({ guild_id: guildId, limit: 10 })}`, { ttl: 20_000, staleTtl: 120_000 });
   }, [session.account_guild_id, session.guild_id, token]);
@@ -151,7 +151,7 @@ function App() {
       const criticalWarmups = [
         cachedFetch("/api/users/preferences", { ttl: 30_000, staleTtl: 180_000, storage: "local" }),
         cachedFetch("/api/bots", { ttl: 30_000, staleTtl: 180_000, storage: "local" }),
-        cachedFetch("/api/dashboard", { ttl: 8_000, staleTtl: 45_000 }),
+        cachedFetch("/api/dashboard", { ttl: 12_000, staleTtl: 60_000 }),
       ];
       prefetchFetch("/api/users/me", { ttl: 30_000, staleTtl: 120_000 });
       prefetchFetch(`/api/music-intelligence${query({ guild_id: guildId, limit: 10 })}`, { ttl: 20_000, staleTtl: 120_000 });

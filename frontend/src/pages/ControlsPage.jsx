@@ -46,7 +46,7 @@ export default function ControlsPage({ ctx }) {
   const loadBase = useCallback(async () => {
     const [bots, dash] = await Promise.all([
       cachedFetch("/api/bots", { ttl: 30_000 }),
-      cachedFetch("/api/dashboard", { ttl: 8_000, staleTtl: 45_000 }),
+      cachedFetch("/api/dashboard", { ttl: 12_000, staleTtl: 60_000 }),
     ]);
     const musicBots = (bots.bots || []).filter((bot) => bot.kind === "music");
     setCatalog({ bots: musicBots, loading: false });
@@ -81,8 +81,8 @@ export default function ControlsPage({ ctx }) {
     loadReadiness();
   }, [loadReadiness]);
 
-  useLiveRefresh(loadReadiness, { enabled: Boolean(form.bot_key && form.guild_id), interval: 8_000 });
-  useLiveRefresh(loadBase, { interval: 24_000 });
+  useLiveRefresh(loadReadiness, { enabled: Boolean(form.bot_key && form.guild_id), interval: 10_000 });
+  useLiveRefresh(loadBase, { interval: 30_000 });
 
   useEffect(() => {
     const session = controlState?.session;

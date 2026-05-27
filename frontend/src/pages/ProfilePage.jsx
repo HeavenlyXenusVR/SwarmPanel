@@ -203,7 +203,7 @@ export default function ProfilePage({ ctx }) {
       lede={publicMode ? "Public-facing profile card, live activity, and social links." : "Tune how your guild identity and activity appear across the swarm."}
       className="page-profile"
     >
-      <div className={`public-profile-shell ${layoutClass}`} style={profileSurface}>
+      <div className="public-profile-shell" style={profileSurface}>
         <section className={`panel public-profile-hero ${profileClasses}`} style={bannerStyle}>
           <ProfileAvatar profile={profile} />
           <div className="public-profile-copy">
@@ -245,9 +245,9 @@ export default function ProfilePage({ ctx }) {
         </section>
 
         {!publicMode ? (
-          <section className={`settings-grid ${layoutClass}`}>
+          <section className={`settings-grid profile-workbench ${layoutClass}`}>
             <form className="panel form-panel profile-editor" onSubmit={save}>
-              <div className={`profile-preview-shell ${layoutClass}`}>
+              <div className="profile-preview-shell">
                 <div className="profile-preview-header">
                   <div>
                     <strong>Live Public Card Preview</strong>
@@ -316,7 +316,7 @@ export default function ProfilePage({ ctx }) {
               <label className="check-row"><input type="checkbox" checked={form.public_profile !== false} onChange={(event) => setForm((current) => ({ ...current, public_profile: event.target.checked }))} disabled={!editable} />Public profile</label>
               <button className="primary" type="submit" disabled={!editable || busy === "profile"}><Save size={16} />{busy === "profile" ? "Saving" : "Save"}</button>
             </form>
-            <div className="panel form-panel">
+            <div className="panel form-panel profile-account-panel">
               <h2><ShieldCheck size={18} /> Account</h2>
               <div className="account-status-stack">
                 <Notice tone={profile.email_verified ? "info" : "error"}>

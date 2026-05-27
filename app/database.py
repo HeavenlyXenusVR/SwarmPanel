@@ -77,6 +77,7 @@ PANEL_DB_POOL_MAX_SIZE = max(PANEL_DB_POOL_MIN_SIZE, int(os.getenv("PANEL_DB_POO
 PANEL_DB_CONNECT_TIMEOUT_SECONDS = max(3, int(os.getenv("PANEL_DB_CONNECT_TIMEOUT_SECONDS", "10") or "10"))
 PANEL_DB_QUERY_TIMEOUT_SECONDS = max(3.0, float(os.getenv("PANEL_DB_QUERY_TIMEOUT_SECONDS", "15") or "15"))
 PANEL_DB_POOL_RECYCLE_SECONDS = max(60, int(os.getenv("PANEL_DB_POOL_RECYCLE_SECONDS", "900") or "900"))
+PANEL_DASHBOARD_SNAPSHOT_CONCURRENCY = max(1, int(os.getenv("PANEL_DASHBOARD_SNAPSHOT_CONCURRENCY", "4") or "4"))
 PANEL_TABLE_CACHE_TTL_SECONDS = max(10.0, float(os.getenv("PANEL_TABLE_CACHE_TTL_SECONDS", "120") or "120"))
 PANEL_DASHBOARD_CACHE_TTL_SECONDS = max(0.5, float(os.getenv("PANEL_DASHBOARD_CACHE_TTL_SECONDS", "2") or "2"))
 PANEL_SCHEMA_CACHE_TTL_SECONDS = max(10.0, float(os.getenv("PANEL_SCHEMA_CACHE_TTL_SECONDS", "120") or "120"))
@@ -2625,6 +2626,15 @@ class PanelDatabase:
             is_paused = bool(metric.get("player_paused")) if metric_fresh else bool(playback.get("is_paused"))
             effective_channel_id = metric.get("connected_channel_id") if metric_fresh and metric.get("connected_channel_id") else playback.get("channel_id")
             effective_position = int(metric.get("position_seconds") or playback.get("position_seconds") or 0)
+            effective_duration = int(
+                metric.get("duration_seconds")
+                or metric.get("track_length_seconds")
+                or playback.get("duration_seconds")
+                or playback.get("length_seconds")
+                or playback.get("track_length_seconds")
+                or 0
+            )
+            observed_at = metric.get("updated_at") if metric_fresh and metric.get("updated_at") else playback.get("updated_at")
             effective_playback = {**playback, "is_playing": is_playing, "is_paused": is_paused, "channel_id": effective_channel_id}
             session_state, session_state_label = _derive_session_state(
                 effective_playback,
@@ -2645,6 +2655,8 @@ class PanelDatabase:
                     "media_source_label": source_info["label"],
                     "thumbnail": None,
                     "position_seconds": effective_position,
+                    "duration_seconds": effective_duration,
+                    "position_observed_at": observed_at.isoformat() if hasattr(observed_at, "isoformat") else None,
                     "is_playing": is_playing,
                     "is_paused": is_paused,
                     "metric_age_seconds": int(metric.get("metric_age_seconds") or -1) if metric else None,
@@ -2745,14 +2757,16 @@ class PanelDatabase:
         if self._dashboard_cache and self._dashboard_cache[0] > now:
             return copy.deepcopy(self._dashboard_cache[1])
         await self._ensure_connected()
-        bots = []
-        for bot in MUSIC_BOTS:
-            try:
-                bots.append(await self._music_bot_snapshot(bot))
-            except Exception as exc:
-                logger.exception("Failed collecting snapshot for %s", bot.key)
-                bots.append(
-                    {
+        snapshot_limit = min(PANEL_DASHBOARD_SNAPSHOT_CONCURRENCY, max(1, PANEL_DB_POOL_MAX_SIZE))
+        semaphore = asyncio.Semaphore(snapshot_limit)
+
+        async def collect_music_snapshot(bot: BotDefinition) -> dict[str, Any]:
+            async with semaphore:
+                try:
+                    return await self._music_bot_snapshot(bot)
+                except Exception as exc:
+                    logger.exception("Failed collecting snapshot for %s", bot.key)
+                    return {
                         "key": bot.key,
                         "display_name": bot.display_name,
                         "kind": bot.kind,
@@ -2765,7 +2779,13 @@ class PanelDatabase:
                         "known_guild_count": 0,
                         "sessions": [],
                     }
-                )
+
+        bots = []
+        for bot_snapshot in await asyncio.gather(*(collect_music_snapshot(bot) for bot in MUSIC_BOTS)):
+            try:
+                bots.append(bot_snapshot)
+            except Exception:
+                logger.exception("Unexpected error handling dashboard snapshot result.")
 
         total_active = sum(int(bot.get("active_playing_count") or 0) for bot in bots)
         aria_recent_interactions: list[dict[str, Any]] = []
