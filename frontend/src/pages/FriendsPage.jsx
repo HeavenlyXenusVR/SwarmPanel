@@ -25,7 +25,7 @@ export default function FriendsPage({ ctx }) {
   }, [ctx]);
 
   useEffect(() => { load(); }, [load]);
-  useLiveRefresh(() => load({ background: true, force: true }), { interval: 10_000 });
+  useLiveRefresh(() => load({ background: true, force: true }), { interval: 5_000 });
 
   async function respond(id, action) {
     try {

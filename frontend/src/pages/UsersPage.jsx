@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Search } from "lucide-react";
 import { cachedFetch, query } from "../api.js";
 import { UserCard } from "../components/swarm.jsx";
 import { EmptyState, LoadingSection, Page } from "../components/ui.jsx";
+import { useLiveRefresh } from "../hooks/useLiveRefresh.js";
 import { directoryLayoutClass } from "../utils/control.js";
 
 export default function UsersPage({ ctx }) {
@@ -10,20 +11,29 @@ export default function UsersPage({ ctx }) {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  function loadUsers() {
-    setLoading(true);
-    cachedFetch(`/api/users/directory${query({ q })}`, { ttl: 20_000, staleTtl: 120_000 })
-      .then((data) => setUsers(data.users || []))
-      .catch((error) => ctx.showToast(error.message, "error"))
-      .finally(() => setLoading(false));
-  }
+  const loadUsers = useCallback(async ({ background = false, force = false } = {}) => {
+    if (!background) setLoading(true);
+    try {
+      const data = await cachedFetch(`/api/users/directory${query({ q })}`, {
+        ttl: force ? 0 : (background ? 4_000 : 8_000),
+        staleTtl: background ? 8_000 : 20_000,
+        force,
+      });
+      setUsers(data.users || []);
+    } catch (error) {
+      if (!background) ctx.showToast(error.message, "error");
+    } finally {
+      if (!background) setLoading(false);
+    }
+  }, [ctx, q]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
       loadUsers();
     }, 220);
     return () => window.clearTimeout(timer);
-  }, [ctx, q]);
+  }, [loadUsers]);
+  useLiveRefresh(() => loadUsers({ background: true, force: true }), { interval: 5_000 });
   return (
     <Page
       title="Swarm Directory"
@@ -45,7 +55,7 @@ export default function UsersPage({ ctx }) {
         count={4}
         minHeight={320}
       >
-        <div className={`user-grid directory-grid ${directoryLayoutClass(ctx.preferences)}`}>{users.map((user) => <UserCard user={user} ctx={ctx} onChanged={loadUsers} key={`${user.username}-${user.guild_id}`} />)}</div>
+        <div className={`user-grid directory-grid ${directoryLayoutClass(ctx.preferences)}`}>{users.map((user) => <UserCard user={user} ctx={ctx} onChanged={() => loadUsers({ force: true })} key={`${user.username}-${user.guild_id}`} />)}</div>
         {!loading && !users.length ? <EmptyState title="No users found" /> : null}
       </LoadingSection>
     </Page>

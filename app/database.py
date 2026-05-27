@@ -37,6 +37,12 @@ ACCOUNT_PROFILE_COLUMNS = (
     ("email_verification_token_hash", "CHAR(64) NULL"),
     ("email_verification_code_hash", "CHAR(64) NULL"),
     ("email_verification_sent_at", "TIMESTAMP NULL DEFAULT NULL"),
+    ("verification_webhook_url", "TEXT NULL"),
+    ("verification_webhook_channel_id", "VARCHAR(40) NULL"),
+    ("verification_webhook_name", "VARCHAR(120) NULL"),
+    ("webhook_verified_at", "TIMESTAMP NULL DEFAULT NULL"),
+    ("webhook_verification_code_hash", "CHAR(64) NULL"),
+    ("webhook_verification_sent_at", "TIMESTAMP NULL DEFAULT NULL"),
     ("display_name", "VARCHAR(80) NULL"),
     ("avatar_url", "TEXT NULL"),
     ("bio", "VARCHAR(280) NULL"),
@@ -689,16 +695,20 @@ class PanelDatabase:
         guild_id: str | int,
         password: str,
         email: str | None = None,
-        email_verification_token: str | None = None,
-        email_verification_code: str | None = None,
+        verification_webhook_url: str | None = None,
+        verification_webhook_channel_id: str | None = None,
+        verification_webhook_name: str | None = None,
+        webhook_verification_code: str | None = None,
     ) -> dict[str, Any]:
         username = _normalize_account_username(username)
         gid = _coerce_int(guild_id, "guild_id")
         normalized_password = _normalize_account_password(password)
         password_hash = _account_password_hash(normalized_password)
         email = _normalize_email(email)
-        token_hash = _verification_token_hash(email_verification_token) if email and email_verification_token else None
-        code_hash = _verification_token_hash(email_verification_code) if email and email_verification_code else None
+        webhook_url = str(verification_webhook_url or "").strip() or None
+        webhook_channel_id = str(verification_webhook_channel_id or "").strip() or None
+        webhook_name = str(verification_webhook_name or "").strip()[:120] or None
+        code_hash = _verification_token_hash(webhook_verification_code) if webhook_url and webhook_verification_code else None
         await self._ensure_connected()
         async with self.pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
@@ -731,11 +741,23 @@ class PanelDatabase:
                     await asyncio.wait_for(cur.execute(
                         f"""
                         INSERT INTO `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}` (
-                            username, guild_id, password_hash, email, email_verification_token_hash, email_verification_code_hash, email_verification_sent_at
+                            username, guild_id, password_hash, email,
+                            verification_webhook_url, verification_webhook_channel_id, verification_webhook_name,
+                            webhook_verification_code_hash, webhook_verification_sent_at
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, CASE WHEN %s IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CASE WHEN %s IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END)
                         """,
-                        (username, gid, password_hash, email, token_hash, code_hash, token_hash),
+                        (
+                            username,
+                            gid,
+                            password_hash,
+                            email,
+                            webhook_url,
+                            webhook_channel_id,
+                            webhook_name,
+                            code_hash,
+                            code_hash,
+                        ),
                     ), timeout=15)
                     await asyncio.wait_for(conn.commit(), timeout=15)
                 except ValueError:
@@ -751,7 +773,82 @@ class PanelDatabase:
                             raise ValueError("That email is already registered.") from exc
                         raise ValueError("That username is already registered.") from exc
                     raise
-        return {"username": username, "guild_id": str(gid), "email": email}
+        return {
+            "username": username,
+            "guild_id": str(gid),
+            "email": email,
+            "verification_webhook_url": webhook_url,
+            "verification_webhook_channel_id": webhook_channel_id,
+            "verification_webhook_name": webhook_name,
+        }
+
+    async def update_account_verification_webhook(
+        self,
+        username: str,
+        guild_id: str | int,
+        webhook_url: str | None,
+        webhook_channel_id: str | None = None,
+        webhook_name: str | None = None,
+    ) -> dict[str, Any] | None:
+        username = _normalize_account_username(username)
+        gid = _coerce_int(guild_id, "guild_id")
+        normalized_url = str(webhook_url or "").strip() or None
+        normalized_channel_id = str(webhook_channel_id or "").strip() or None
+        normalized_name = str(webhook_name or "").strip()[:120] or None
+        current = await self._fetchone(
+            f"""
+            SELECT verification_webhook_url, verification_webhook_channel_id, verification_webhook_name
+            FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
+            WHERE username = %s AND guild_id = %s
+            LIMIT 1
+            """,
+            (username, gid),
+        )
+        if not current:
+            return None
+        same_url = str(current.get("verification_webhook_url") or "").strip() == str(normalized_url or "")
+        same_channel = str(current.get("verification_webhook_channel_id") or "").strip() == str(normalized_channel_id or "")
+        same_name = str(current.get("verification_webhook_name") or "").strip() == str(normalized_name or "")
+        if same_url and same_channel and same_name:
+            return await self.get_account_profile(username, gid)
+        await self._execute(
+            f"""
+            UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
+            SET verification_webhook_url = %s,
+                verification_webhook_channel_id = %s,
+                verification_webhook_name = %s,
+                webhook_verified_at = NULL,
+                webhook_verification_code_hash = NULL,
+                webhook_verification_sent_at = NULL
+            WHERE username = %s AND guild_id = %s
+            """,
+            (normalized_url, normalized_channel_id, normalized_name, username, gid),
+        )
+        return await self.get_account_profile(username, gid)
+
+    async def issue_account_webhook_verification_code(
+        self,
+        username: str,
+        guild_id: str | int,
+        code: str,
+    ) -> dict[str, Any] | None:
+        username = _normalize_account_username(username)
+        gid = _coerce_int(guild_id, "guild_id")
+        code_hash = _verification_token_hash(code)
+        await self._execute(
+            f"""
+            UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
+            SET webhook_verification_code_hash = %s,
+                webhook_verification_sent_at = CURRENT_TIMESTAMP
+            WHERE username = %s
+              AND guild_id = %s
+              AND verification_webhook_url IS NOT NULL
+              AND verification_webhook_url != ''
+              AND webhook_verified_at IS NULL
+            """,
+            (code_hash, username, gid),
+        )
+        return await self.get_account_profile(username, gid)
 
     async def verify_account_email_by_token(self, token: str, max_age_seconds: int) -> dict[str, Any] | None:
         token_hash = _verification_token_hash(token)
@@ -839,6 +936,45 @@ class PanelDatabase:
             if "duplicate" in message or "1062" in message:
                 raise ValueError("That email is already registered.") from exc
             raise
+        return await self.get_account_profile(username, gid)
+
+    async def verify_account_webhook_code(
+        self,
+        username: str,
+        guild_id: str | int,
+        code: str,
+        max_age_seconds: int,
+    ) -> dict[str, Any] | None:
+        username = _normalize_account_username(username)
+        gid = _coerce_int(guild_id, "guild_id")
+        code_hash = _verification_token_hash(code)
+        row = await self._fetchone(
+            f"""
+            SELECT username, guild_id
+            FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
+            WHERE username = %s
+              AND guild_id = %s
+              AND verification_webhook_url IS NOT NULL
+              AND verification_webhook_url != ''
+              AND webhook_verification_code_hash = %s
+              AND webhook_verification_sent_at IS NOT NULL
+              AND webhook_verification_sent_at >= TIMESTAMPADD(SECOND, -%s, CURRENT_TIMESTAMP)
+            LIMIT 1
+            """,
+            (username, gid, code_hash, max(1, int(max_age_seconds or 1))),
+        )
+        if not row:
+            return None
+        await self._execute(
+            f"""
+            UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
+            SET webhook_verified_at = CURRENT_TIMESTAMP,
+                webhook_verification_code_hash = NULL,
+                webhook_verification_sent_at = NULL
+            WHERE username = %s AND guild_id = %s
+            """,
+            (username, gid),
+        )
         return await self.get_account_profile(username, gid)
 
     async def verify_account_email_code(
@@ -967,7 +1103,11 @@ class PanelDatabase:
             profile["guild_id"] = str(profile["guild_id"])
         profile["display_name"] = profile.get("display_name") or profile.get("username")
         profile["public_profile"] = bool(profile.get("public_profile"))
-        profile["email_verified"] = bool(profile.get("email_verified_at"))
+        profile["webhook_verified"] = bool(profile.get("webhook_verified_at"))
+        profile["verification_verified"] = bool(profile.get("webhook_verified_at") or profile.get("email_verified_at"))
+        profile["verification_pending"] = bool(profile.get("verification_webhook_url")) and not profile["verification_verified"]
+        profile["verification_webhook_configured"] = bool(profile.get("verification_webhook_url"))
+        profile["email_verified"] = profile["verification_verified"]
         profile["has_password"] = bool(profile.get("password_hash"))
         profile["is_online"] = self._is_recently_seen(profile.get("last_seen_at"))
         profile.pop("password_hash", None)
@@ -990,7 +1130,16 @@ class PanelDatabase:
             if not isinstance(value, list):
                 value = []
             profile[key] = value
-        for key in ("created_at", "last_login_at", "last_seen_at", "updated_at", "email_verified_at", "email_verification_sent_at"):
+        for key in (
+            "created_at",
+            "last_login_at",
+            "last_seen_at",
+            "updated_at",
+            "email_verified_at",
+            "email_verification_sent_at",
+            "webhook_verified_at",
+            "webhook_verification_sent_at",
+        ):
             value = profile.get(key)
             if hasattr(value, "isoformat"):
                 profile[key] = value.isoformat()
@@ -1016,7 +1165,10 @@ class PanelDatabase:
         gid = _coerce_int(guild_id, "guild_id")
         row = await self._fetchone(
             f"""
-            SELECT id, username, guild_id, email, email_verified_at, password_hash, display_name, avatar_url, bio,
+            SELECT id, username, guild_id, email, email_verified_at,
+                   verification_webhook_url, verification_webhook_channel_id, verification_webhook_name,
+                   webhook_verified_at, webhook_verification_sent_at,
+                   password_hash, display_name, avatar_url, bio,
                    profile_headline, profile_tags, profile_links, profile_banner_url, profile_banner_mode, profile_card_style, profile_social_mode,
                    favorite_bot, theme_accent,
                    public_profile, server_invite_url, server_name, server_icon_url,
@@ -1070,7 +1222,10 @@ class PanelDatabase:
     async def get_account_admin(self, account_id: int) -> dict[str, Any] | None:
         row = await self._fetchone(
             f"""
-            SELECT id, username, guild_id, email, email_verified_at, email_verification_sent_at, password_hash,
+            SELECT id, username, guild_id, email, email_verified_at, email_verification_sent_at,
+                   verification_webhook_url, verification_webhook_channel_id, verification_webhook_name,
+                   webhook_verified_at, webhook_verification_sent_at,
+                   password_hash,
                    display_name, avatar_url, bio, profile_headline, profile_tags, profile_links, profile_banner_url, profile_banner_mode,
                    profile_card_style, profile_social_mode, favorite_bot, theme_accent, public_profile,
                    server_invite_url, server_name, server_icon_url, panel_preferences,
@@ -1092,8 +1247,8 @@ class PanelDatabase:
             SELECT
                 COUNT(*) AS total_accounts,
                 SUM(CASE WHEN email IS NOT NULL THEN 1 ELSE 0 END) AS accounts_with_email,
-                SUM(CASE WHEN email_verified_at IS NOT NULL THEN 1 ELSE 0 END) AS verified_emails,
-                SUM(CASE WHEN email IS NOT NULL AND email_verified_at IS NULL THEN 1 ELSE 0 END) AS pending_emails,
+                SUM(CASE WHEN webhook_verified_at IS NOT NULL OR email_verified_at IS NOT NULL THEN 1 ELSE 0 END) AS verified_emails,
+                SUM(CASE WHEN verification_webhook_url IS NOT NULL AND verification_webhook_url != '' AND webhook_verified_at IS NULL AND email_verified_at IS NULL THEN 1 ELSE 0 END) AS pending_emails,
                 SUM(CASE WHEN public_profile = 1 THEN 1 ELSE 0 END) AS public_profiles,
                 SUM(CASE WHEN password_hash IS NOT NULL AND password_hash != '' THEN 1 ELSE 0 END) AS passwords_set
             FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
@@ -1101,7 +1256,10 @@ class PanelDatabase:
         ) or {}
         rows = await self._fetchall(
             f"""
-            SELECT id, username, guild_id, email, email_verified_at, email_verification_sent_at, password_hash,
+            SELECT id, username, guild_id, email, email_verified_at, email_verification_sent_at,
+                   verification_webhook_url, verification_webhook_channel_id, verification_webhook_name,
+                   webhook_verified_at, webhook_verification_sent_at,
+                   password_hash,
                    display_name, favorite_bot, public_profile, server_name,
                    created_at, last_login_at, last_seen_at, updated_at
             FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
@@ -1293,16 +1451,24 @@ class PanelDatabase:
                     await asyncio.wait_for(conn.rollback(), timeout=15)
                     raise
 
-    async def set_account_email_verified_admin(self, account_id: int, verified: bool) -> dict[str, Any] | None:
+    async def set_account_webhook_verified_admin(self, account_id: int, verified: bool) -> dict[str, Any] | None:
         await self._execute(
             f"""
             UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
-            SET email_verified_at = CASE WHEN %s THEN CURRENT_TIMESTAMP ELSE NULL END,
-                email_verification_token_hash = CASE WHEN %s THEN NULL ELSE email_verification_token_hash END,
-                email_verification_code_hash = CASE WHEN %s THEN NULL ELSE email_verification_code_hash END
+            SET webhook_verified_at = CASE WHEN %s THEN CURRENT_TIMESTAMP ELSE NULL END,
+                email_verified_at = CASE WHEN %s THEN email_verified_at ELSE NULL END,
+                email_verification_token_hash = CASE WHEN %s THEN email_verification_token_hash ELSE NULL END,
+                email_verification_code_hash = CASE WHEN %s THEN email_verification_code_hash ELSE NULL END,
+                email_verification_sent_at = CASE WHEN %s THEN email_verification_sent_at ELSE NULL END,
+                webhook_verification_code_hash = CASE WHEN %s THEN NULL ELSE webhook_verification_code_hash END,
+                webhook_verification_sent_at = CASE WHEN %s THEN NULL ELSE webhook_verification_sent_at END
             WHERE id = %s
             """,
             (
+                1 if verified else 0,
+                1 if verified else 0,
+                1 if verified else 0,
+                1 if verified else 0,
                 1 if verified else 0,
                 1 if verified else 0,
                 1 if verified else 0,
@@ -1354,23 +1520,23 @@ class PanelDatabase:
         )
         return await self.get_account_admin(safe_account_id)
 
-    async def issue_account_email_verification_token_by_id(
+    async def issue_account_webhook_verification_code_by_id(
         self,
         account_id: int,
-        token: str,
         code: str,
     ) -> dict[str, Any] | None:
-        token_hash = _verification_token_hash(token)
         code_hash = _verification_token_hash(code)
         await self._execute(
             f"""
             UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
-            SET email_verification_token_hash = %s,
-                email_verification_code_hash = %s,
-                email_verification_sent_at = CURRENT_TIMESTAMP
-            WHERE id = %s AND email IS NOT NULL AND email_verified_at IS NULL
+            SET webhook_verification_code_hash = %s,
+                webhook_verification_sent_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+              AND verification_webhook_url IS NOT NULL
+              AND verification_webhook_url != ''
+              AND webhook_verified_at IS NULL
             """,
-            (token_hash, code_hash, _coerce_int(account_id, "account_id")),
+            (code_hash, _coerce_int(account_id, "account_id")),
         )
         return await self.get_account_admin(account_id)
 
@@ -1381,7 +1547,10 @@ class PanelDatabase:
         viewer_id = int(viewer_account_id or 0)
         rows = await self._fetchall(
             f"""
-            SELECT id, username, guild_id, email, email_verified_at, display_name, avatar_url, bio,
+            SELECT id, username, guild_id, email, email_verified_at,
+                   verification_webhook_url, verification_webhook_channel_id, verification_webhook_name,
+                   webhook_verified_at, webhook_verification_sent_at,
+                   display_name, avatar_url, bio,
                    profile_headline, profile_tags, profile_links, profile_banner_url, profile_banner_mode, profile_card_style, profile_social_mode,
                    favorite_bot, theme_accent,
                    public_profile, server_invite_url, server_name, server_icon_url,
@@ -1406,8 +1575,11 @@ class PanelDatabase:
             (viewer_id, normalized_query, like, like, like, like, safe_limit),
         )
         profiles = [self._serialize_account_profile(row) for row in rows]
-        for profile in profiles:
-            profile.update(await self.get_account_social_snapshot(int(profile["id"]), viewer_id))
+        social_snapshots = await asyncio.gather(
+            *(self.get_account_social_snapshot(int(profile["id"]), viewer_id) for profile in profiles)
+        ) if profiles else []
+        for profile, social_snapshot in zip(profiles, social_snapshots):
+            profile.update(social_snapshot)
         summaries = await self.get_music_activity_summary_for_guilds([profile["guild_id"] for profile in profiles])
         for profile in profiles:
             profile["activity"] = summaries.get(profile["guild_id"], self._empty_music_activity_summary())
@@ -1416,7 +1588,10 @@ class PanelDatabase:
     async def get_account_by_id(self, account_id: int) -> dict[str, Any] | None:
         row = await self._fetchone(
             f"""
-            SELECT id, username, guild_id, email, email_verified_at, display_name, avatar_url, bio,
+            SELECT id, username, guild_id, email, email_verified_at,
+                   verification_webhook_url, verification_webhook_channel_id, verification_webhook_name,
+                   webhook_verified_at, webhook_verification_sent_at,
+                   display_name, avatar_url, bio,
                    profile_headline, profile_tags, profile_links, profile_banner_url, profile_banner_mode, profile_card_style, profile_social_mode,
                    favorite_bot, theme_accent,
                    public_profile, server_invite_url, server_name, server_icon_url, panel_preferences,

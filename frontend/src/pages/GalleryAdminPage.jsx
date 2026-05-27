@@ -46,7 +46,7 @@ export default function GalleryAdminPage({ ctx }) {
     }
   }, [ctx]);
   useEffect(() => { load(); }, [load]);
-  useLiveRefresh(() => load({ background: true, force: true, includeTable: Boolean(table), selectedTable: table }), { interval: 12_000 });
+  useLiveRefresh(() => load({ background: true, force: true, includeTable: Boolean(table), selectedTable: table }), { interval: 5_000 });
   async function loadTable() {
     if (!table) return;
     setTableLoading(true);

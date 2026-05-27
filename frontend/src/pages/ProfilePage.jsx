@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Check, ExternalLink, Eye, Heart, KeyRound, Mail, MessageCircle, Music2, RefreshCw, Save, ShieldCheck, Sparkles, UserPlus } from "lucide-react";
+import { Check, ExternalLink, Eye, Heart, KeyRound, Mail, MessageCircle, Music2, RefreshCw, Save, ShieldCheck, Sparkles, UserPlus, Webhook } from "lucide-react";
 import { apiFetch, cachedFetch, clearCache } from "../api.js";
 import { EmptyState, Notice, Page, SkeletonGrid } from "../components/ui.jsx";
 import { IdentityAvatar, PresencePill } from "../components/swarm.jsx";
@@ -50,20 +50,24 @@ export default function ProfilePage({ ctx }) {
   const publicMode = Boolean(accountId);
   const [data, setData] = useState(null);
   const [form, setForm] = useState({});
-  const [identity, setIdentity] = useState({ email: "", code: "", current_password: "", new_password: "" });
+  const [identity, setIdentity] = useState({ email: "", verification_webhook_url: "", code: "", current_password: "", new_password: "" });
   const [busy, setBusy] = useState("");
 
   const load = useCallback(async ({ background = false } = {}) => {
     const payload = publicMode
-      ? await cachedFetch(`/api/users/${accountId}/profile`, { ttl: background ? 8_000 : 20_000, staleTtl: background ? 30_000 : 120_000 })
-      : await cachedFetch("/api/users/me", { ttl: background ? 8_000 : 20_000, staleTtl: background ? 30_000 : 120_000 });
+      ? await cachedFetch(`/api/users/${accountId}/profile`, { ttl: background ? 4_000 : 8_000, staleTtl: background ? 8_000 : 20_000 })
+      : await cachedFetch("/api/users/me", { ttl: background ? 4_000 : 8_000, staleTtl: background ? 8_000 : 20_000 });
     setData(payload);
     setForm(profileToForm(payload.profile || {}));
-    setIdentity((current) => ({ ...current, email: payload.profile?.email || "" }));
+    setIdentity((current) => ({
+      ...current,
+      email: payload.profile?.email || "",
+      verification_webhook_url: payload.profile?.verification_webhook_url || "",
+    }));
   }, [accountId, publicMode]);
 
   useEffect(() => { load().catch((error) => ctx.showToast(error.message, "error")); }, [ctx, load]);
-  useLiveRefresh(() => load({ background: true }), { enabled: publicMode, interval: 20_000 });
+  useLiveRefresh(() => load({ background: true }), { enabled: publicMode, interval: 5_000 });
 
   function clearProfileCache() {
     clearCache("/api/users/me");
@@ -94,8 +98,9 @@ export default function ProfilePage({ ctx }) {
       const updated = await apiFetch("/api/session/email", { method: "POST", body: JSON.stringify({ email: identity.email }) });
       setData((current) => ({ ...(current || {}), profile: updated.profile || current?.profile }));
       setForm(profileToForm(updated.profile || form));
+      setIdentity((current) => ({ ...current, email: updated.profile?.email || current.email }));
       clearProfileCache();
-      ctx.showToast(updated.email_verification_sent ? "Verification sent." : "Email saved.", "success");
+      ctx.showToast("Email saved.", "success");
     } catch (error) {
       ctx.showToast(error.message, "error");
     } finally {
@@ -103,16 +108,36 @@ export default function ProfilePage({ ctx }) {
     }
   }
 
-  async function verifyEmail(event) {
+  async function saveVerificationWebhook(event) {
+    event.preventDefault();
+    setBusy("webhook");
+    try {
+      const updated = await apiFetch("/api/session/verification-webhook", { method: "POST", body: JSON.stringify({ verification_webhook_url: identity.verification_webhook_url }) });
+      setData((current) => ({ ...(current || {}), profile: updated.profile || current?.profile }));
+      setForm(profileToForm(updated.profile || form));
+      setIdentity((current) => ({
+        ...current,
+        verification_webhook_url: updated.profile?.verification_webhook_url || current.verification_webhook_url,
+      }));
+      clearProfileCache();
+      ctx.showToast(updated.verification_sent ? "Webhook saved and verification code sent." : "Verification webhook saved.", "success");
+    } catch (error) {
+      ctx.showToast(error.message, "error");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function verifyVerificationCode(event) {
     event.preventDefault();
     setBusy("verify");
     try {
-      const updated = await apiFetch("/api/session/email/verify", { method: "POST", body: JSON.stringify({ code: identity.code }) });
+      const updated = await apiFetch("/api/session/verification/verify", { method: "POST", body: JSON.stringify({ code: identity.code }) });
       setData((current) => ({ ...(current || {}), profile: updated.profile || current?.profile }));
       setForm(profileToForm(updated.profile || form));
       setIdentity((current) => ({ ...current, code: "" }));
       clearProfileCache();
-      ctx.showToast("Email verified.", "success");
+      ctx.showToast("Discord webhook verified.", "success");
     } catch (error) {
       ctx.showToast(error.message, "error");
     } finally {
@@ -139,7 +164,7 @@ export default function ProfilePage({ ctx }) {
     setBusy("resend");
     try {
       const updated = await apiFetch("/api/session/resend-verification", { method: "POST" });
-      ctx.showToast(updated.email_verification_sent ? "Verification sent." : "Already verified.", "success");
+      ctx.showToast(updated.verification_sent ? "Verification code sent." : "Already verified.", "success");
     } catch (error) {
       ctx.showToast(error.message, "error");
     } finally {
@@ -282,7 +307,7 @@ export default function ProfilePage({ ctx }) {
                   <span><ExternalLink size={14} /> {previewProfile.server_invite_url ? "Discord invite linked" : "No Discord invite"}</span>
                 </div>
               </div>
-              {!profile.email_verified && identity.email ? <Notice>Profile owner features stay limited until this email is verified.</Notice> : null}
+              {!profile.verification_verified && identity.verification_webhook_url ? <Notice>Profile owner features stay limited until your Discord webhook code is verified.</Notice> : null}
               <label className="field"><span>Display Name</span><input value={form.display_name || ""} onChange={(event) => setForm((current) => ({ ...current, display_name: event.target.value }))} disabled={!editable} /></label>
               <label className="field"><span>Headline</span><input value={form.profile_headline || ""} onChange={(event) => setForm((current) => ({ ...current, profile_headline: event.target.value }))} disabled={!editable} /></label>
               <label className="field"><span>Bio</span><textarea value={form.bio || ""} onChange={(event) => setForm((current) => ({ ...current, bio: event.target.value }))} disabled={!editable} /></label>
@@ -319,12 +344,15 @@ export default function ProfilePage({ ctx }) {
             <div className="panel form-panel profile-account-panel">
               <h2><ShieldCheck size={18} /> Account</h2>
               <div className="account-status-stack">
-                <Notice tone={profile.email_verified ? "info" : "error"}>
-                  {profile.email_verified ? "Email verified. Owner-safe features can unlock when your email matches the configured site owner address." : "Email not verified yet. Check your inbox for the code or resend a fresh verification email."}
+                <Notice tone={profile.verification_verified ? "info" : "error"}>
+                  {profile.verification_verified
+                    ? "Discord webhook verified. Owner-safe features can unlock when your email matches the configured site owner address."
+                    : "Discord webhook not verified yet. Save a webhook URL, then enter the code sent to that Discord channel."}
                 </Notice>
               </div>
               <form className="mini-form" onSubmit={saveEmail}><label className="field"><span>Email</span><input type="email" value={identity.email} onChange={(event) => setIdentity((current) => ({ ...current, email: event.target.value }))} disabled={!editable} /></label><button type="submit" disabled={!editable || busy === "email"}><Mail size={16} />{busy === "email" ? "Saving" : "Save Email"}</button></form>
-              <form className="mini-form" onSubmit={verifyEmail}><label className="field"><span>Code</span><input value={identity.code} onChange={(event) => setIdentity((current) => ({ ...current, code: event.target.value }))} inputMode="numeric" maxLength={8} disabled={!editable} /></label><button type="submit" disabled={!editable || busy === "verify"}><Check size={16} />{busy === "verify" ? "Checking" : "Verify"}</button><button type="button" onClick={resendVerification} disabled={!editable || !identity.email || busy === "resend"}><RefreshCw size={16} />{busy === "resend" ? "Sending" : "Resend"}</button></form>
+              <form className="mini-form" onSubmit={saveVerificationWebhook}><label className="field"><span>Verification Webhook</span><input value={identity.verification_webhook_url} onChange={(event) => setIdentity((current) => ({ ...current, verification_webhook_url: event.target.value }))} placeholder="https://discord.com/api/webhooks/..." disabled={!editable} /></label><button type="submit" disabled={!editable || busy === "webhook"}><Webhook size={16} />{busy === "webhook" ? "Saving" : "Save + Send Code"}</button></form>
+              <form className="mini-form" onSubmit={verifyVerificationCode}><label className="field"><span>Code</span><input value={identity.code} onChange={(event) => setIdentity((current) => ({ ...current, code: event.target.value }))} inputMode="numeric" maxLength={8} disabled={!editable} /></label><button type="submit" disabled={!editable || busy === "verify"}><Check size={16} />{busy === "verify" ? "Checking" : "Verify"}</button><button type="button" onClick={resendVerification} disabled={!editable || !identity.verification_webhook_url || busy === "resend"}><RefreshCw size={16} />{busy === "resend" ? "Sending" : "Resend"}</button></form>
               <form className="mini-form" onSubmit={changePassword}><label className="field"><span>Current</span><input type="password" value={identity.current_password} onChange={(event) => setIdentity((current) => ({ ...current, current_password: event.target.value }))} disabled={!editable} /></label><label className="field"><span>New</span><input type="password" value={identity.new_password} onChange={(event) => setIdentity((current) => ({ ...current, new_password: event.target.value }))} disabled={!editable} /></label><button type="submit" disabled={!editable || busy === "password"}><KeyRound size={16} />{busy === "password" ? "Saving" : "Change"}</button></form>
             </div>
           </section>

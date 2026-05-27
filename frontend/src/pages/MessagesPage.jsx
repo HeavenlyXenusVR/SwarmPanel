@@ -18,10 +18,10 @@ export default function MessagesPage({ ctx }) {
   const [messagesLoading, setMessagesLoading] = useState(false);
   const selectedId = selected?.account_id || selected?.id;
 
-  const loadThreads = useCallback(async ({ background = false } = {}) => {
+  const loadThreads = useCallback(async ({ background = false, force = false } = {}) => {
     if (!background) setThreadsLoading(true);
     try {
-      const data = await apiFetch("/api/messages/threads");
+      const data = await apiFetch("/api/messages/threads", { force });
       setThreads(data.threads || []);
       if (!selected && data.threads?.length) setSelected(data.threads[0]);
     } catch (error) {
@@ -31,13 +31,13 @@ export default function MessagesPage({ ctx }) {
     }
   }, [ctx, selected]);
 
-  const loadMessages = useCallback(async ({ background = false } = {}) => {
+  const loadMessages = useCallback(async ({ background = false, force = false } = {}) => {
     if (!selectedId) return;
     try {
       if (!background) setMessagesLoading(true);
-      const data = await apiFetch(`/api/messages/${selectedId}`);
+      const data = await apiFetch(`/api/messages/${selectedId}`, { force });
       setMessages(data.messages || []);
-      if (background) loadThreads({ background: true });
+      if (background) loadThreads({ background: true, force });
     } catch (error) {
       if (!background) ctx.showToast(error.message, "error");
     } finally {
@@ -63,10 +63,11 @@ export default function MessagesPage({ ctx }) {
     }, 220);
     return () => window.clearTimeout(timer);
   }, [search]);
-  useLiveRefresh(() => loadMessages({ background: true }), { enabled: Boolean(selectedId), interval: 6_000 });
+  useLiveRefresh(() => loadThreads({ background: true, force: true }), { interval: 5_000 });
+  useLiveRefresh(() => loadMessages({ background: true, force: true }), { enabled: Boolean(selectedId), interval: 4_000 });
 
   async function refreshAll() {
-    await Promise.all([loadThreads(), selectedId ? loadMessages() : Promise.resolve()]);
+    await Promise.all([loadThreads({ force: true }), selectedId ? loadMessages({ force: true }) : Promise.resolve()]);
   }
 
   async function send(event) {

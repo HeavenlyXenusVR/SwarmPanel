@@ -12,7 +12,7 @@ const DASHBOARD_CACHE_TTL = 4_000;
 const DASHBOARD_STALE_TTL = 10_000;
 const BOTS_CACHE_TTL = 5_000;
 const BOTS_STALE_TTL = 15_000;
-const DASHBOARD_POLL_INTERVAL = 6_000;
+const DASHBOARD_POLL_INTERVAL = 5_000;
 
 function safeArray(value) {
   return Array.isArray(value) ? value : [];

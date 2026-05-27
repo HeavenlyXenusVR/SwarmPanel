@@ -1,4 +1,5 @@
 import asyncio
+import aiohttp
 import base64
 import copy
 import html
@@ -52,7 +53,7 @@ from .config import load_settings
 from .database import PanelDatabase
 from .diagnostics import RuntimeDiagnosticsService
 from .discord_api import DiscordInventoryService
-from .emailer import send_image_gallery_verification_email, send_verification_email
+from .emailer import send_image_gallery_verification_email
 from .telegram import TelegramPollingService
 
 
@@ -296,6 +297,51 @@ def _verification_token() -> str:
 
 def _verification_material() -> tuple[str, str]:
     return _verification_token(), _verification_code()
+
+
+def _verification_is_complete(account: dict[str, Any] | None) -> bool:
+    if not account:
+        return False
+    return bool(
+        account.get("verification_verified")
+        or account.get("webhook_verified")
+        or account.get("webhook_verified_at")
+        or account.get("email_verified")
+        or account.get("email_verified_at")
+    )
+
+
+async def _send_verification_webhook_code(
+    webhook_url: str,
+    code: str,
+    *,
+    username: str,
+    guild_id: str | int,
+) -> bool:
+    normalized_url = _validate_discord_webhook_url(webhook_url)
+    timeout = aiohttp.ClientTimeout(total=10)
+    content = (
+        f"SwarmPanel verification for `{username}` in guild `{guild_id}`\n"
+        f"Code: **{code}**\n"
+        "Enter this code in SwarmPanel to verify your account. "
+        "If you did not request this, you can ignore this message."
+    )
+    payload = {
+        "content": content[:1900],
+        "allowed_mentions": {"parse": []},
+        "username": "SwarmPanel Verify",
+    }
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(normalized_url, json=payload) as response:
+                if response.status >= 400:
+                    body = (await response.text())[:300]
+                    action_logger.warning("SwarmPanel webhook verification send failed status=%s body=%s", response.status, body)
+                    return False
+        return True
+    except Exception:
+        action_logger.exception("SwarmPanel webhook verification send failed for %s", username)
+        return False
 
 
 async def _verify_guild_registration_proof(guild_id: str | int, proof_url: Any) -> dict[str, str]:
@@ -557,7 +603,8 @@ class SessionRegisterRequest(BaseModel):
     guild_id: str | int
     password: str
     email: str | None = None
-    registration_proof_url: str
+    verification_webhook_url: str | None = None
+    registration_proof_url: str | None = None
 
 
 class SessionAdminModeRequest(BaseModel):
@@ -570,6 +617,10 @@ class SessionEmailUpdateRequest(BaseModel):
 
 class SessionEmailCodeRequest(BaseModel):
     code: str
+
+
+class SessionVerificationWebhookRequest(BaseModel):
+    verification_webhook_url: str | None = None
 
 
 class SessionPasswordUpdateRequest(BaseModel):
@@ -757,7 +808,7 @@ def _is_site_owner_account(account: dict[str, Any] | None) -> bool:
     if not _is_site_owner_email(account.get("email")):
         return False
     if _owner_email_requires_verification():
-        return bool(account.get("email_verified") or account.get("email_verified_at"))
+        return _verification_is_complete(account)
     return True
 
 
@@ -1746,21 +1797,25 @@ async def register_submit(
     guild_id: str = Form(...),
     password: str = Form(...),
     email: str = Form(""),
-    registration_proof_url: str = Form(...),
+    verification_webhook_url: str = Form(""),
+    registration_proof_url: str = Form(""),
 ):
     ip = _client_ip(request)
     _rate_limit_auth(f"register-form:{ip}", limit=settings.register_form_rate_limit_per_hour, window_seconds=3600)
-    email_token, email_code = _verification_material() if email else (None, None)
+    verification_code = _verification_code()
     try:
+        proof_url = verification_webhook_url or registration_proof_url
         registerable_guild_id = await _ensure_registerable_guild(guild_id)
-        await _verify_guild_registration_proof(registerable_guild_id, registration_proof_url)
+        proof = await _verify_guild_registration_proof(registerable_guild_id, proof_url)
         account = await db.register_account_login(
             username,
             registerable_guild_id,
             password,
             email,
-            email_token,
-            email_code,
+            verification_webhook_url=proof_url,
+            verification_webhook_channel_id=proof.get("channel_id"),
+            verification_webhook_name=proof.get("webhook_name"),
+            webhook_verification_code=verification_code,
         )
     except ValueError as exc:
         return RedirectResponse(url=f"/login?mode=register&error={quote(str(exc)[:220])}", status_code=303)
@@ -1768,8 +1823,13 @@ async def register_submit(
         action_logger.warning("SwarmPanel registration failed for %s: %s", username, exc)
         return RedirectResponse(url="/login?mode=register&error=registration-failed", status_code=303)
 
-    if account.get("email") and email_token and email_code:
-        send_verification_email(settings, account["email"], _verification_url(request, email_token), email_code)
+    if proof_url:
+        await _send_verification_webhook_code(
+            proof_url,
+            verification_code,
+            username=account["username"],
+            guild_id=account["guild_id"],
+        )
     site_owner = _is_site_owner_account(account)
     _set_account_session(request, account["username"], account["guild_id"], admin_mode=site_owner, site_owner=site_owner)
     try:
@@ -1901,24 +1961,30 @@ async def api_session_login(request: Request, payload: SessionLoginRequest):
 async def api_session_register(request: Request, payload: SessionRegisterRequest):
     ip = _client_ip(request)
     _rate_limit_auth(f"register-api:{ip}", limit=10, window_seconds=3600)
-    email_token, email_code = _verification_material() if payload.email else (None, None)
+    verification_code = _verification_code()
     try:
+        proof_url = payload.verification_webhook_url or payload.registration_proof_url
         registerable_guild_id = await _ensure_registerable_guild(payload.guild_id)
-        await _verify_guild_registration_proof(registerable_guild_id, payload.registration_proof_url)
+        proof = await _verify_guild_registration_proof(registerable_guild_id, proof_url)
         account = await db.register_account_login(
             payload.username,
             registerable_guild_id,
             payload.password,
             payload.email,
-            email_token,
-            email_code,
+            verification_webhook_url=proof_url,
+            verification_webhook_channel_id=proof.get("channel_id"),
+            verification_webhook_name=proof.get("webhook_name"),
+            webhook_verification_code=verification_code,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    verification_sent = False
-    if account.get("email") and email_token and email_code:
-        verification_sent = send_verification_email(settings, account["email"], _verification_url(request, email_token), email_code)
+    verification_sent = bool(proof_url) and await _send_verification_webhook_code(
+        proof_url,
+        verification_code,
+        username=account["username"],
+        guild_id=account["guild_id"],
+    )
 
     site_owner = _is_site_owner_account(account)
     _set_account_session(request, account["username"], account["guild_id"], admin_mode=site_owner, site_owner=site_owner)
@@ -1944,7 +2010,7 @@ async def api_session_register(request: Request, payload: SessionRegisterRequest
         "site_owner": site_owner,
         "admin_mode": site_owner,
         "image_gallery_owner": site_owner,
-        "email_verification_sent": verification_sent,
+        "verification_sent": verification_sent,
         "pages_public_url": settings.pages_public_url,
         "expires_in": settings.api_token_ttl_seconds,
     }
@@ -2011,7 +2077,7 @@ async def api_verify_session_email(request: Request, token: str):
 @app.post("/api/session/resend-verification")
 async def api_resend_session_verification(request: Request):
     auth = await _hydrate_site_owner_auth(request, _require_api_auth(request))
-    _rate_limit_auth(f"session-email-resend:{str(auth.get('username') or '').lower()}", limit=8, window_seconds=3600)
+    _rate_limit_auth(f"session-verification-resend:{str(auth.get('username') or '').lower()}", limit=8, window_seconds=3600)
     scoped_guild_id = _account_guild_id(auth)
     username = str(auth.get("username") or "")
     if not scoped_guild_id or not username:
@@ -2019,14 +2085,21 @@ async def api_resend_session_verification(request: Request):
     profile = await db.get_account_profile(username, scoped_guild_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Account profile not found")
-    if not profile.get("email"):
-        raise HTTPException(status_code=400, detail="This account does not have an email address.")
-    if profile.get("email_verified"):
-        return {"ok": True, "email_verification_sent": False, "already_verified": True}
-    email_token, email_code = _verification_material()
-    profile = await db.issue_account_email_verification_token(username, scoped_guild_id, email_token, email_code)
-    verification_sent = bool(profile and send_verification_email(settings, profile["email"], _verification_url(request, email_token), email_code))
-    return {"ok": verification_sent, "email_verification_sent": verification_sent, "already_verified": False}
+    if not profile.get("verification_webhook_url"):
+        raise HTTPException(status_code=400, detail="Set a Discord verification webhook before requesting a code.")
+    if _verification_is_complete(profile):
+        return {"ok": True, "verification_sent": False, "already_verified": True}
+    verification_code = _verification_code()
+    profile = await db.issue_account_webhook_verification_code(username, scoped_guild_id, verification_code)
+    verification_sent = bool(
+        profile and await _send_verification_webhook_code(
+            profile["verification_webhook_url"],
+            verification_code,
+            username=username,
+            guild_id=scoped_guild_id,
+        )
+    )
+    return {"ok": verification_sent, "verification_sent": verification_sent, "already_verified": False}
 
 
 @app.post("/api/session/email")
@@ -2041,27 +2114,63 @@ async def api_update_session_email(request: Request, payload: SessionEmailUpdate
         profile = await db.update_account_email(username, scoped_guild_id, payload.email)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    verification_sent = False
-    if profile and profile.get("email"):
-        email_token, email_code = _verification_material()
-        profile = await db.issue_account_email_verification_token(username, scoped_guild_id, email_token, email_code)
-        verification_sent = bool(profile and send_verification_email(settings, profile["email"], _verification_url(request, email_token), email_code))
     _sync_account_session_owner_state(request, profile)
-    return {"ok": True, "profile": profile, "email_verification_sent": verification_sent}
+    return {"ok": True, "profile": profile}
+
+@app.post("/api/session/verification-webhook")
+async def api_update_session_verification_webhook(request: Request, payload: SessionVerificationWebhookRequest):
+    auth = await _hydrate_site_owner_auth(request, _require_api_auth(request))
+    _rate_limit_auth(f"session-verification-webhook:{str(auth.get('username') or '').lower()}", limit=8, window_seconds=3600)
+    scoped_guild_id = _account_guild_id(auth)
+    username = str(auth.get("username") or "")
+    if not scoped_guild_id or not username:
+        raise HTTPException(status_code=403, detail="Guild account access required")
+    webhook_url = str(payload.verification_webhook_url or "").strip()
+    profile = await db.get_account_profile(username, scoped_guild_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Account profile not found")
+    if not webhook_url:
+        profile = await db.update_account_verification_webhook(username, scoped_guild_id, None, None, None)
+        _sync_account_session_owner_state(request, profile)
+        return {"ok": True, "profile": profile, "verification_sent": False}
+    try:
+        proof = await _verify_guild_registration_proof(scoped_guild_id, webhook_url)
+        profile = await db.update_account_verification_webhook(
+            username,
+            scoped_guild_id,
+            webhook_url,
+            proof.get("channel_id"),
+            proof.get("webhook_name"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    verification_code = _verification_code()
+    profile = await db.issue_account_webhook_verification_code(username, scoped_guild_id, verification_code)
+    verification_sent = bool(
+        profile and await _send_verification_webhook_code(
+            webhook_url,
+            verification_code,
+            username=username,
+            guild_id=scoped_guild_id,
+        )
+    )
+    _sync_account_session_owner_state(request, profile)
+    return {"ok": True, "profile": profile, "verification_sent": verification_sent}
 
 
+@app.post("/api/session/verification/verify")
 @app.post("/api/session/email/verify")
 async def api_verify_session_email_code(request: Request, payload: SessionEmailCodeRequest):
     auth = await _hydrate_site_owner_auth(request, _require_api_auth(request))
-    _rate_limit_auth(f"session-email-verify:{str(auth.get('username') or '').lower()}", limit=20, window_seconds=3600)
+    _rate_limit_auth(f"session-verification-verify:{str(auth.get('username') or '').lower()}", limit=20, window_seconds=3600)
     scoped_guild_id = _account_guild_id(auth)
     username = str(auth.get("username") or "")
     if not scoped_guild_id or not username:
         raise HTTPException(status_code=403, detail="Guild account access required")
     code = re.sub(r"\D+", "", str(payload.code or ""))[:16]
     if not code:
-        raise HTTPException(status_code=400, detail="Enter the verification code from your email.")
-    profile = await db.verify_account_email_code(username, scoped_guild_id, code, settings.email_verification_ttl_seconds)
+        raise HTTPException(status_code=400, detail="Enter the verification code from your Discord webhook message.")
+    profile = await db.verify_account_webhook_code(username, scoped_guild_id, code, settings.email_verification_ttl_seconds)
     if not profile:
         raise HTTPException(status_code=400, detail="Invalid verification code.")
     _sync_account_session_owner_state(request, profile)
@@ -2387,10 +2496,10 @@ async def api_swarm_accounts_update(request: Request, payload: SwarmAccountUpdat
 @app.post("/api/swarm-accounts/email-verified")
 async def api_swarm_accounts_email_verified(request: Request, payload: SwarmAccountFlagRequest):
     _require_admin_auth(request)
-    account = await db.set_account_email_verified_admin(payload.account_id, payload.verified)
+    account = await db.set_account_webhook_verified_admin(payload.account_id, payload.verified)
     if not account:
         raise HTTPException(status_code=404, detail="SwarmPanel account not found")
-    action_logger.warning("swarm_account_email_verified account_id=%s verified=%s", payload.account_id, payload.verified)
+    action_logger.warning("swarm_account_verification_override account_id=%s verified=%s", payload.account_id, payload.verified)
     return {"ok": True, "account": account}
 
 
@@ -2413,15 +2522,22 @@ async def api_swarm_accounts_resend_verification(request: Request, payload: Swar
     account = await db.get_account_admin(payload.account_id)
     if not account:
         raise HTTPException(status_code=404, detail="SwarmPanel account not found")
-    if not account.get("email"):
-        raise HTTPException(status_code=400, detail="This SwarmPanel account does not have an email address.")
-    if account.get("email_verified_at"):
-        return {"ok": True, "email_verification_sent": False, "already_verified": True}
-    email_token, email_code = _verification_material()
-    account = await db.issue_account_email_verification_token_by_id(payload.account_id, email_token, email_code)
-    verification_sent = bool(account and send_verification_email(settings, account["email"], _verification_url(request, email_token), email_code))
+    if not account.get("verification_webhook_url"):
+        raise HTTPException(status_code=400, detail="This SwarmPanel account does not have a Discord verification webhook configured.")
+    if _verification_is_complete(account):
+        return {"ok": True, "verification_sent": False, "already_verified": True}
+    verification_code = _verification_code()
+    account = await db.issue_account_webhook_verification_code_by_id(payload.account_id, verification_code)
+    verification_sent = bool(
+        account and await _send_verification_webhook_code(
+            account["verification_webhook_url"],
+            verification_code,
+            username=account["username"],
+            guild_id=account["guild_id"],
+        )
+    )
     action_logger.warning("swarm_account_resend_verification account_id=%s sent=%s", payload.account_id, verification_sent)
-    return {"ok": verification_sent, "email_verification_sent": verification_sent, "already_verified": False}
+    return {"ok": verification_sent, "verification_sent": verification_sent, "already_verified": False}
 
 
 @app.post("/api/swarm-accounts/delete")

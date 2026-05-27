@@ -12,7 +12,7 @@ export default function InvitesPage({ ctx }) {
   const load = useCallback(async ({ background = false, force = false } = {}) => {
     try {
       if (!background) setLoading(true);
-      setData(await cachedFetch("/api/bots", { ttl: 30_000, force: background || force }));
+      setData(await cachedFetch("/api/bots", { ttl: background ? 4_000 : 8_000, staleTtl: background ? 8_000 : 20_000, force: background || force }));
       setError("");
     } catch (loadError) {
       if (!background) setError(loadError.message);
@@ -21,7 +21,7 @@ export default function InvitesPage({ ctx }) {
     }
   }, []);
   useEffect(() => { load(); }, [load]);
-  useLiveRefresh(() => load({ background: true, force: true }), { interval: 15_000 });
+  useLiveRefresh(() => load({ background: true, force: true }), { interval: 5_000 });
   return (
     <Page title="Bot Access" eyebrow="Invites" actions={<button type="button" onClick={() => load({ force: true })}><RefreshCw size={16} />Refresh</button>}>
       {error ? <Notice tone="error">{error}</Notice> : null}

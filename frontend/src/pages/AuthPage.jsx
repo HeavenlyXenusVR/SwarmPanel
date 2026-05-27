@@ -5,7 +5,7 @@ import { Page, Segmented } from "../components/ui.jsx";
 
 export default function AuthPage({ ctx }) {
   const [mode, setMode] = useState("login");
-  const [form, setForm] = useState({ username: "", password: "", guild_id: "", email: "", registration_proof_url: "" });
+  const [form, setForm] = useState({ username: "", password: "", guild_id: "", email: "", verification_webhook_url: "" });
   const [busy, setBusy] = useState(false);
   async function submit(event) {
     event.preventDefault();
@@ -21,21 +21,21 @@ export default function AuthPage({ ctx }) {
     }
   }
   return (
-    <Page title={mode === "login" ? "Login" : "Register"} eyebrow="Session" lede={mode === "login" ? "Sign back into the panel." : "Register your guild identity with proof that you control the target Discord server."}>
+    <Page title={mode === "login" ? "Login" : "Register"} eyebrow="Session" lede={mode === "login" ? "Sign back into the panel." : "Register your guild identity with a Discord webhook that proves guild ownership and receives your verification code."}>
       <form className="auth-card form-panel" onSubmit={submit}>
         <Segmented value={mode} onChange={setMode} options={[["login", "Login"], ["register", "Register"]]} />
         <label className="field"><span>Username</span><input value={form.username} onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))} required /></label>
         <label className="field"><span>Password</span><input type="password" value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} /></label>
         {mode === "register" ? <label className="field"><span>Guild ID</span><input value={form.guild_id} onChange={(event) => setForm((current) => ({ ...current, guild_id: event.target.value }))} required /></label> : null}
         {mode === "register" ? <label className="field"><span>Email</span><input type="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} /></label> : null}
-        {mode === "register" ? <label className="field"><span>Discord Webhook Proof</span><input value={form.registration_proof_url} onChange={(event) => setForm((current) => ({ ...current, registration_proof_url: event.target.value }))} placeholder="https://discord.com/api/webhooks/..." required /></label> : null}
+        {mode === "register" ? <label className="field"><span>Discord Verification Webhook</span><input value={form.verification_webhook_url} onChange={(event) => setForm((current) => ({ ...current, verification_webhook_url: event.target.value }))} placeholder="https://discord.com/api/webhooks/..." required /></label> : null}
         {mode === "register" ? (
           <div className="auth-proof-guide">
             <div className="auth-proof-head">
               <Webhook size={18} />
               <div>
                 <strong>How webhook proof works</strong>
-                <p>SwarmPanel verifies that the webhook URL belongs to the same Discord server as the guild ID you entered. The webhook can be deleted after signup.</p>
+                <p>SwarmPanel verifies that the webhook URL belongs to the same Discord server as the guild ID you entered, then sends your real verification code there.</p>
               </div>
             </div>
             <div className="auth-proof-steps">
@@ -57,13 +57,13 @@ export default function AuthPage({ ctx }) {
                 <span>3</span>
                 <div>
                   <strong>Paste the URL here and register</strong>
-                  <p>SwarmPanel checks the webhook’s guild binding. Once registration succeeds, you can remove the webhook from Discord.</p>
+                  <p>SwarmPanel checks the webhook’s guild binding and sends the verification code to that channel. Remove the webhook after you finish verification.</p>
                 </div>
               </article>
             </div>
             <div className="auth-proof-footnote">
               <span><ShieldCheck size={15} /> This prevents someone else from claiming your guild by typing its ID first.</span>
-              <span><CheckCircle2 size={15} /> The webhook message channel does not need to stay active after verification.</span>
+              <span><CheckCircle2 size={15} /> The webhook only needs to stay active until the verification code is confirmed.</span>
             </div>
           </div>
         ) : null}
