@@ -2,11 +2,18 @@ import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, Send, WandSparkles } from "lucide-react";
 import { apiFetch, cachedFetch, clearCache, query } from "../api.js";
 import { useLiveRefresh } from "../hooks/useLiveRefresh.js";
+import { useDashboardStream } from "../hooks/useDashboardStream.js";
 import { CONTROL_ACTIONS } from "../config.js";
 import { ChannelSelect, ControlState } from "../components/swarm.jsx";
 import { LoadingSection, Page, SectionHead } from "../components/ui.jsx";
 import { payloadForAction } from "../utils/control.js";
 import { uniqueBy } from "../utils/format.js";
+
+const DASHBOARD_CACHE_TTL = 4_000;
+const DASHBOARD_STALE_TTL = 10_000;
+const BOTS_CACHE_TTL = 5_000;
+const CONTROL_STATE_INTERVAL = 4_000;
+const CONTROLS_BASE_INTERVAL = 8_000;
 
 const FILTER_OPTIONS = [
   ["none", "None"],
@@ -49,8 +56,8 @@ export default function ControlsPage({ ctx }) {
     if (!background) setCatalog((current) => ({ ...current, loading: true }));
     try {
       const [bots, dash] = await Promise.all([
-        cachedFetch("/api/bots", { ttl: 30_000, force }),
-        cachedFetch("/api/dashboard", { ttl: 12_000, staleTtl: 60_000, force }),
+        cachedFetch("/api/bots", { ttl: BOTS_CACHE_TTL, staleTtl: 15_000, force }),
+        cachedFetch("/api/dashboard", { ttl: DASHBOARD_CACHE_TTL, staleTtl: DASHBOARD_STALE_TTL, force }),
       ]);
       const musicBots = (bots.bots || []).filter((bot) => bot.kind === "music");
       setCatalog({ bots: musicBots, loading: false });
@@ -96,8 +103,22 @@ export default function ControlsPage({ ctx }) {
     loadReadiness();
   }, [loadReadiness]);
 
-  useLiveRefresh(loadReadiness, { enabled: Boolean(form.bot_key && form.guild_id), interval: 10_000 });
-  useLiveRefresh(() => loadBase({ background: true }), { interval: 30_000 });
+  useDashboardStream({
+    enabled: Boolean(ctx.session.authenticated),
+    onSnapshot(snapshot) {
+      const musicBots = (snapshot?.bots || []).filter((bot) => bot.kind === "music");
+      setDashboard(snapshot);
+      setCatalog((current) => ({ bots: musicBots, loading: false, error: current.error }));
+      setForm((current) => ({
+        ...current,
+        bot_key: current.bot_key || musicBots[0]?.key || "",
+        guild_id: current.guild_id || snapshot?.sessions?.[0]?.guild_id || "",
+      }));
+    },
+  });
+
+  useLiveRefresh(() => loadReadiness().catch(() => {}), { enabled: Boolean(form.bot_key && form.guild_id), interval: CONTROL_STATE_INTERVAL });
+  useLiveRefresh(() => loadBase({ background: true, force: true }), { interval: CONTROLS_BASE_INTERVAL });
 
   useEffect(() => {
     const session = controlState?.session;

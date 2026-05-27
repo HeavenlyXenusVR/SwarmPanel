@@ -201,6 +201,15 @@ export async function resolveApiUrl(path) {
   return apiUrl(path);
 }
 
+export async function resolveWebSocketUrl(path, { token } = {}) {
+  const target = /^wss?:\/\//i.test(path) ? path : await resolveApiUrl(path);
+  const url = new URL(target, window.location.href);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  const authToken = token ?? readToken();
+  if (authToken) url.searchParams.set("token", authToken);
+  return url.toString();
+}
+
 function currentApiOrigin() {
   return String(window.SWARM_PANEL_API_ORIGIN || "").replace(/\/+$/, "");
 }

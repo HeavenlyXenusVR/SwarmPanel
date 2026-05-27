@@ -30,7 +30,7 @@ export default function AccountsPage({ ctx }) {
     }
   }, [ctx, q]);
   useEffect(() => { load(); }, [load]);
-  useLiveRefresh(() => load({ background: true }), { interval: 30_000 });
+  useLiveRefresh(() => load({ background: true, force: true }), { interval: 12_000 });
   async function mutate(path, payload, message) {
     try {
       await apiFetch(path, { method: "POST", body: JSON.stringify(payload) });

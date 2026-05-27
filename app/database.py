@@ -79,7 +79,7 @@ PANEL_DB_QUERY_TIMEOUT_SECONDS = max(3.0, float(os.getenv("PANEL_DB_QUERY_TIMEOU
 PANEL_DB_POOL_RECYCLE_SECONDS = max(60, int(os.getenv("PANEL_DB_POOL_RECYCLE_SECONDS", "900") or "900"))
 PANEL_DASHBOARD_SNAPSHOT_CONCURRENCY = max(1, int(os.getenv("PANEL_DASHBOARD_SNAPSHOT_CONCURRENCY", "4") or "4"))
 PANEL_TABLE_CACHE_TTL_SECONDS = max(10.0, float(os.getenv("PANEL_TABLE_CACHE_TTL_SECONDS", "120") or "120"))
-PANEL_DASHBOARD_CACHE_TTL_SECONDS = max(0.5, float(os.getenv("PANEL_DASHBOARD_CACHE_TTL_SECONDS", "2") or "2"))
+PANEL_DASHBOARD_CACHE_TTL_SECONDS = max(0.5, float(os.getenv("PANEL_DASHBOARD_CACHE_TTL_SECONDS", "1") or "1"))
 PANEL_SCHEMA_CACHE_TTL_SECONDS = max(10.0, float(os.getenv("PANEL_SCHEMA_CACHE_TTL_SECONDS", "120") or "120"))
 PANEL_TABLE_DATA_CACHE_TTL_SECONDS = max(2.0, float(os.getenv("PANEL_TABLE_DATA_CACHE_TTL_SECONDS", "20") or "20"))
 PANEL_TABLE_DATA_CACHE_MAX_ITEMS = max(16, int(os.getenv("PANEL_TABLE_DATA_CACHE_MAX_ITEMS", "64") or "64"))
@@ -2196,6 +2196,7 @@ class PanelDatabase:
         feedback_channel_id: int | None = None
         heartbeat_age = None
         heartbeat_status = "unknown"
+        metric: dict[str, Any] = {}
         intelligence = {
             "learned_tracks": 0,
             "plays": 0,
@@ -2325,6 +2326,20 @@ class PanelDatabase:
                 heartbeat_age = int(row.get("heartbeat_age") or 0)
                 heartbeat_status = row.get("status") or "unknown"
 
+        if table_exists["metrics"]:
+            try:
+                metric = await self._fetchone(
+                    f"SELECT *, TIMESTAMPDIFF(SECOND, updated_at, NOW()) AS metric_age_seconds "
+                    f"FROM `{schema}`.`{metrics_table}` WHERE guild_id = %s AND bot_name = %s LIMIT 1",
+                    (gid, bot.key),
+                ) or {}
+            except Exception:
+                metric = await self._fetchone(
+                    f"SELECT *, TIMESTAMPDIFF(SECOND, updated_at, NOW()) AS metric_age_seconds "
+                    f"FROM `{schema}`.`{metrics_table}` WHERE guild_id = %s LIMIT 1",
+                    (gid,),
+                ) or {}
+
         if table_exists["intelligence"]:
             row = await self._fetchone(
                 f"""
@@ -2380,8 +2395,29 @@ class PanelDatabase:
             ) or {}
             intelligence["recommendations"] = int(row.get("recommendations") or 0)
 
+        metric_fresh = int(metric.get("metric_age_seconds") or 999999) <= 90 if metric else False
+        is_playing = bool(metric.get("player_playing")) if metric_fresh else bool(playback.get("is_playing"))
+        is_paused = bool(metric.get("player_paused")) if metric_fresh else bool(playback.get("is_paused"))
+        effective_channel_id = metric.get("connected_channel_id") if metric_fresh and metric.get("connected_channel_id") else playback.get("channel_id")
+        effective_position = int(metric.get("position_seconds") or playback.get("position_seconds") or 0)
+        effective_duration = int(
+            metric.get("duration_seconds")
+            or metric.get("track_length_seconds")
+            or playback.get("duration_seconds")
+            or playback.get("length_seconds")
+            or playback.get("track_length_seconds")
+            or 0
+        )
+        observed_at = metric.get("updated_at") if metric_fresh and metric.get("updated_at") else playback.get("updated_at")
+        effective_playback = {
+            **playback,
+            "is_playing": is_playing,
+            "is_paused": is_paused,
+            "channel_id": effective_channel_id,
+        }
+
         session_state, session_state_label = _derive_session_state(
-            playback,
+            effective_playback,
             queue_count=queue_count,
             has_settings=bool(settings),
             home_channel_id=home_channel_id,
@@ -2393,7 +2429,7 @@ class PanelDatabase:
             and home_channel_id
             and (
                 queue_count == 0
-                or not bool(playback.get("is_playing"))
+                or not bool(is_playing)
                 or session_state in {"recovering", "configured", "idle"}
             )
         )
@@ -2401,7 +2437,7 @@ class PanelDatabase:
             backup_restore_reason = "No backup queue entries are stored for this guild."
         elif not home_channel_id:
             backup_restore_reason = "Backup queue exists, but no home channel is set for auto-restore."
-        elif bool(playback.get("is_playing")) and queue_count > 0:
+        elif bool(is_playing) and queue_count > 0:
             backup_restore_reason = "Live playback/queue is already active, so backup restore is standing by."
         elif queue_count > 0:
             backup_restore_reason = "Live queue already contains items, so backup restore is waiting for an empty queue."
@@ -2425,12 +2461,15 @@ class PanelDatabase:
             "session": {
                 "guild_id": str(gid),
                 "guild_name": None,
-                "channel_id": str(playback.get("channel_id")) if playback.get("channel_id") else None,
+                "channel_id": str(effective_channel_id) if effective_channel_id else None,
                 "channel_name": None,
                 "title": playback.get("title"),
                 "video_url": playback.get("video_url"),
-                "position_seconds": int(playback.get("position_seconds") or 0),
-                "is_playing": bool(playback.get("is_playing")),
+                "position_seconds": effective_position,
+                "duration_seconds": effective_duration,
+                "position_observed_at": observed_at.isoformat() if hasattr(observed_at, "isoformat") else None,
+                "is_playing": is_playing,
+                "is_paused": is_paused,
                 "session_state": session_state,
                 "session_state_label": session_state_label,
                 "volume": int(settings.get("volume") or 100),

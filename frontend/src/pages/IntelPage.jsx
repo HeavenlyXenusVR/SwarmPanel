@@ -20,7 +20,7 @@ export default function IntelPage({ ctx }) {
     });
   }, []);
   useEffect(() => { load(); }, [load]);
-  useLiveRefresh(() => load(), { interval: 8_000 });
+  useLiveRefresh(() => load({ force: true }), { interval: 5_000 });
   return (
     <Page title="Errors And Metrics" eyebrow="Intel" actions={<button type="button" onClick={() => load({ force: true })}><RefreshCw size={16} />Refresh</button>}>
       <section className="dashboard-grid">

@@ -63,7 +63,7 @@ export default function MessagesPage({ ctx }) {
     }, 220);
     return () => window.clearTimeout(timer);
   }, [search]);
-  useLiveRefresh(() => loadMessages({ background: true }), { enabled: Boolean(selectedId), interval: 12_000 });
+  useLiveRefresh(() => loadMessages({ background: true }), { enabled: Boolean(selectedId), interval: 6_000 });
 
   async function refreshAll() {
     await Promise.all([loadThreads(), selectedId ? loadMessages() : Promise.resolve()]);

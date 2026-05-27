@@ -21,7 +21,7 @@ export default function DiagnosticsPage({ ctx }) {
     }
   }, []);
   useEffect(() => { load(false); }, [load]);
-  useLiveRefresh(() => load(false, true), { interval: 30_000 });
+  useLiveRefresh(() => load(true, true), { interval: 15_000 });
   return (
     <Page title="System Runtime" eyebrow="Diagnostics" actions={<button type="button" onClick={() => load(true)}><RefreshCw size={16} />Force</button>}>
       {error ? <Notice tone="error">{error}</Notice> : null}

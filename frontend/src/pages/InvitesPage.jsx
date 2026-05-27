@@ -21,7 +21,7 @@ export default function InvitesPage({ ctx }) {
     }
   }, []);
   useEffect(() => { load(); }, [load]);
-  useLiveRefresh(() => load({ background: true }), { interval: 45_000 });
+  useLiveRefresh(() => load({ background: true, force: true }), { interval: 15_000 });
   return (
     <Page title="Bot Access" eyebrow="Invites" actions={<button type="button" onClick={() => load({ force: true })}><RefreshCw size={16} />Refresh</button>}>
       {error ? <Notice tone="error">{error}</Notice> : null}

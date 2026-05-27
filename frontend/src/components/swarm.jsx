@@ -155,6 +155,14 @@ function bestSession(bot) {
   return sessions.find((session) => session.is_playing) || sessions[0] || null;
 }
 
+function sessionIsPlaying(session) {
+  return Boolean(session?.is_playing || session?.session_state === "playing");
+}
+
+function sessionIsPaused(session) {
+  return Boolean(session?.is_paused || session?.session_state === "paused");
+}
+
 function sessionDurationSeconds(session) {
   return Math.max(0, Math.floor(Number(session?.duration_seconds) || 0));
 }
@@ -168,7 +176,7 @@ function sessionObservedAtMs(session) {
 function livePlaybackPositionSeconds(session, nowMs = Date.now()) {
   const basePosition = Math.max(0, Math.floor(Number(session?.position_seconds) || 0));
   const duration = sessionDurationSeconds(session);
-  const isActive = Boolean(session?.is_playing || session?.session_state === "playing");
+  const isActive = sessionIsPlaying(session);
   const observedAtMs = sessionObservedAtMs(session);
   let position = basePosition;
   if (isActive && observedAtMs > 0) {
@@ -184,43 +192,71 @@ function playbackProgressPercent(session, positionSeconds) {
   return Math.max(0, Math.min(100, (positionSeconds / duration) * 100));
 }
 
+function playbackSnapshot(session, nowMs = Date.now()) {
+  const positionSeconds = livePlaybackPositionSeconds(session, nowMs);
+  const durationSeconds = sessionDurationSeconds(session);
+  const progressPercent = playbackProgressPercent(session, positionSeconds);
+  const isPlaying = sessionIsPlaying(session);
+  const isPaused = sessionIsPaused(session);
+  return {
+    positionSeconds,
+    durationSeconds,
+    progressPercent,
+    playbackBarWidth: durationSeconds
+      ? `${progressPercent}%`
+      : isPlaying
+        ? "100%"
+        : positionSeconds > 0
+          ? "100%"
+          : "0%",
+    playbackLabel: durationSeconds
+      ? `${formatDurationSeconds(positionSeconds)} / ${formatDurationSeconds(durationSeconds)}`
+      : formatDurationSeconds(positionSeconds),
+    playbackMeta: isPaused
+      ? "paused"
+      : isPlaying
+        ? "advancing live"
+        : session
+          ? "last reported position"
+          : "awaiting playback",
+  };
+}
+
+export function PlaybackCounter({ session, className = "", compact = false }) {
+  const [playbackNowMs, setPlaybackNowMs] = useState(() => Date.now());
+  const { playbackBarWidth, playbackLabel, playbackMeta } = playbackSnapshot(session, playbackNowMs);
+  const live = sessionIsPlaying(session);
+
+  useEffect(() => {
+    if (!live) return undefined;
+    const timer = window.setInterval(() => setPlaybackNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [live, session?.position_observed_at, session?.updated_at]);
+
+  useEffect(() => {
+    setPlaybackNowMs(Date.now());
+  }, [session?.position_seconds, session?.position_observed_at, session?.updated_at, session?.duration_seconds, session?.title]);
+
+  if (!session) return null;
+  return (
+    <div className={`bot-playback ${compact ? "compact" : ""} ${className}`.trim()}>
+      <div className="bot-playback-head">
+        <strong>{playbackLabel}</strong>
+        <small>{playbackMeta}</small>
+      </div>
+      <div className="bot-playback-bar" aria-hidden="true">
+        <span style={{ width: playbackBarWidth }} />
+      </div>
+    </div>
+  );
+}
+
 export function BotCard({ bot }) {
   const sessions = Array.isArray(bot?.sessions) ? bot.sessions : [];
   const session = bestSession(bot);
   const accent = bot.accent || "#89b4fa";
   const thumbnail = session?.thumbnail || session?.thumbnail_url || "";
   const badge = playbackBadge(session, bot);
-  const [playbackNowMs, setPlaybackNowMs] = useState(() => Date.now());
-  const livePositionSeconds = livePlaybackPositionSeconds(session, playbackNowMs);
-  const durationSeconds = sessionDurationSeconds(session);
-  const progressPercent = playbackProgressPercent(session, livePositionSeconds);
-  const playbackBarWidth = durationSeconds
-    ? `${progressPercent}%`
-    : (session?.is_playing || session?.session_state === "playing")
-      ? "100%"
-      : livePositionSeconds > 0
-        ? "100%"
-        : "0%";
-  const playbackLabel = durationSeconds
-    ? `${formatDurationSeconds(livePositionSeconds)} / ${formatDurationSeconds(durationSeconds)}`
-    : formatDurationSeconds(livePositionSeconds);
-  const playbackMeta = session?.is_paused
-    ? "paused"
-    : (session?.is_playing || session?.session_state === "playing")
-      ? "advancing live"
-      : session
-        ? "last reported position"
-        : "awaiting playback";
-
-  useEffect(() => {
-    if (!(session?.is_playing || session?.session_state === "playing")) return undefined;
-    const timer = window.setInterval(() => setPlaybackNowMs(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, [session?.is_playing, session?.session_state, session?.position_observed_at, session?.updated_at]);
-
-  useEffect(() => {
-    setPlaybackNowMs(Date.now());
-  }, [session?.position_seconds, session?.position_observed_at, session?.updated_at, session?.duration_seconds, session?.title]);
 
   return (
     <article className="bot-card" style={{ "--card-accent": accent }}>
@@ -244,17 +280,7 @@ export function BotCard({ bot }) {
           <small>{session?.guild_name || session?.channel_name || "Live state will fill in automatically."}</small>
         </div>
       </div>
-      {session ? (
-        <div className="bot-playback">
-          <div className="bot-playback-head">
-            <strong>{playbackLabel}</strong>
-            <small>{playbackMeta}</small>
-          </div>
-          <div className="bot-playback-bar" aria-hidden="true">
-            <span style={{ width: playbackBarWidth }} />
-          </div>
-        </div>
-      ) : null}
+      {session ? <PlaybackCounter session={session} /> : null}
       <div className="chip-row">
         <span>{bot.active_playing_count || sessions.filter((session) => session.is_playing).length} live</span>
         <span>{bot.known_guild_count || bot.guild_count || 0} guilds</span>
@@ -287,6 +313,7 @@ export function ControlState({ state, compact = false }) {
     <article className={`control-state ${compact ? "compact" : ""}`}>
       <div><strong>{state.display_name || state.key}</strong><small>{state.discord?.status || state.db?.status || "unknown"}</small></div>
       <p>{session.title || session.session_state_label || state.discord?.message || "Idle"}</p>
+      {session.title || Number(session.position_seconds || 0) > 0 ? <PlaybackCounter session={session} compact /> : null}
       <div className="chip-row">
         <span>{session.guild_name || state.guild_id}</span>
         <span>{session.channel_name || "No channel"}</span>

@@ -3,9 +3,16 @@ import { useState } from "react";
 import { Activity, Bot, ListMusic, MessageCircle, RefreshCw, Siren } from "lucide-react";
 import { apiFetch, cachedFetch, prefetchFetch, query } from "../api.js";
 import { useLiveRefresh } from "../hooks/useLiveRefresh.js";
-import { BotCard, IntelligenceView, SessionTable } from "../components/swarm.jsx";
+import { useDashboardStream } from "../hooks/useDashboardStream.js";
+import { BotCard, IntelligenceView, PlaybackCounter, SessionTable } from "../components/swarm.jsx";
 import { Metric, MetricGrid, Notice, Page, SectionHead, SkeletonGrid } from "../components/ui.jsx";
 import { number } from "../utils/format.js";
+
+const DASHBOARD_CACHE_TTL = 4_000;
+const DASHBOARD_STALE_TTL = 10_000;
+const BOTS_CACHE_TTL = 5_000;
+const BOTS_STALE_TTL = 15_000;
+const DASHBOARD_POLL_INTERVAL = 6_000;
 
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
@@ -15,16 +22,32 @@ function safeObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
-function mergeRowsByKey(previous = [], next = [], key = "key") {
-  if (!Array.isArray(next) || next.length === 0) return safeArray(previous);
+function mergeRecord(previous = {}, next = {}) {
+  const merged = { ...previous };
+  Object.entries(next || {}).forEach(([key, value]) => {
+    if (value === undefined || value === null) return;
+    if (typeof value === "string" && !value.trim() && typeof previous?.[key] === "string" && previous[key].trim()) return;
+    merged[key] = value;
+  });
+  return merged;
+}
+
+function rowKeyFor(row, key, index) {
+  if (typeof key === "function") return String(key(row, index));
+  return String(row?.[key] || row?.id || index);
+}
+
+function mergeRowsByKey(previous = [], next = [], key = "key", { preservePreviousOnEmpty = true } = {}) {
+  if (!Array.isArray(next)) return safeArray(previous);
+  if (next.length === 0) return preservePreviousOnEmpty ? safeArray(previous) : [];
   const rows = new Map();
   safeArray(previous).forEach((row, index) => {
-    const rowKey = String(row?.[key] || row?.id || index);
+    const rowKey = rowKeyFor(row, key, index);
     rows.set(rowKey, row);
   });
   next.forEach((row, index) => {
-    const rowKey = String(row?.[key] || row?.id || index);
-    rows.set(rowKey, { ...(rows.get(rowKey) || {}), ...row });
+    const rowKey = rowKeyFor(row, key, index);
+    rows.set(rowKey, mergeRecord(rows.get(rowKey) || {}, row));
   });
   return Array.from(rows.values());
 }
@@ -33,10 +56,11 @@ function mergeDashboard(current, next) {
   if (!next) return current;
   if (!current) return next;
   return {
-    ...current,
-    ...next,
+    ...mergeRecord(current, next),
     bots: mergeRowsByKey(current.bots, next.bots, "key"),
-    sessions: Array.isArray(next.sessions) ? next.sessions : current.sessions,
+    sessions: Array.isArray(next.sessions)
+      ? mergeRowsByKey(current.sessions, next.sessions, (session) => `${session?.bot_key || session?.bot_name || "bot"}:${session?.guild_id || "guild"}`, { preservePreviousOnEmpty: false })
+      : current.sessions,
   };
 }
 
@@ -69,8 +93,8 @@ export default function DashboardPage({ ctx }) {
     const guildId = ctx.session.guild_id || ctx.session.account_guild_id;
     try {
       const [dashboard, bots, intelligence, telegram] = await Promise.allSettled([
-        cachedFetch("/api/dashboard", { ttl: 12_000, staleTtl: 60_000, force }),
-        cachedFetch("/api/bots", { ttl: 30_000, staleTtl: 180_000, storage: "local", force }),
+        cachedFetch("/api/dashboard", { ttl: DASHBOARD_CACHE_TTL, staleTtl: DASHBOARD_STALE_TTL, force }),
+        cachedFetch("/api/bots", { ttl: BOTS_CACHE_TTL, staleTtl: BOTS_STALE_TTL, storage: "local", force }),
         apiFetch(`/api/music-intelligence${query({ guild_id: guildId, limit: 10 })}`).catch((error) => ({ error: error.message })),
         ctx.isAdmin ? apiFetch("/api/telegram/status").catch((error) => ({ error: error.message })) : Promise.resolve(null),
       ]);
@@ -90,10 +114,23 @@ export default function DashboardPage({ ctx }) {
 
   useEffect(() => {
     load();
-    prefetchFetch("/api/bots", { ttl: 60_000, staleTtl: 300_000, storage: "local" });
+    prefetchFetch("/api/bots", { ttl: BOTS_CACHE_TTL, staleTtl: BOTS_STALE_TTL, storage: "local" });
   }, [load]);
 
-  useLiveRefresh(() => load({ background: true }), { interval: 18_000 });
+  useDashboardStream({
+    enabled: Boolean(ctx.session.authenticated),
+    onSnapshot(snapshot) {
+      setState((current) => ({
+        ...current,
+        dashboard: mergeDashboard(current.dashboard, snapshot),
+        refreshing: false,
+        loading: false,
+        error: "",
+      }));
+    },
+  });
+
+  useLiveRefresh(() => load({ background: true, force: true }), { interval: DASHBOARD_POLL_INTERVAL });
 
   const dashboard = safeObject(state.dashboard);
   const botCatalog = safeObject(state.bots);
@@ -165,6 +202,7 @@ export default function DashboardPage({ ctx }) {
               </div>
               <strong>{spotlight?.title || "No live playback right now."}</strong>
               <p>{spotlight ? `${spotlight.bot_name || spotlight.bot_key || "Bot"} routing ${spotlight.channel_name || spotlight.guild_name || "the current voice lane"}` : "The deck will highlight the first active playback lane here once a bot is live."}</p>
+              {spotlight ? <PlaybackCounter className="dashboard-playback" session={spotlight} /> : null}
               <div className="dashboard-spotlight-metrics">
                 <article>
                   <span>Session Queue</span>

@@ -1069,6 +1069,10 @@ small,
   gap: 8px;
 }
 
+.bot-playback.compact {
+  gap: 6px;
+}
+
 .bot-playback-head {
   display: flex;
   align-items: baseline;
@@ -1085,6 +1089,14 @@ small,
 
 .bot-playback-head small {
   color: var(--muted);
+}
+
+.bot-playback.compact .bot-playback-head strong {
+  font-size: 0.86rem;
+}
+
+.bot-playback.compact .bot-playback-head small {
+  font-size: 0.76rem;
 }
 
 .bot-playback-bar {
@@ -1107,6 +1119,10 @@ small,
   background:
     linear-gradient(90deg, color-mix(in srgb, var(--card-accent, var(--accent)) 72%, white), color-mix(in srgb, var(--card-accent, var(--accent)) 48%, transparent));
   box-shadow: 0 0 12px color-mix(in srgb, var(--card-accent, var(--accent)) 26%, transparent);
+}
+
+.bot-playback.compact .bot-playback-bar {
+  height: 6px;
 }
 
 .bot-head-copy {
@@ -2284,6 +2300,10 @@ tbody tr:hover td {
 
 .dashboard-spotlight p {
   margin: 0;
+}
+
+.dashboard-playback {
+  margin-top: 2px;
 }
 
 .dashboard-eyebrow {

@@ -39,6 +39,10 @@ const BOOT_TIPS = [
 const BOOT_MIN_VISIBLE_MS = 700;
 const BOOT_GUEST_MIN_VISIBLE_MS = 360;
 const BOOT_MAX_BLOCKING_WAIT_MS = 1800;
+const LIVE_DASHBOARD_CACHE_TTL = 4_000;
+const LIVE_DASHBOARD_STALE_TTL = 10_000;
+const LIVE_BOTS_CACHE_TTL = 5_000;
+const LIVE_BOTS_STALE_TTL = 15_000;
 
 function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -95,14 +99,14 @@ function App() {
     if (token) loadPreferences();
   }, [loadPreferences, token]);
 
-  useLiveRefresh(loadSession, { interval: 45_000 });
-  useLiveRefresh(loadPreferences, { enabled: Boolean(token), interval: 60_000 });
+  useLiveRefresh(loadSession, { interval: 20_000 });
+  useLiveRefresh(loadPreferences, { enabled: Boolean(token), interval: 30_000 });
 
   useEffect(() => {
     if (!token) return;
     const guildId = session.guild_id || session.account_guild_id;
-    prefetchFetch("/api/bots", { ttl: 60_000, staleTtl: 300_000, storage: "local" });
-    prefetchFetch("/api/dashboard", { ttl: 12_000, staleTtl: 60_000 });
+    prefetchFetch("/api/bots", { ttl: LIVE_BOTS_CACHE_TTL, staleTtl: LIVE_BOTS_STALE_TTL, storage: "local" });
+    prefetchFetch("/api/dashboard", { ttl: LIVE_DASHBOARD_CACHE_TTL, staleTtl: LIVE_DASHBOARD_STALE_TTL });
     prefetchFetch("/api/users/me", { ttl: 30_000, staleTtl: 120_000 });
     prefetchFetch(`/api/music-intelligence${query({ guild_id: guildId, limit: 10 })}`, { ttl: 20_000, staleTtl: 120_000 });
   }, [session.account_guild_id, session.guild_id, token]);
@@ -151,8 +155,8 @@ function App() {
       }
       const criticalWarmups = [
         cachedFetch("/api/users/preferences", { ttl: 30_000, staleTtl: 180_000, storage: "local" }),
-        cachedFetch("/api/bots", { ttl: 30_000, staleTtl: 180_000, storage: "local" }),
-        cachedFetch("/api/dashboard", { ttl: 12_000, staleTtl: 60_000 }),
+        cachedFetch("/api/bots", { ttl: LIVE_BOTS_CACHE_TTL, staleTtl: LIVE_BOTS_STALE_TTL, storage: "local" }),
+        cachedFetch("/api/dashboard", { ttl: LIVE_DASHBOARD_CACHE_TTL, staleTtl: LIVE_DASHBOARD_STALE_TTL }),
       ];
       prefetchFetch("/api/users/me", { ttl: 30_000, staleTtl: 120_000 });
       prefetchFetch(`/api/music-intelligence${query({ guild_id: guildId, limit: 10 })}`, { ttl: 20_000, staleTtl: 120_000 });
