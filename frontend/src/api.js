@@ -30,6 +30,20 @@ function isAbortLike(error) {
   return name === "AbortError" || /abort/i.test(name) || /aborted|abort/i.test(message);
 }
 
+function isNetworkFailure(error) {
+  if (!error) return false;
+  const name = String(error.name || "");
+  const message = String(error.message || "");
+  return (
+    name === "TypeError" ||
+    /load failed|failed to fetch|networkerror|network request failed|fetch failed/i.test(message)
+  );
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 function safeRemove(storage, key) {
   try {
     storage?.removeItem(key);
@@ -314,9 +328,15 @@ async function fetchWithRemoteRetry(path, options, headers) {
     return response;
   } catch (error) {
     if (error?.isAbort && !error?.retriable) throw error;
+    if (error?.retriable && isNetworkFailure(error)) {
+      await sleep(350);
+    }
     const retryTarget = await retryTargetFor(path, target, options);
     if (retryTarget && retryTarget !== target) {
       return fetchWithTimeout(retryTarget, { ...options, headers });
+    }
+    if (error?.retriable && isNetworkFailure(error)) {
+      return fetchWithTimeout(target, { ...options, headers });
     }
     throw error;
   }
@@ -354,6 +374,13 @@ async function fetchWithTimeout(url, options = {}) {
       throw requestError("The SwarmPanel request was interrupted before the backend replied.", {
         code: "ABORTED",
         isAbort: true,
+      });
+    }
+    if (isNetworkFailure(error)) {
+      throw requestError("SwarmPanel could not reach the live backend. Refresh the panel or restart the live backend/tunnel if this keeps happening.", {
+        code: "NETWORK",
+        status: 503,
+        retriable: true,
       });
     }
     throw error;
