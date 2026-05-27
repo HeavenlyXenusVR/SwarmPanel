@@ -7,10 +7,18 @@ import { BotCard, IntelligenceView, SessionTable } from "../components/swarm.jsx
 import { Metric, MetricGrid, Notice, Page, SectionHead, SkeletonGrid } from "../components/ui.jsx";
 import { number } from "../utils/format.js";
 
+function safeArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function safeObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
 function mergeRowsByKey(previous = [], next = [], key = "key") {
-  if (!Array.isArray(next) || next.length === 0) return Array.isArray(previous) ? previous : [];
+  if (!Array.isArray(next) || next.length === 0) return safeArray(previous);
   const rows = new Map();
-  (Array.isArray(previous) ? previous : []).forEach((row, index) => {
+  safeArray(previous).forEach((row, index) => {
     const rowKey = String(row?.[key] || row?.id || index);
     rows.set(rowKey, row);
   });
@@ -33,7 +41,7 @@ function mergeDashboard(current, next) {
 }
 
 function sessionsFromBots(bots) {
-  return bots.flatMap((bot) => (bot.sessions || []).map((session) => ({
+  return safeArray(bots).flatMap((bot) => safeArray(bot?.sessions).map((session) => ({
     ...session,
     bot_name: bot.display_name,
     bot_key: bot.key,
@@ -87,10 +95,14 @@ export default function DashboardPage({ ctx }) {
 
   useLiveRefresh(() => load({ background: true }), { interval: 18_000 });
 
-  const dashboard = state.dashboard || {};
-  const catalogBots = state.bots?.bots || [];
-  const bots = dashboard.bots?.length ? dashboard.bots : catalogBots;
-  const sessions = Array.isArray(dashboard.sessions) ? dashboard.sessions : sessionsFromBots(bots);
+  const dashboard = safeObject(state.dashboard);
+  const botCatalog = safeObject(state.bots);
+  const catalogBots = safeArray(botCatalog.bots).map((bot) => ({ ...safeObject(bot), sessions: safeArray(bot?.sessions) }));
+  const dashboardBots = safeArray(dashboard.bots).map((bot) => ({ ...safeObject(bot), sessions: safeArray(bot?.sessions) }));
+  const bots = dashboardBots.length ? dashboardBots : catalogBots;
+  const sessions = safeArray(dashboard.sessions).length
+    ? safeArray(dashboard.sessions).map((session) => safeObject(session))
+    : sessionsFromBots(bots);
   const active = sessions.filter((session) => session.is_playing || session.session_state === "playing").length;
   const stale = bots.filter((bot) => String(bot.heartbeat_status || "").includes("stale") || bot.status === "offline").length;
   const backupQueued = sessions.reduce((sum, item) => sum + Number(item.backup_queue_count || 0), 0);

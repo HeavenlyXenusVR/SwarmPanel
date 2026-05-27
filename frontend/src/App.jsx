@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import {
   apiFetch,
@@ -333,12 +333,42 @@ function SwarmBootOverlay({ phase, tip, authenticated, leaving }) {
   );
 }
 
+class RouteErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidUpdate(prevProps) {
+    if (prevProps.children !== this.props.children && this.state.error) {
+      this.setState({ error: null });
+    }
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <Page title="Panel View Failed" eyebrow="Frontend Recovery" lede="This section hit a client-side render problem, but the rest of SwarmPanel is still online.">
+          <div className="notice notice-error">
+            {this.state.error?.message || "A route failed to render."}
+          </div>
+        </Page>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function Protected({ ctx, children, admin = false, gallery = false }) {
   if (ctx.session.loading) return <Page title="Loading" eyebrow="Session"><SkeletonGrid count={4} /></Page>;
   if (!ctx.session.authenticated) return <Navigate to="/login" replace />;
   if (admin && !ctx.isAdmin) return <Denied message="Admin mode is required." />;
   if (gallery && !ctx.canGallery) return <Denied message="Image Gallery owner access is required." />;
-  return children;
+  return <RouteErrorBoundary>{children}</RouteErrorBoundary>;
 }
 
 export default App;

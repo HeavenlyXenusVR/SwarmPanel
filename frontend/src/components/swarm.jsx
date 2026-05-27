@@ -151,7 +151,7 @@ export function PresencePill({ user, compact = false }) {
 }
 
 function bestSession(bot) {
-  const sessions = bot.sessions || [];
+  const sessions = Array.isArray(bot?.sessions) ? bot.sessions : [];
   return sessions.find((session) => session.is_playing) || sessions[0] || null;
 }
 
@@ -185,7 +185,7 @@ function playbackProgressPercent(session, positionSeconds) {
 }
 
 export function BotCard({ bot }) {
-  const sessions = bot.sessions || [];
+  const sessions = Array.isArray(bot?.sessions) ? bot.sessions : [];
   const session = bestSession(bot);
   const accent = bot.accent || "#89b4fa";
   const thumbnail = session?.thumbnail || session?.thumbnail_url || "";
@@ -266,14 +266,15 @@ export function BotCard({ bot }) {
 }
 
 export function SessionTable({ sessions }) {
-  if (!sessions.length) return <EmptyState title="No active sessions" />;
-  return <DataTable rows={sessions.map((session) => pick(session, ["bot_name", "guild_name", "guild_id", "channel_name", "title", "is_playing", "queue_count", "backup_queue_count", "filter_mode", "loop_mode"]))} />;
+  const safeSessions = Array.isArray(sessions) ? sessions : [];
+  if (!safeSessions.length) return <EmptyState title="No active sessions" />;
+  return <DataTable rows={safeSessions.map((session) => pick(session, ["bot_name", "guild_name", "guild_id", "channel_name", "title", "is_playing", "queue_count", "backup_queue_count", "filter_mode", "loop_mode"]))} />;
 }
 
 export function IntelligenceView({ data }) {
   if (!data) return <EmptyState title="No intelligence snapshot" />;
   if (Array.isArray(data)) return <DataTable rows={data} />;
-  const rows = data.recommendations || data.guilds || data.bots || data.rows || [];
+  const rows = [data?.recommendations, data?.guilds, data?.bots, data?.rows].find(Array.isArray) || [];
   return rows.length ? <DataTable rows={rows} /> : <JsonPanel data={data} />;
 }
 
@@ -281,7 +282,7 @@ export function ControlState({ state, compact = false }) {
   if (!state) return <EmptyState title="No state loaded" compact />;
   if (state.error) return <Notice tone="error">{state.error}</Notice>;
   const session = state.session || {};
-  const backupPreview = session.backup_queue_preview || [];
+  const backupPreview = Array.isArray(session.backup_queue_preview) ? session.backup_queue_preview : [];
   return (
     <article className={`control-state ${compact ? "compact" : ""}`}>
       <div><strong>{state.display_name || state.key}</strong><small>{state.discord?.status || state.db?.status || "unknown"}</small></div>
