@@ -26,12 +26,21 @@ export default function GalleryAdminPage({ ctx }) {
   const [tableLoading, setTableLoading] = useState(false);
   const [tableError, setTableError] = useState("");
   const [passwords, setPasswords] = useState({});
-  const load = useCallback(async ({ background = false } = {}) => {
+  const load = useCallback(async ({ background = false, includeTable = false, selectedTable = "", force = false } = {}) => {
     try {
-      const [admin, tableData] = await Promise.all([apiFetch("/api/image-gallery/admin"), apiFetch("/api/image-gallery/tables")]);
+      const [admin, tableData] = await Promise.all([
+        apiFetch("/api/image-gallery/admin", { force }),
+        apiFetch("/api/image-gallery/tables", { force }),
+      ]);
       setSummary(admin.data);
       setTables(tableData.tables || []);
-      setTable((current) => current || tableName(tableData.tables?.[0]) || "");
+      const nextTable = selectedTable || tableName(tableData.tables?.[0]) || "";
+      setTable((current) => current || nextTable);
+      if (includeTable && nextTable) {
+        const data = await apiFetch(`/api/image-gallery/table-data${query({ table_name: nextTable, limit: 100 })}`, { force });
+        setRows(rowsFromPayload(data));
+        setTableError("");
+      }
     } catch (error) {
       if (!background) ctx.showToast(error.message, "error");
     }
@@ -66,7 +75,7 @@ export default function GalleryAdminPage({ ctx }) {
   const reports = summary?.reports || summary?.recent_reports || [];
   const media = summary?.media || summary?.recent_media || [];
   return (
-    <Page title="Image Gallery Admin" eyebrow="Owner Workspace" actions={<button type="button" onClick={load}><RefreshCw size={16} />Refresh</button>}>
+    <Page title="Image Gallery Admin" eyebrow="Owner Workspace" actions={<button type="button" onClick={() => load({ includeTable: true, selectedTable: table, force: true })}><RefreshCw size={16} />Refresh</button>}>
       <MetricGrid>
         <Metric icon={Users} label="Users" value={summary?.counts?.users ?? users.length} />
         <Metric icon={ImageIcon} label="Media" value={summary?.counts?.media ?? media.length} />
@@ -81,7 +90,7 @@ export default function GalleryAdminPage({ ctx }) {
               <button type="button" onClick={() => mutate("/api/image-gallery/users/email-verified", { user_id: row.id, verified: !row.email_verified_at }, "Email flag updated.")}><Mail size={14} />Email</button>
               <button type="button" onClick={() => mutate("/api/image-gallery/users/age-verified", { user_id: row.id, verified: !row.age_verified_at }, "Age flag updated.")}><ShieldCheck size={14} />Age</button>
               <input className="mini-input" type="password" placeholder="new password" value={passwords[row.id] || ""} onChange={(event) => setPasswords((current) => ({ ...current, [row.id]: event.target.value }))} />
-              <button type="button" onClick={() => mutate("/api/image-gallery/users/reset-password", { user_id: row.id, new_password: passwords[row.id] || "" }, "Password reset.")}><KeyRound size={14} />Reset</button>
+              <button type="button" disabled={!String(passwords[row.id] || "").trim()} onClick={() => mutate("/api/image-gallery/users/reset-password", { user_id: row.id, new_password: passwords[row.id] || "" }, "Password reset.")}><KeyRound size={14} />Reset</button>
               <button className="danger" type="button" onClick={() => mutate("/api/image-gallery/users/delete", { user_id: row.id }, "User deleted.")}><Trash2 size={14} />Delete</button>
             </div>
           )} />

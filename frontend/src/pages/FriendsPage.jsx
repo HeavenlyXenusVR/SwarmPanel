@@ -9,10 +9,13 @@ export default function FriendsPage({ ctx }) {
   const [state, setState] = useState({ incoming: [], outgoing: [], friends: [] });
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async ({ background = false } = {}) => {
+  const load = useCallback(async ({ background = false, force = false } = {}) => {
     if (!background) setLoading(true);
     try {
-      const [requests, friends] = await Promise.all([apiFetch("/api/friends/requests"), apiFetch("/api/me/friends")]);
+      const [requests, friends] = await Promise.all([
+        apiFetch("/api/friends/requests", { force }),
+        apiFetch("/api/me/friends", { force }),
+      ]);
       setState({ incoming: requests.incoming || [], outgoing: requests.outgoing || [], friends: friends.friends || [] });
     } catch (error) {
       if (!background) ctx.showToast(error.message, "error");
@@ -34,7 +37,7 @@ export default function FriendsPage({ ctx }) {
   }
 
   return (
-    <Page title="Friends" eyebrow="Swarm Social" actions={<button type="button" onClick={() => load()}><RefreshCw size={16} />Refresh</button>}>
+    <Page title="Friends" eyebrow="Swarm Social" actions={<button type="button" onClick={() => load({ force: true })}><RefreshCw size={16} />Refresh</button>}>
       <LoadingSection
         loading={loading}
         title="Syncing social graph"

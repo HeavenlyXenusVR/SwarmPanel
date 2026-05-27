@@ -45,25 +45,31 @@ export default function ControlsPage({ ctx }) {
   });
   const [busy, setBusy] = useState(false);
 
-  const loadBase = useCallback(async () => {
-    setCatalog((current) => ({ ...current, loading: true }));
-    const [bots, dash] = await Promise.all([
-      cachedFetch("/api/bots", { ttl: 30_000 }),
-      cachedFetch("/api/dashboard", { ttl: 12_000, staleTtl: 60_000 }),
-    ]);
-    const musicBots = (bots.bots || []).filter((bot) => bot.kind === "music");
-    setCatalog({ bots: musicBots, loading: false });
-    setDashboard(dash);
-    setForm((current) => ({
-      ...current,
-      bot_key: current.bot_key || musicBots[0]?.key || "",
-      guild_id: current.guild_id || dash.sessions?.[0]?.guild_id || "",
-    }));
-  }, []);
+  const loadBase = useCallback(async ({ background = false, force = false } = {}) => {
+    if (!background) setCatalog((current) => ({ ...current, loading: true }));
+    try {
+      const [bots, dash] = await Promise.all([
+        cachedFetch("/api/bots", { ttl: 30_000, force }),
+        cachedFetch("/api/dashboard", { ttl: 12_000, staleTtl: 60_000, force }),
+      ]);
+      const musicBots = (bots.bots || []).filter((bot) => bot.kind === "music");
+      setCatalog({ bots: musicBots, loading: false });
+      setDashboard(dash);
+      setForm((current) => ({
+        ...current,
+        bot_key: current.bot_key || musicBots[0]?.key || "",
+        guild_id: current.guild_id || dash.sessions?.[0]?.guild_id || "",
+      }));
+    } catch (error) {
+      if (!background) ctx.showToast(error.message, "error");
+    } finally {
+      if (!background) setCatalog((current) => ({ ...current, loading: false }));
+    }
+  }, [ctx]);
 
   useEffect(() => {
-    loadBase().catch((error) => ctx.showToast(error.message, "error"));
-  }, [ctx, loadBase]);
+    loadBase();
+  }, [loadBase]);
 
   useEffect(() => {
     if (!form.bot_key) return;
@@ -91,7 +97,7 @@ export default function ControlsPage({ ctx }) {
   }, [loadReadiness]);
 
   useLiveRefresh(loadReadiness, { enabled: Boolean(form.bot_key && form.guild_id), interval: 10_000 });
-  useLiveRefresh(loadBase, { interval: 30_000 });
+  useLiveRefresh(() => loadBase({ background: true }), { interval: 30_000 });
 
   useEffect(() => {
     const session = controlState?.session;
@@ -132,6 +138,7 @@ export default function ControlsPage({ ctx }) {
       clearCache();
       ctx.showToast(data.message || `${form.action} accepted.`, "success");
       loadReadiness().catch(() => {});
+      loadBase({ background: true, force: true }).catch(() => {});
     } catch (error) {
       ctx.showToast(error.message, "error");
     } finally {
@@ -140,7 +147,7 @@ export default function ControlsPage({ ctx }) {
   }
 
   return (
-    <Page title="Direct Playback Control" eyebrow="Controls" actions={<button type="button" onClick={loadBase}><RefreshCw size={16} />Refresh</button>}>
+    <Page title="Direct Playback Control" eyebrow="Controls" actions={<button type="button" onClick={() => loadBase({ force: true })}><RefreshCw size={16} />Refresh</button>}>
       <section className="control-layout">
         <LoadingSection
           loading={catalog.loading || inventoryLoading}

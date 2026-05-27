@@ -7,11 +7,11 @@ import { Page, SectionHead } from "../components/ui.jsx";
 
 export default function IntelPage({ ctx }) {
   const [state, setState] = useState({ events: [], metrics: null, stability: null });
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ force = false } = {}) => {
     const [events, metrics, stability] = await Promise.allSettled([
-      apiFetch("/api/events?limit=80"),
-      apiFetch("/api/metrics"),
-      apiFetch("/api/stability"),
+      apiFetch("/api/events?limit=80", { force }),
+      apiFetch("/api/metrics", { force }),
+      apiFetch("/api/stability", { force }),
     ]);
     setState({
       events: events.status === "fulfilled" ? events.value.events || [] : [],
@@ -20,9 +20,9 @@ export default function IntelPage({ ctx }) {
     });
   }, []);
   useEffect(() => { load(); }, [load]);
-  useLiveRefresh(load, { interval: 8_000 });
+  useLiveRefresh(() => load(), { interval: 8_000 });
   return (
-    <Page title="Errors And Metrics" eyebrow="Intel" actions={<button type="button" onClick={load}><RefreshCw size={16} />Refresh</button>}>
+    <Page title="Errors And Metrics" eyebrow="Intel" actions={<button type="button" onClick={() => load({ force: true })}><RefreshCw size={16} />Refresh</button>}>
       <section className="dashboard-grid">
         <div className="panel wide"><SectionHead title="Events" count={state.events.length} /><EventList events={state.events} /></div>
         <div className="panel"><SectionHead title="Metrics" /><JsonPanel data={state.metrics} /></div>

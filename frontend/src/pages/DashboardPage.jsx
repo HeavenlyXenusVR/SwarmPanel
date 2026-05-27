@@ -59,7 +59,7 @@ export default function DashboardPage({ ctx }) {
     error: "",
   });
 
-  const load = useCallback(async ({ background = false } = {}) => {
+  const load = useCallback(async ({ background = false, force = false } = {}) => {
     setState((current) => ({
       ...current,
       loading: !current.dashboard && !current.bots && !background,
@@ -69,8 +69,8 @@ export default function DashboardPage({ ctx }) {
     const guildId = ctx.session.guild_id || ctx.session.account_guild_id;
     try {
       const [dashboard, bots, intelligence, telegram] = await Promise.allSettled([
-        cachedFetch("/api/dashboard", { ttl: 12_000, staleTtl: 60_000 }),
-        cachedFetch("/api/bots", { ttl: 30_000, staleTtl: 180_000, storage: "local" }),
+        cachedFetch("/api/dashboard", { ttl: 12_000, staleTtl: 60_000, force }),
+        cachedFetch("/api/bots", { ttl: 30_000, staleTtl: 180_000, storage: "local", force }),
         apiFetch(`/api/music-intelligence${query({ guild_id: guildId, limit: 10 })}`).catch((error) => ({ error: error.message })),
         ctx.isAdmin ? apiFetch("/api/telegram/status").catch((error) => ({ error: error.message })) : Promise.resolve(null),
       ]);
@@ -129,7 +129,7 @@ export default function DashboardPage({ ctx }) {
       title="Swarm Command Deck"
       eyebrow="Dashboard"
       lede="Live fleet telemetry, queue pressure, and command-state visibility in one deck."
-      actions={<button type="button" onClick={() => load()} disabled={state.refreshing}><RefreshCw size={16} />{state.refreshing ? "Updating" : "Refresh"}</button>}
+      actions={<button type="button" onClick={() => load({ force: true })} disabled={state.refreshing}><RefreshCw size={16} />{state.refreshing ? "Updating" : "Refresh"}</button>}
       className="page-dashboard"
     >
       {state.error ? <Notice tone="error">{state.error}</Notice> : null}

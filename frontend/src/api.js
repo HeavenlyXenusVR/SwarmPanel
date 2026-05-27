@@ -128,7 +128,8 @@ export async function apiFetch(path, options = {}) {
   if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const response = await fetchWithRemoteRetry(path, options, headers);
+  const requestOptions = options.force ? { ...options, cache: "no-store" } : options;
+  const response = await fetchWithRemoteRetry(path, requestOptions, headers);
   const contentType = response.headers.get("content-type") || "";
   const payload = contentType.includes("application/json")
     ? await response.json().catch(() => null)
@@ -165,6 +166,11 @@ export async function cachedFetch(path, options = {}) {
   const token = options.token ?? readToken();
   const storage = options.storage === "local" ? safeStorage(localStorage) : safeStorage(sessionStorage);
   const key = `${CACHE_VERSION}|${path}|${token ? "auth" : "anon"}`;
+  if (options.force) {
+    cache.delete(key);
+    safeRemove(storage, CACHE_STORE_PREFIX + key);
+    return revalidateCache(key, path, options, ttl, staleTtl, storage);
+  }
   const hit = cache.get(key);
   const now = Date.now();
   const stored = hit || readStoredCache(storage, key);

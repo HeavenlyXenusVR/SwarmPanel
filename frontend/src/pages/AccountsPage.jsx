@@ -12,13 +12,13 @@ export default function AccountsPage({ ctx }) {
   const [metrics, setMetrics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [passwords, setPasswords] = useState({});
-  const load = useCallback(async ({ background = false } = {}) => {
+  const load = useCallback(async ({ background = false, force = false } = {}) => {
     try {
       if (!background) setLoading(true);
       const [accounts, stabilityData, metricsData] = await Promise.allSettled([
-        apiFetch(`/api/swarm-accounts/admin${query({ query: q, limit: 100 })}`),
-        apiFetch("/api/stability"),
-        apiFetch("/api/metrics"),
+        apiFetch(`/api/swarm-accounts/admin${query({ query: q, limit: 100 })}`, { force }),
+        apiFetch("/api/stability", { force }),
+        apiFetch("/api/metrics", { force }),
       ]);
       if (accounts.status === "fulfilled") setRows(accounts.value.data?.accounts || accounts.value.data || []);
       if (stabilityData.status === "fulfilled") setStability(stabilityData.value);
@@ -41,7 +41,7 @@ export default function AccountsPage({ ctx }) {
     }
   }
   return (
-    <Page title="SwarmPanel Recovery" eyebrow="Accounts" actions={<button type="button" onClick={load}><RefreshCw size={16} />Refresh</button>}>
+    <Page title="SwarmPanel Recovery" eyebrow="Accounts" actions={<button type="button" onClick={() => load({ force: true })}><RefreshCw size={16} />Refresh</button>}>
       <MetricGrid>
         <Metric icon={Activity} label="Metric Bots" value={metrics?.totals?.bots || 0} />
         <Metric icon={ListMusic} label="Live Queue" value={metrics?.totals?.queued_tracks || 0} />
@@ -77,7 +77,7 @@ export default function AccountsPage({ ctx }) {
         <div className="table-actions">
           <button type="button" onClick={() => mutate("/api/swarm-accounts/email-verified", { account_id: row.id, verified: !row.email_verified_at }, "Email flag updated.")}><Mail size={14} />Email</button>
           <input className="mini-input" type="password" placeholder="new password" value={passwords[row.id] || ""} onChange={(event) => setPasswords((current) => ({ ...current, [row.id]: event.target.value }))} />
-          <button type="button" onClick={() => mutate("/api/swarm-accounts/reset-password", { account_id: row.id, new_password: passwords[row.id] || "" }, "Password reset.")}><KeyRound size={14} />Reset</button>
+          <button type="button" disabled={!String(passwords[row.id] || "").trim()} onClick={() => mutate("/api/swarm-accounts/reset-password", { account_id: row.id, new_password: passwords[row.id] || "" }, "Password reset.")}><KeyRound size={14} />Reset</button>
           <button type="button" onClick={() => mutate("/api/swarm-accounts/resend-verification", { account_id: row.id }, "Verification sent.")}><Send size={14} />Resend</button>
           <button className="danger" type="button" onClick={() => mutate("/api/swarm-accounts/delete", { account_id: row.id }, "Account deleted.")}><Trash2 size={14} />Delete</button>
         </div>

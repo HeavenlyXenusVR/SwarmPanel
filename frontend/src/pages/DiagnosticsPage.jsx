@@ -12,7 +12,7 @@ export default function DiagnosticsPage({ ctx }) {
   const load = useCallback(async (force = false, background = false) => {
     try {
       if (!background) setLoading(true);
-      setData(await apiFetch(`/api/system-diagnostics${query({ force })}`));
+      setData(await apiFetch(`/api/system-diagnostics${query({ force })}`, { force }));
       setError("");
     } catch (loadError) {
       setError(loadError.message);

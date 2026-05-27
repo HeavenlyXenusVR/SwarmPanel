@@ -65,6 +65,10 @@ export default function MessagesPage({ ctx }) {
   }, [search]);
   useLiveRefresh(() => loadMessages({ background: true }), { enabled: Boolean(selectedId), interval: 12_000 });
 
+  async function refreshAll() {
+    await Promise.all([loadThreads(), selectedId ? loadMessages() : Promise.resolve()]);
+  }
+
   async function send(event) {
     event.preventDefault();
     if (!selectedId || !body.trim()) return;
@@ -79,7 +83,7 @@ export default function MessagesPage({ ctx }) {
   }
 
   return (
-    <Page title="Messages" eyebrow="Swarm Social" actions={<button type="button" onClick={() => loadThreads()}><RefreshCw size={16} />Refresh</button>}>
+    <Page title="Messages" eyebrow="Swarm Social" actions={<button type="button" onClick={() => refreshAll().catch((error) => ctx.showToast(error.message, "error"))}><RefreshCw size={16} />Refresh</button>}>
       <section className="settings-grid">
         <LoadingSection
           loading={threadsLoading}

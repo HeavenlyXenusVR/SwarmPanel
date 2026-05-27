@@ -23,12 +23,17 @@ export default function DatabasesPage({ ctx }) {
   const [rows, setRows] = useState([]);
   const [loadingRows, setLoadingRows] = useState(false);
   const [error, setError] = useState("");
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ includeRows = false, selected = null, force = false } = {}) => {
     try {
-      const data = await apiFetch("/api/databases?include_tables=true");
+      const data = await apiFetch("/api/databases?include_tables=true", { force });
       setSchemas(data.schemas || []);
       const first = data.schemas?.[0];
-      setSelection((current) => current.schema ? current : { schema: first?.schema || "", table: tableName(first?.tables?.[0]) });
+      const nextSelection = selected || { schema: first?.schema || "", table: tableName(first?.tables?.[0]) };
+      setSelection((current) => current.schema ? current : nextSelection);
+      if (includeRows && nextSelection.schema && nextSelection.table) {
+        const rowData = await apiFetch(`/api/database/data${query({ schema_name: nextSelection.schema, table_name: nextSelection.table, limit: 100 })}`, { force });
+        setRows(rowsFromPayload(rowData));
+      }
       setError("");
     } catch (error) {
       setError(error.message);
@@ -60,7 +65,7 @@ export default function DatabasesPage({ ctx }) {
   }
   const tables = schemas.find((schema) => schema.schema === selection.schema)?.tables || [];
   return (
-    <Page title="Database Viewer" eyebrow="Admin Data" actions={<button type="button" onClick={load}><RefreshCw size={16} />Refresh Schemas</button>}>
+    <Page title="Database Viewer" eyebrow="Admin Data" actions={<button type="button" onClick={() => load({ includeRows: Boolean(selection.schema && selection.table), selected: selection, force: true })}><RefreshCw size={16} />Refresh Schemas</button>}>
       <div className="panel toolbar">
         <select value={selection.schema} onChange={(event) => setSelection({ schema: event.target.value, table: "" })}>{schemas.map((schema) => <option key={schema.schema} value={schema.schema}>{schema.schema}</option>)}</select>
         <select value={selection.table} onChange={(event) => setSelection((current) => ({ ...current, table: event.target.value }))}>{tables.map((table) => {

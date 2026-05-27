@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import { apiFetch, cachedFetch } from "../api.js";
+import { cachedFetch } from "../api.js";
 import { useLiveRefresh } from "../hooks/useLiveRefresh.js";
 import { InviteCard } from "../components/swarm.jsx";
 import { EmptyState, LoadingSection, Notice, Page } from "../components/ui.jsx";
@@ -9,10 +9,10 @@ export default function InvitesPage({ ctx }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const load = useCallback(async ({ background = false } = {}) => {
+  const load = useCallback(async ({ background = false, force = false } = {}) => {
     try {
       if (!background) setLoading(true);
-      setData(background ? await apiFetch("/api/bots") : await cachedFetch("/api/bots", { ttl: 30_000 }));
+      setData(await cachedFetch("/api/bots", { ttl: 30_000, force: background || force }));
       setError("");
     } catch (loadError) {
       if (!background) setError(loadError.message);
@@ -23,7 +23,7 @@ export default function InvitesPage({ ctx }) {
   useEffect(() => { load(); }, [load]);
   useLiveRefresh(() => load({ background: true }), { interval: 45_000 });
   return (
-    <Page title="Bot Access" eyebrow="Invites" actions={<button type="button" onClick={load}><RefreshCw size={16} />Refresh</button>}>
+    <Page title="Bot Access" eyebrow="Invites" actions={<button type="button" onClick={() => load({ force: true })}><RefreshCw size={16} />Refresh</button>}>
       {error ? <Notice tone="error">{error}</Notice> : null}
       <LoadingSection
         loading={loading}
