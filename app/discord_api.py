@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 from typing import Any
 
@@ -62,7 +63,8 @@ class DiscordInventoryService:
             async with self.session.request(method, url, headers=headers, params=params) as resp:
                 if resp.status == 429:
                     payload = await resp.json(content_type=None)
-                    await asyncio.sleep(float(payload.get("retry_after", 1.0)) + 0.1)
+                    retry_after = min(float(payload.get("retry_after", 1.0)), 30.0)
+                    await asyncio.sleep(retry_after + 0.1)
                     continue
 
                 if resp.status >= 400:
@@ -81,7 +83,8 @@ class DiscordInventoryService:
     async def _cached_request(self, token: str, path: str, params: dict[str, Any] | None = None) -> Any:
         import time
         param_key = tuple(sorted(params.items())) if params else ()
-        cache_key = f"{token}:{path}:{param_key}"
+        token_hash = hashlib.sha256(token.encode()).hexdigest()[:16]
+        cache_key = f"{token_hash}:{path}:{param_key}"
 
         now = time.time()
         cached = self.cache.get(cache_key)

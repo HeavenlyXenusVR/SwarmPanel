@@ -389,6 +389,11 @@ def _rate_limit_auth(key: str, *, limit: int, window_seconds: int) -> None:
         raise HTTPException(status_code=429, detail="Too many authentication attempts. Try again later.")
     bucket.append(now)
     AUTH_RATE_BUCKETS[key] = bucket
+    # Prune stale buckets to prevent unbounded memory growth
+    if len(AUTH_RATE_BUCKETS) > 5_000:
+        stale = [k for k, v in AUTH_RATE_BUCKETS.items() if all(now - t >= window_seconds for t in v)]
+        for k in stale:
+            AUTH_RATE_BUCKETS.pop(k, None)
 
 
 def _bounded_query_limit(value: Any, *, default: int = 50, max_limit: int | None = None) -> int:
@@ -1640,7 +1645,7 @@ async def _telegram_health_watch_loop() -> None:
     await asyncio.sleep(20)
     while True:
         try:
-            await db._fetchone("SELECT 1 AS ok")
+            await db.ping()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -3067,7 +3072,7 @@ async def image_gallery_resend_verification(request: Request, payload: GalleryUs
         return {"ok": True, "email_verification_sent": False, "already_verified": True}
     email_token = _verification_code()
     user = await db.issue_image_gallery_email_verification_token(payload.user_id, email_token)
-    verification_sent = bool(user and send_image_gallery_verification_email(settings, user["email"], _image_gallery_verification_url(request, email_token), email_token))
+    verification_sent = bool(user and await send_image_gallery_verification_email(settings, user["email"], _image_gallery_verification_url(request, email_token), email_token))
     action_logger.warning("image_gallery_resend_verification user_id=%s sent=%s", payload.user_id, verification_sent)
     return {"ok": verification_sent, "email_verification_sent": verification_sent, "already_verified": False}
 
@@ -3156,16 +3161,7 @@ async def api_bot_control(request: Request, req: BotControlRequest):
 
 
 
-@app.post("/api/control")
-async def api_bot_control_legacy(request: Request, req: BotControlRequest):
-    return await api_bot_control(request, req)
-
-
-@app.post("/api/bot-control")
-async def api_bot_control_legacy_alt(request: Request, req: BotControlRequest):
-    return await api_bot_control(request, req)
 active_connections: list[dict[str, Any]] = []
-bot_health={}
 recent_feed_events: deque[dict[str, str]] = deque(maxlen=100)
 dashboard_broadcast_task: asyncio.Task[Any] | None = None
 WS_SEND_TIMEOUT_SECONDS = max(2.0, float(os.getenv("SWARM_WS_SEND_TIMEOUT_SECONDS", "6") or "6"))
@@ -3357,28 +3353,3 @@ async def list_events(request: Request, limit: int = 50):
         deduped.append(event)
     return {"events": deduped[-bounded_limit:]}
 
-async def execute_bot_command(cmd: dict):
-    if not cmd.get("bot_key") or not cmd.get("action"):
-        raise ValueError(f"Invalid command: {cmd}")
-
-    req = BotControlRequest(**{"guild_id": "0", **cmd})
-    action, guild_id, payload = await _normalize_bot_control_request(req)
-    await db.control_bot(req.bot_key, guild_id, action, payload)
-    await push_feed_event(
-        "info",
-        "Command Acknowledged",
-        f"{action} accepted for bot {req.bot_key} in guild {guild_id}.",
-        source="worker",
-        event_type="command_ack",
-    )
-
-async def command_worker():
-    # Retained for compatibility with old imports, but intentionally disabled.
-    # The live panel dispatches bot commands synchronously through api_bot_control.
-    return
-
-def verify_token(token: str = Header(None)):
-    expected = os.getenv("PANEL_API_KEY", "").strip()
-    if not expected or not secrets.compare_digest(str(token or ""), expected):
-        raise HTTPException(status_code=403, detail="Unauthorized")
-    return True

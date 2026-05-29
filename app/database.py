@@ -530,8 +530,8 @@ class PanelDatabase:
         return self.pool
 
     async def _fetchall(self, query: str, params: tuple[Any, ...] = (), dict_cursor: bool = True):
-        await self._ensure_connected()
-        async with self.pool.acquire() as conn:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
             cursor_cls = aiomysql.DictCursor if dict_cursor else None
             cursor_context = conn.cursor(cursor_cls) if cursor_cls else conn.cursor()
             async with cursor_context as cur:
@@ -539,8 +539,8 @@ class PanelDatabase:
                 return await self._run_with_timeout(cur.fetchall())
 
     async def _fetchone(self, query: str, params: tuple[Any, ...] = (), dict_cursor: bool = True):
-        await self._ensure_connected()
-        async with self.pool.acquire() as conn:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
             cursor_cls = aiomysql.DictCursor if dict_cursor else None
             cursor_context = conn.cursor(cursor_cls) if cursor_cls else conn.cursor()
             async with cursor_context as cur:

@@ -26,13 +26,14 @@ export function useLiveRefresh(callback, { enabled = true, interval = 20_000, im
 
     if (immediate) run();
     timer = window.setInterval(run, safeInterval);
-    document.addEventListener("visibilitychange", run);
+    const onVisibilityChange = () => { if (!document.hidden) run(); };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("online", run);
 
     return () => {
       stopped = true;
       window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", run);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("online", run);
     };
   }, [enabled, immediate, interval]);

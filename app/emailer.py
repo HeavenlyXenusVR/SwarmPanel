@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import smtplib
+import ssl
 from email.message import EmailMessage
 
 from .config import Settings
@@ -12,7 +14,7 @@ def smtp_configured(settings: Settings) -> bool:
     return bool(settings.smtp_host and settings.smtp_from_email)
 
 
-def send_email(settings: Settings, to_email: str, subject: str, body: str) -> bool:
+def _send_email_sync(settings: Settings, to_email: str, subject: str, body: str) -> bool:
     if not smtp_configured(settings):
         logger.warning("SMTP is not configured; could not send email to %s", to_email)
         return False
@@ -26,7 +28,7 @@ def send_email(settings: Settings, to_email: str, subject: str, body: str) -> bo
     try:
         with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as smtp:
             if settings.smtp_use_tls:
-                smtp.starttls()
+                smtp.starttls(context=ssl.create_default_context())
             if settings.smtp_username:
                 smtp.login(settings.smtp_username, settings.smtp_password)
             smtp.send_message(message)
@@ -36,8 +38,12 @@ def send_email(settings: Settings, to_email: str, subject: str, body: str) -> bo
         return False
 
 
-def send_verification_email(settings: Settings, to_email: str, verify_url: str, code: str) -> bool:
-    return send_email(
+async def send_email(settings: Settings, to_email: str, subject: str, body: str) -> bool:
+    return await asyncio.to_thread(_send_email_sync, settings, to_email, subject, body)
+
+
+async def send_verification_email(settings: Settings, to_email: str, verify_url: str, code: str) -> bool:
+    return await send_email(
         settings,
         to_email,
         "Verify your SwarmPanel email",
@@ -51,8 +57,8 @@ def send_verification_email(settings: Settings, to_email: str, verify_url: str, 
     )
 
 
-def send_image_gallery_verification_email(settings: Settings, to_email: str, verify_url: str, code: str) -> bool:
-    return send_email(
+async def send_image_gallery_verification_email(settings: Settings, to_email: str, verify_url: str, code: str) -> bool:
+    return await send_email(
         settings,
         to_email,
         "Verify your Image Gallery email",

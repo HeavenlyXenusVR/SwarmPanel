@@ -131,9 +131,20 @@ export async function apiFetch(path, options = {}) {
   const requestOptions = options.force ? { ...options, cache: "no-store" } : options;
   const response = await fetchWithRemoteRetry(path, requestOptions, headers);
   const contentType = response.headers.get("content-type") || "";
-  const payload = contentType.includes("application/json")
-    ? await response.json().catch(() => null)
-    : await response.text();
+  let payload;
+  if (contentType.includes("application/json")) {
+    try {
+      payload = await response.json();
+    } catch (parseError) {
+      const rawText = await response.text().catch(() => "");
+      const error = new Error(`Server returned invalid JSON (${response.status}): ${rawText.slice(0, 120)}`);
+      error.status = response.status;
+      error.payload = null;
+      throw error;
+    }
+  } else {
+    payload = await response.text();
+  }
   if (!response.ok) {
     const error = new Error(errorMessage(payload, response.status));
     error.status = response.status;
