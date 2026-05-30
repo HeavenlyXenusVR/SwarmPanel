@@ -69,7 +69,7 @@ function App() {
 
   const loadSession = useCallback(async () => {
     try {
-      const data = await apiFetch("/api/session", { timeoutMs: 18_000 });
+      const data = await apiFetch("/api/session", { timeoutMs: 6_000 });
       if (data.authenticated && data.token) {
         writeToken(data.token);
         writeUsername(data.username);
@@ -94,6 +94,15 @@ function App() {
   useEffect(() => {
     loadSession();
   }, [loadSession]);
+
+  // Hard cap: if session hasn't resolved within 4s, unblock the UI anyway
+  useEffect(() => {
+    const cap = window.setTimeout(() => {
+      setSession((prev) => (prev.loading ? { ...prev, loading: false } : prev));
+    }, 4_000);
+    return () => window.clearTimeout(cap);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (token) loadPreferences();
