@@ -3184,8 +3184,22 @@ async def websocket_endpoint(websocket: WebSocket):
     auth = verify_api_token(token, settings.session_secret, settings.api_token_ttl_seconds)
     if not auth:
         try:
-            if bool(websocket.session.get(SESSION_AUTH_KEY)):
-                auth = {"mode": "session"}
+            session = websocket.session
+            if bool(session.get(SESSION_AUTH_KEY)):
+                role = session.get(SESSION_ROLE_KEY) or "admin"
+                guild_id = session.get(SESSION_GUILD_ID_KEY)
+                admin_mode = session.get(SESSION_ADMIN_MODE_KEY)
+                if admin_mode is None:
+                    admin_mode = str(role).lower() == "admin" and not guild_id
+                auth = {
+                    "mode": "session",
+                    "username": session.get(SESSION_USERNAME_KEY),
+                    "role": role,
+                    "site_owner": bool(session.get(SESSION_SITE_OWNER_KEY)),
+                    "admin_mode": bool(admin_mode),
+                }
+                if guild_id:
+                    auth["guild_id"] = str(guild_id)
         except Exception:
             auth = None
     if not auth:
