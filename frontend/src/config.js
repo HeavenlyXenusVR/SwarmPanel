@@ -1,6 +1,7 @@
 export const DEFAULT_PREFERENCES = {
   theme_mode: "dark",
   accent_color: "#89b4fa",
+  accent_secondary: "",
   background_mode: "default",
   background_color: "#0b0e18",
   background_image_url: "",
@@ -18,6 +19,15 @@ export const DEFAULT_PREFERENCES = {
   dashboard_density: "command",
   profile_backdrop_image_url: "",
   profile_backdrop_strength: 0.18,
+  sidebar_style: "full",
+  panel_font_family: "system",
+  card_hover_effect: "lift",
+  notification_position: "br",
+  bot_card_detail: "full",
+  panel_radius: "medium",
+  show_bot_uptime: true,
+  show_queue_pressure: true,
+  compact_sidebar: false,
 };
 
 export const CONTROL_ACTIONS = [

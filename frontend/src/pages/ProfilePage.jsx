@@ -17,6 +17,10 @@ function profileToForm(profile = {}) {
     profile_banner_mode: profile.profile_banner_mode || "gradient",
     profile_card_style: profile.profile_card_style || "solid",
     profile_social_mode: profile.profile_social_mode || "open",
+    profile_layout_mode: profile.profile_layout_mode || "default",
+    profile_header_style: profile.profile_header_style || "solid",
+    profile_border_accent: profile.profile_border_accent || "none",
+    profile_quote: profile.profile_quote || "",
   };
 }
 
@@ -27,7 +31,7 @@ function formToPayload(form) {
     url: String(link?.url || "").trim(),
   })).filter((link) => link.label && link.url);
   return {
-    ...pick(form, ["display_name", "avatar_url", "bio", "profile_headline", "profile_banner_url", "profile_banner_mode", "profile_card_style", "profile_social_mode", "favorite_bot", "theme_accent", "public_profile", "server_invite_url", "server_name", "server_icon_url"]),
+    ...pick(form, ["display_name", "avatar_url", "bio", "profile_headline", "profile_banner_url", "profile_banner_mode", "profile_card_style", "profile_social_mode", "favorite_bot", "theme_accent", "public_profile", "server_invite_url", "server_name", "server_icon_url", "profile_quote", "profile_layout_mode", "profile_header_style", "profile_border_accent"]),
     profile_tags: tags,
     profile_links: links,
   };
@@ -337,6 +341,12 @@ export default function ProfilePage({ ctx }) {
                 <label className="field"><span>Cards</span><select value={form.profile_card_style || "solid"} onChange={(event) => setForm((current) => ({ ...current, profile_card_style: event.target.value }))} disabled={!editable}><option value="solid">Solid</option><option value="glass">Glass</option><option value="outline">Outline</option><option value="terminal">Terminal</option></select></label>
                 <label className="field"><span>Social</span><select value={form.profile_social_mode || "open"} onChange={(event) => setForm((current) => ({ ...current, profile_social_mode: event.target.value }))} disabled={!editable}><option value="open">Open</option><option value="friends">Friends</option><option value="quiet">Quiet</option></select></label>
               </div>
+              <div className="three-col">
+                <label className="field"><span>Profile Layout</span><select value={form.profile_layout_mode || "default"} onChange={(event) => setForm((current) => ({ ...current, profile_layout_mode: event.target.value }))} disabled={!editable}><option value="default">Default</option><option value="sidebar">Sidebar</option><option value="stacked">Stacked</option><option value="split">Split</option></select></label>
+                <label className="field"><span>Header Style</span><select value={form.profile_header_style || "solid"} onChange={(event) => setForm((current) => ({ ...current, profile_header_style: event.target.value }))} disabled={!editable}><option value="solid">Solid</option><option value="glass">Glass</option><option value="blur">Blur</option><option value="transparent">Transparent</option><option value="gradient">Gradient</option></select></label>
+                <label className="field"><span>Border Accent</span><select value={form.profile_border_accent || "none"} onChange={(event) => setForm((current) => ({ ...current, profile_border_accent: event.target.value }))} disabled={!editable}><option value="none">None</option><option value="solid">Solid</option><option value="glow">Glow</option><option value="pulse">Pulse</option><option value="neon">Neon</option></select></label>
+              </div>
+              <label className="field"><span>Signature / Quote <small>(shows under your name on your profile)</small></span><input value={form.profile_quote || ""} onChange={(event) => setForm((current) => ({ ...current, profile_quote: event.target.value }))} placeholder="A short motto, quote, or vibe descriptor" maxLength={160} disabled={!editable} /></label>
               <label className="field"><span>Discord Invite</span><input value={form.server_invite_url || ""} onChange={(event) => setForm((current) => ({ ...current, server_invite_url: event.target.value }))} disabled={!editable} /></label>
               <label className="check-row"><input type="checkbox" checked={form.public_profile !== false} onChange={(event) => setForm((current) => ({ ...current, public_profile: event.target.checked }))} disabled={!editable} />Public profile</label>
               <button className="primary" type="submit" disabled={!editable || busy === "profile"}><Save size={16} />{busy === "profile" ? "Saving" : "Save"}</button>

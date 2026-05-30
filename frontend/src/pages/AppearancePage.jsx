@@ -297,9 +297,43 @@ export default function AppearancePage({ ctx }) {
               <Choice label="Operator" value={draft.operator_layout} values={["command", "console", "compact"]} onChange={(value) => update("operator_layout", value)} />
               <Choice label="Roster" value={draft.roster_layout} values={["cards", "signals", "ledger"]} onChange={(value) => update("roster_layout", value)} />
               <Choice label="Bot Cards" value={draft.stream_card_style} values={["telemetry", "compact", "cinematic"]} onChange={(value) => update("stream_card_style", value)} />
+              <Choice label="Bot Detail" value={draft.bot_card_detail ?? "full"} values={["full", "compact", "minimal"]} onChange={(value) => update("bot_card_detail", value)} />
               <Choice label="Dashboard" value={draft.dashboard_density} values={["command", "dense"]} onChange={(value) => update("dashboard_density", value)} />
               <label className="field field-range"><span>Opacity <strong>{formatPercent(draft.surface_opacity ?? 0.92)}</strong></span><input type="range" min="0.35" max="1" step="0.01" value={draft.surface_opacity ?? 0.92} onChange={(event) => update("surface_opacity", Number(event.target.value))} /></label>
               <label className="field field-range"><span>Blur <strong>{draft.surface_blur ?? 18}px</strong></span><input type="range" min="0" max="36" step="1" value={draft.surface_blur ?? 18} onChange={(event) => update("surface_blur", Number(event.target.value))} /></label>
+            </div>
+          </div>
+          <div className="appearance-cluster">
+            <div className="appearance-cluster-head"><h3>Navigation &amp; Sidebar</h3><p>Shape the navigation rail — how much space it takes, whether labels show, and how collapsed it gets.</p></div>
+            <div className="three-col">
+              <Choice label="Sidebar Style" value={draft.sidebar_style ?? "full"} values={["full", "icons", "minimal"]} onChange={(value) => update("sidebar_style", value)} />
+              <label className="field check-row"><input type="checkbox" checked={Boolean(draft.compact_sidebar)} onChange={(event) => update("compact_sidebar", event.target.checked)} /><span>Compact Sidebar</span></label>
+              <Choice label="Notification Spot" value={draft.notification_position ?? "br"} values={["br", "bl", "tr", "tc"]} onChange={(value) => update("notification_position", value)} />
+            </div>
+          </div>
+          <div className="appearance-cluster">
+            <div className="appearance-cluster-head"><h3>Typography &amp; Interaction</h3><p>Fine-tune how text is set and how cards respond to hover — from sharp engineering font to soft rounded strokes.</p></div>
+            <div className="three-col">
+              <Choice label="Panel Font" value={draft.panel_font_family ?? "system"} values={["system", "mono", "rounded"]} onChange={(value) => update("panel_font_family", value)} />
+              <Choice label="Card Hover" value={draft.card_hover_effect ?? "lift"} values={["lift", "glow", "border", "none"]} onChange={(value) => update("card_hover_effect", value)} />
+              <Choice label="Corner Radius" value={draft.panel_radius ?? "medium"} values={["none", "small", "medium", "large", "pill"]} onChange={(value) => update("panel_radius", value)} />
+            </div>
+          </div>
+          <div className="appearance-cluster">
+            <div className="appearance-cluster-head"><h3>Accent &amp; Glow</h3><p>Add a secondary accent for gradient fills and dual-tone glow effects across cards and borders.</p></div>
+            <div className="two-col">
+              <label className="field">
+                <span>Secondary Accent</span>
+                <div className="appearance-color-row">
+                  <input className="appearance-color-swatch" type="color" value={clampHex(draft.accent_secondary, "#7c3aed")} onChange={(event) => update("accent_secondary", event.target.value)} />
+                  <input value={draft.accent_secondary || ""} onChange={(event) => update("accent_secondary", event.target.value)} placeholder="Leave blank to disable" />
+                  {draft.accent_secondary ? <button className="field-inline-action" type="button" onClick={() => update("accent_secondary", "")}>Clear</button> : null}
+                </div>
+              </label>
+              <div className="appearance-cluster-toggles">
+                <label className="field check-row"><input type="checkbox" checked={draft.show_bot_uptime !== false} onChange={(event) => update("show_bot_uptime", event.target.checked)} /><span>Show bot uptime on cards</span></label>
+                <label className="field check-row"><input type="checkbox" checked={draft.show_queue_pressure !== false} onChange={(event) => update("show_queue_pressure", event.target.checked)} /><span>Show queue pressure metrics</span></label>
+              </div>
             </div>
           </div>
           <div className="appearance-form-actions">

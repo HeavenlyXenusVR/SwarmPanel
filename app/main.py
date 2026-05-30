@@ -141,6 +141,15 @@ PANEL_LOOK_ALIASES = {
 PROFILE_BANNER_MODES = {"gradient", "image", "signal", "quiet", "contrast"}
 PROFILE_CARD_STYLES = {"solid", "glass", "outline", "terminal"}
 PROFILE_SOCIAL_MODES = {"open", "friends", "quiet"}
+PROFILE_LAYOUT_MODES = {"default", "sidebar", "stacked", "split"}
+PROFILE_HEADER_STYLES = {"solid", "glass", "blur", "transparent", "gradient"}
+PROFILE_BORDER_ACCENTS = {"none", "glow", "pulse", "neon", "solid"}
+PANEL_SIDEBAR_STYLES = {"full", "icons", "minimal"}
+PANEL_FONT_FAMILIES = {"system", "mono", "rounded"}
+PANEL_CARD_HOVER_EFFECTS = {"lift", "glow", "border", "none"}
+PANEL_NOTIFICATION_POSITIONS = {"br", "bl", "tr", "tc"}
+PANEL_BOT_CARD_DETAILS = {"full", "compact", "minimal"}
+PANEL_RADIUS_MODES = {"none", "small", "medium", "large", "pill"}
 AUTH_RATE_BUCKETS: dict[str, list[float]] = {}
 DISCORD_INVITE_HOSTS = {
     "discord.gg",
@@ -731,6 +740,10 @@ class UserProfileUpdateRequest(BaseModel):
     server_invite_url: str | None = None
     server_name: str | None = None
     server_icon_url: str | None = None
+    profile_quote: str | None = None
+    profile_layout_mode: str | None = None
+    profile_header_style: str | None = None
+    profile_border_accent: str | None = None
 
 
 class PanelPreferencesUpdateRequest(BaseModel):
@@ -755,6 +768,16 @@ class PanelPreferencesUpdateRequest(BaseModel):
     surface_blur: int | None = None
     stream_card_style: str | None = None
     dashboard_density: str | None = None
+    sidebar_style: str | None = None
+    panel_font_family: str | None = None
+    card_hover_effect: str | None = None
+    notification_position: str | None = None
+    bot_card_detail: str | None = None
+    panel_radius: str | None = None
+    accent_secondary: str | None = None
+    show_bot_uptime: bool | None = None
+    show_queue_pressure: bool | None = None
+    compact_sidebar: bool | None = None
 
 
 def _feed_event(level: str, title: str, description: str, *, source: str = "panel", event_type: str = "feed_event") -> dict[str, str]:
@@ -1183,6 +1206,14 @@ def _clean_profile_updates(payload: UserProfileUpdateRequest) -> dict[str, Any]:
             updates[key] = _normalize_optional_text(value, "Server name", 120)
         elif key == "server_icon_url":
             updates[key] = _normalize_public_url(value, "Server icon URL")
+        elif key == "profile_quote":
+            updates[key] = _normalize_optional_text(value, "Profile quote", 160)
+        elif key == "profile_layout_mode":
+            updates[key] = _normalize_choice(value, "Profile layout", PROFILE_LAYOUT_MODES, "default")
+        elif key == "profile_header_style":
+            updates[key] = _normalize_choice(value, "Profile header style", PROFILE_HEADER_STYLES, "solid")
+        elif key == "profile_border_accent":
+            updates[key] = _normalize_choice(value, "Profile border accent", PROFILE_BORDER_ACCENTS, "none")
     return updates
 
 
@@ -1283,6 +1314,26 @@ def _clean_panel_preferences(payload: PanelPreferencesUpdateRequest) -> dict[str
             PANEL_DASHBOARD_DENSITY_MODES,
             "command",
         )
+    if "sidebar_style" in raw:
+        preferences["sidebar_style"] = _normalize_choice(raw.get("sidebar_style"), "Sidebar style", PANEL_SIDEBAR_STYLES, "full")
+    if "panel_font_family" in raw:
+        preferences["panel_font_family"] = _normalize_choice(raw.get("panel_font_family"), "Panel font", PANEL_FONT_FAMILIES, "system")
+    if "card_hover_effect" in raw:
+        preferences["card_hover_effect"] = _normalize_choice(raw.get("card_hover_effect"), "Card hover", PANEL_CARD_HOVER_EFFECTS, "lift")
+    if "notification_position" in raw:
+        preferences["notification_position"] = _normalize_choice(raw.get("notification_position"), "Notification position", PANEL_NOTIFICATION_POSITIONS, "br")
+    if "bot_card_detail" in raw:
+        preferences["bot_card_detail"] = _normalize_choice(raw.get("bot_card_detail"), "Bot card detail", PANEL_BOT_CARD_DETAILS, "full")
+    if "panel_radius" in raw:
+        preferences["panel_radius"] = _normalize_choice(raw.get("panel_radius"), "Panel radius", PANEL_RADIUS_MODES, "medium")
+    if "accent_secondary" in raw:
+        preferences["accent_secondary"] = _normalize_profile_accent(raw.get("accent_secondary")) or None
+    if "show_bot_uptime" in raw:
+        preferences["show_bot_uptime"] = bool(raw.get("show_bot_uptime", True))
+    if "show_queue_pressure" in raw:
+        preferences["show_queue_pressure"] = bool(raw.get("show_queue_pressure", True))
+    if "compact_sidebar" in raw:
+        preferences["compact_sidebar"] = bool(raw.get("compact_sidebar", False))
     return preferences
 
 
@@ -2345,7 +2396,10 @@ async def api_user_directory(request: Request):
         viewer_id = await _account_id_for_auth(auth)
     except Exception:
         viewer_id = None
-    users = await db.search_account_profiles(query, limit, viewer_account_id=viewer_id)
+    # Non-admin users only see members from their own guild.
+    # Admin mode ON (site owner with admin_mode=True) sees the full directory.
+    scoped_guild_id = _public_scoped_guild_id(auth) if not _is_admin_auth(auth) else None
+    users = await db.search_account_profiles(query, limit, viewer_account_id=viewer_id, guild_id=scoped_guild_id)
     return {"ok": True, "query": query, "users": users, "limit": limit}
 
 

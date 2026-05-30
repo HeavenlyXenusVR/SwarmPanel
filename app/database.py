@@ -60,6 +60,10 @@ ACCOUNT_PROFILE_COLUMNS = (
     ("server_name", "VARCHAR(120) NULL"),
     ("server_icon_url", "TEXT NULL"),
     ("panel_preferences", "JSON NULL"),
+    ("profile_quote", "VARCHAR(160) NULL"),
+    ("profile_layout_mode", "VARCHAR(30) NULL"),
+    ("profile_header_style", "VARCHAR(30) NULL"),
+    ("profile_border_accent", "VARCHAR(30) NULL"),
     ("last_seen_at", "TIMESTAMP NULL DEFAULT NULL"),
     ("updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
 )
@@ -1172,7 +1176,8 @@ class PanelDatabase:
                    profile_headline, profile_tags, profile_links, profile_banner_url, profile_banner_mode, profile_card_style, profile_social_mode,
                    favorite_bot, theme_accent,
                    public_profile, server_invite_url, server_name, server_icon_url,
-                   panel_preferences, created_at, last_login_at, last_seen_at, updated_at
+                   panel_preferences, profile_quote, profile_layout_mode, profile_header_style, profile_border_accent,
+                   created_at, last_login_at, last_seen_at, updated_at
             FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
             WHERE username = %s AND guild_id = %s
             LIMIT 1
@@ -1229,6 +1234,7 @@ class PanelDatabase:
                    display_name, avatar_url, bio, profile_headline, profile_tags, profile_links, profile_banner_url, profile_banner_mode,
                    profile_card_style, profile_social_mode, favorite_bot, theme_accent, public_profile,
                    server_invite_url, server_name, server_icon_url, panel_preferences,
+                   profile_quote, profile_layout_mode, profile_header_style, profile_border_accent,
                    created_at, last_login_at, last_seen_at, updated_at
             FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
             WHERE id = %s
@@ -1540,11 +1546,16 @@ class PanelDatabase:
         )
         return await self.get_account_admin(account_id)
 
-    async def search_account_profiles(self, query: str = "", limit: int = 24, viewer_account_id: int | None = None) -> list[dict[str, Any]]:
+    async def search_account_profiles(self, query: str = "", limit: int = 24, viewer_account_id: int | None = None, guild_id: str | None = None) -> list[dict[str, Any]]:
         normalized_query = str(query or "").strip()
         safe_limit = max(1, min(50, int(limit or 24)))
         like = f"%{normalized_query}%"
         viewer_id = int(viewer_account_id or 0)
+        guild_clause = "AND guild_id = %s" if guild_id and str(guild_id).strip() else ""
+        params: list[Any] = [viewer_id, normalized_query, like, like, like, like]
+        if guild_clause:
+            params.append(str(guild_id).strip())
+        params.append(safe_limit)
         rows = await self._fetchall(
             f"""
             SELECT id, username, guild_id, email, email_verified_at,
@@ -1554,6 +1565,7 @@ class PanelDatabase:
                    profile_headline, profile_tags, profile_links, profile_banner_url, profile_banner_mode, profile_card_style, profile_social_mode,
                    favorite_bot, theme_accent,
                    public_profile, server_invite_url, server_name, server_icon_url,
+                   profile_quote, profile_layout_mode, profile_header_style, profile_border_accent,
                    created_at, last_login_at, last_seen_at, updated_at,
                    EXISTS(
                      SELECT 1
@@ -1562,6 +1574,7 @@ class PanelDatabase:
                    ) AS followed_by_me
             FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}` u
             WHERE public_profile = 1
+              {guild_clause}
               AND (
                   %s = ''
                   OR username LIKE %s
@@ -1572,7 +1585,7 @@ class PanelDatabase:
             ORDER BY COALESCE(updated_at, created_at) DESC, username ASC
             LIMIT %s
             """,
-            (viewer_id, normalized_query, like, like, like, like, safe_limit),
+            tuple(params),
         )
         profiles = [self._serialize_account_profile(row) for row in rows]
         social_snapshots = await asyncio.gather(
