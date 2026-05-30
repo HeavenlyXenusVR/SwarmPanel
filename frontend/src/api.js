@@ -212,12 +212,12 @@ export async function resolveApiUrl(path) {
   return apiUrl(path);
 }
 
-export async function resolveWebSocketUrl(path, { token } = {}) {
+export async function resolveWebSocketUrl(path) {
   const target = /^wss?:\/\//i.test(path) ? path : await resolveApiUrl(path);
   const url = new URL(target, window.location.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  const authToken = token ?? readToken();
-  if (authToken) url.searchParams.set("token", authToken);
+  // Token is sent as the first auth frame after connection, not in the URL,
+  // to prevent it from appearing in server access logs.
   return url.toString();
 }
 

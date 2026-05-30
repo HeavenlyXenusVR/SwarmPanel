@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { resolveWebSocketUrl } from "../api.js";
+import { resolveWebSocketUrl, readToken } from "../api.js";
 
 const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000];
 
@@ -62,6 +62,12 @@ export function useDashboardStream({ enabled = true, onSnapshot, onError } = {})
         socket = new window.WebSocket(url);
         socket.addEventListener("open", () => {
           retryIndex = 0;
+          // Send API token as the first frame so it stays out of server access logs.
+          // Session-cookie users don't need this; the server accepts both auth paths.
+          const token = readToken();
+          if (token) {
+            socket.send(JSON.stringify({ type: "auth", token }));
+          }
         });
         socket.addEventListener("message", handleMessage);
         socket.addEventListener("error", () => {

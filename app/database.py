@@ -439,8 +439,8 @@ class PanelDatabase:
                         LIMIT 1
                         """,
                         (schema, table),
-                    ), timeout=15)
-                    return bool(await asyncio.wait_for(cur.fetchone(), timeout=15))
+                    ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
+                    return bool(await asyncio.wait_for(cur.fetchone(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS))
 
                 try:
                     if not await table_exists("discord_aria", "aria_interactions"):
@@ -458,7 +458,7 @@ class PanelDatabase:
                                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                             )
                             """
-                        ), timeout=15)
+                        ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                 except Exception as exc:
                     logger.warning("Could not ensure discord_aria.aria_interactions: %s", exc)
                 try:
@@ -475,7 +475,7 @@ class PanelDatabase:
                                 INDEX idx_accountlogins_guild_id (guild_id)
                             )
                             """
-                        ), timeout=15)
+                        ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                 except Exception as exc:
                     logger.warning("Could not ensure accountlogins.users: %s", exc)
                 try:
@@ -488,7 +488,7 @@ class PanelDatabase:
                                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                             )
                             """
-                        ), timeout=15)
+                        ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                     await asyncio.wait_for(cur.execute(
                         f"""
                         INSERT IGNORE INTO `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_GUILD_LOCK_TABLE}` (guild_id, username)
@@ -502,7 +502,7 @@ class PanelDatabase:
                           ON locks.guild_id = users.guild_id
                         WHERE locks.guild_id IS NULL
                         """
-                    ), timeout=15)
+                    ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                 except Exception as exc:
                     logger.warning("Could not ensure accountlogins.guild_locks: %s", exc)
                 try:
@@ -564,14 +564,14 @@ class PanelDatabase:
         await asyncio.wait_for(cur.execute(
             f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_guild_settings` "
             "(guild_id BIGINT PRIMARY KEY)"
-        ), timeout=15)
+        ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
         for column_name, definition in GUILD_SETTINGS_COLUMNS:
             try:
                 safe_column = _validate_identifier(column_name, "column name")
                 await asyncio.wait_for(cur.execute(
                     f"ALTER TABLE `{schema}`.`{prefix}_guild_settings` "
                     f"ADD COLUMN {safe_column} {definition}"
-                ), timeout=15)
+                ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
             except Exception:
                 pass
 
@@ -619,7 +619,7 @@ class PanelDatabase:
                 await asyncio.wait_for(cur.execute(
                     f"ALTER TABLE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}` "
                     f"ADD COLUMN `{safe_column}` {definition}"
-                ), timeout=15)
+                ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
             except Exception:
                 pass
         for index_name, columns in (
@@ -631,13 +631,13 @@ class PanelDatabase:
                 safe_index = _validate_identifier(index_name, "account profile index")
                 await asyncio.wait_for(cur.execute(
                     f"CREATE INDEX `{safe_index}` ON `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}` ({columns})"
-                ), timeout=15)
+                ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
             except Exception:
                 pass
         try:
             await asyncio.wait_for(cur.execute(
                 f"CREATE UNIQUE INDEX `uniq_accountlogins_email` ON `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}` (`email`)"
-            ), timeout=15)
+            ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
         except Exception:
             pass
 
@@ -655,7 +655,7 @@ class PanelDatabase:
                 CONSTRAINT chk_account_no_self_follow CHECK (follower_account_id <> followed_account_id)
             )
             """
-        ), timeout=15)
+        ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
         await asyncio.wait_for(cur.execute(
             f"""
             CREATE TABLE IF NOT EXISTS `{ACCOUNT_LOGIN_SCHEMA}`.`account_friend_requests` (
@@ -673,7 +673,7 @@ class PanelDatabase:
                 CONSTRAINT chk_account_no_self_friend CHECK (requester_account_id <> addressee_account_id)
             )
             """
-        ), timeout=15)
+        ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
         await asyncio.wait_for(cur.execute(
             f"""
             CREATE TABLE IF NOT EXISTS `{ACCOUNT_LOGIN_SCHEMA}`.`account_messages` (
@@ -691,7 +691,7 @@ class PanelDatabase:
                 CONSTRAINT chk_account_no_self_message CHECK (sender_account_id <> recipient_account_id)
             )
             """
-        ), timeout=15)
+        ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
 
     async def register_account_login(
         self,
@@ -716,7 +716,7 @@ class PanelDatabase:
         await self._ensure_connected()
         async with self.pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
-                await asyncio.wait_for(conn.begin(), timeout=15)
+                await asyncio.wait_for(conn.begin(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                 try:
                     await asyncio.wait_for(cur.execute(
                         f"""
@@ -726,8 +726,8 @@ class PanelDatabase:
                         LIMIT 1
                         """,
                         (username, gid, email, email),
-                    ), timeout=15)
-                    existing = await asyncio.wait_for(cur.fetchone(), timeout=15)
+                    ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
+                    existing = await asyncio.wait_for(cur.fetchone(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                     if existing:
                         if existing.get("username") == username:
                             raise ValueError("That username is already registered.")
@@ -741,7 +741,7 @@ class PanelDatabase:
                         VALUES (%s, %s)
                         """,
                         (gid, username),
-                    ), timeout=15)
+                    ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                     await asyncio.wait_for(cur.execute(
                         f"""
                         INSERT INTO `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}` (
@@ -762,13 +762,13 @@ class PanelDatabase:
                             code_hash,
                             code_hash,
                         ),
-                    ), timeout=15)
-                    await asyncio.wait_for(conn.commit(), timeout=15)
+                    ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
+                    await asyncio.wait_for(conn.commit(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                 except ValueError:
-                    await asyncio.wait_for(conn.rollback(), timeout=15)
+                    await asyncio.wait_for(conn.rollback(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                     raise
                 except Exception as exc:
-                    await asyncio.wait_for(conn.rollback(), timeout=15)
+                    await asyncio.wait_for(conn.rollback(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                     message = str(exc).lower()
                     if "duplicate" in message or "1062" in message:
                         if "guild_locks" in message or str(gid) in message:
@@ -1324,7 +1324,7 @@ class PanelDatabase:
         await self._ensure_connected()
         async with self.pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
-                await asyncio.wait_for(conn.begin(), timeout=15)
+                await asyncio.wait_for(conn.begin(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                 try:
                     await asyncio.wait_for(cur.execute(
                         f"""
@@ -1334,8 +1334,8 @@ class PanelDatabase:
                         LIMIT 1
                         """,
                         (safe_account_id,),
-                    ), timeout=15)
-                    current = await asyncio.wait_for(cur.fetchone(), timeout=15)
+                    ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
+                    current = await asyncio.wait_for(cur.fetchone(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                     if not current:
                         raise ValueError("SwarmPanel account not found.")
 
@@ -1362,8 +1362,8 @@ class PanelDatabase:
                         LIMIT 1
                         """,
                         (safe_account_id, next_username, next_guild_id, next_email, next_email),
-                    ), timeout=15)
-                    conflict = await asyncio.wait_for(cur.fetchone(), timeout=15)
+                    ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
+                    conflict = await asyncio.wait_for(cur.fetchone(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                     if conflict:
                         if conflict.get("username") == next_username:
                             raise ValueError("That username is already registered.")
@@ -1382,20 +1382,20 @@ class PanelDatabase:
                             WHERE id = %s
                             """,
                             (*cleaned.values(), safe_account_id),
-                        ), timeout=15)
+                        ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
 
                     if next_guild_id != current["guild_id"]:
                         await asyncio.wait_for(cur.execute(
                             f"DELETE FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_GUILD_LOCK_TABLE}` WHERE guild_id = %s",
                             (current["guild_id"],),
-                        ), timeout=15)
+                        ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                         await asyncio.wait_for(cur.execute(
                             f"""
                             INSERT INTO `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_GUILD_LOCK_TABLE}` (guild_id, username)
                             VALUES (%s, %s)
                             """,
                             (next_guild_id, next_username),
-                        ), timeout=15)
+                        ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                     elif next_username != current["username"]:
                         await asyncio.wait_for(cur.execute(
                             f"""
@@ -1404,14 +1404,14 @@ class PanelDatabase:
                             WHERE guild_id = %s
                             """,
                             (next_username, next_guild_id),
-                        ), timeout=15)
+                        ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
 
-                    await asyncio.wait_for(conn.commit(), timeout=15)
+                    await asyncio.wait_for(conn.commit(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                 except ValueError:
-                    await asyncio.wait_for(conn.rollback(), timeout=15)
+                    await asyncio.wait_for(conn.rollback(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                     raise
                 except Exception as exc:
-                    await asyncio.wait_for(conn.rollback(), timeout=15)
+                    await asyncio.wait_for(conn.rollback(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                     message = str(exc).lower()
                     if "duplicate" in message or "1062" in message:
                         if next_email and "email" in message:
@@ -1427,7 +1427,7 @@ class PanelDatabase:
         await self._ensure_connected()
         async with self.pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
-                await asyncio.wait_for(conn.begin(), timeout=15)
+                await asyncio.wait_for(conn.begin(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                 try:
                     await asyncio.wait_for(cur.execute(
                         f"""
@@ -1437,24 +1437,24 @@ class PanelDatabase:
                         LIMIT 1
                         """,
                         (safe_account_id,),
-                    ), timeout=15)
-                    current = await asyncio.wait_for(cur.fetchone(), timeout=15)
+                    ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
+                    current = await asyncio.wait_for(cur.fetchone(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                     if not current:
                         raise ValueError("SwarmPanel account not found.")
                     await asyncio.wait_for(cur.execute(
                         f"DELETE FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}` WHERE id = %s",
                         (safe_account_id,),
-                    ), timeout=15)
+                    ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                     await asyncio.wait_for(cur.execute(
                         f"DELETE FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_GUILD_LOCK_TABLE}` WHERE guild_id = %s",
                         (current["guild_id"],),
-                    ), timeout=15)
-                    await asyncio.wait_for(conn.commit(), timeout=15)
+                    ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
+                    await asyncio.wait_for(conn.commit(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                 except ValueError:
-                    await asyncio.wait_for(conn.rollback(), timeout=15)
+                    await asyncio.wait_for(conn.rollback(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                     raise
                 except Exception:
-                    await asyncio.wait_for(conn.rollback(), timeout=15)
+                    await asyncio.wait_for(conn.rollback(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                     raise
 
     async def set_account_webhook_verified_admin(self, account_id: int, verified: bool) -> dict[str, Any] | None:
@@ -3855,7 +3855,7 @@ class PanelDatabase:
                 try:
                     if action in ["PAUSE", "RESUME", "SKIP", "STOP"]:
                         await self._clear_pending_orders(cur, schema, prefix, gid, bot_key)
-                        await asyncio.wait_for(cur.execute(f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_overrides` (guild_id BIGINT, bot_name VARCHAR(50), command VARCHAR(20), PRIMARY KEY(guild_id, bot_name))"), timeout=15)
+                        await asyncio.wait_for(cur.execute(f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_overrides` (guild_id BIGINT, bot_name VARCHAR(50), command VARCHAR(20), PRIMARY KEY(guild_id, bot_name))"), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                         await cur.execute(f"REPLACE INTO `{schema}`.`{prefix}_swarm_overrides` (guild_id, bot_name, command) VALUES (%s, %s, %s)", (gid, bot_key, action))
                         # Mirror the intended pause/resume state immediately so the panel does not lag behind Discord.
                         try:
@@ -3907,7 +3907,7 @@ class PanelDatabase:
 
                     elif action == "CLEAR":
                         await self._clear_pending_orders(cur, schema, prefix, gid, bot_key)
-                        await asyncio.wait_for(cur.execute(f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_overrides` (guild_id BIGINT, bot_name VARCHAR(50), command VARCHAR(20), PRIMARY KEY(guild_id, bot_name))"), timeout=15)
+                        await asyncio.wait_for(cur.execute(f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_overrides` (guild_id BIGINT, bot_name VARCHAR(50), command VARCHAR(20), PRIMARY KEY(guild_id, bot_name))"), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                         await cur.execute(
                             f"REPLACE INTO `{schema}`.`{prefix}_swarm_overrides` (guild_id, bot_name, command) VALUES (%s, %s, %s)",
                             (gid, bot_key, "STOP"),

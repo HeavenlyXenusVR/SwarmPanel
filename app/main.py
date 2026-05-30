@@ -399,7 +399,7 @@ def _rate_limit_auth(key: str, *, limit: int, window_seconds: int) -> None:
     bucket.append(now)
     AUTH_RATE_BUCKETS[key] = bucket
     # Prune stale buckets to prevent unbounded memory growth
-    if len(AUTH_RATE_BUCKETS) > 5_000:
+    if len(AUTH_RATE_BUCKETS) > 500:
         stale = [k for k, v in AUTH_RATE_BUCKETS.items() if all(now - t >= window_seconds for t in v)]
         for k in stale:
             AUTH_RATE_BUCKETS.pop(k, None)
@@ -2240,6 +2240,7 @@ async def api_update_session_password(request: Request, payload: SessionPassword
     username = str(auth.get("username") or "")
     if not scoped_guild_id or not username:
         raise HTTPException(status_code=403, detail="Guild account access required")
+    _rate_limit_auth(f"password-change:{username}", limit=3, window_seconds=600)
     try:
         profile = await db.update_account_password(username, scoped_guild_id, payload.current_password, payload.new_password)
     except ValueError as exc:
@@ -3234,32 +3235,49 @@ async def websocket_endpoint(websocket: WebSocket):
     if not _ensure_allowed_websocket_origin(websocket):
         await websocket.close(code=4403)
         return
-    token = websocket.query_params.get("token")
-    auth = verify_api_token(token, settings.session_secret, settings.api_token_ttl_seconds)
+
+    # Try session auth first (cookie is sent with the upgrade request automatically).
+    auth = None
+    try:
+        session = websocket.session
+        if bool(session.get(SESSION_AUTH_KEY)):
+            role = session.get(SESSION_ROLE_KEY) or "admin"
+            guild_id = session.get(SESSION_GUILD_ID_KEY)
+            admin_mode = session.get(SESSION_ADMIN_MODE_KEY)
+            if admin_mode is None:
+                admin_mode = str(role).lower() == "admin" and not guild_id
+            auth = {
+                "mode": "session",
+                "username": session.get(SESSION_USERNAME_KEY),
+                "role": role,
+                "site_owner": bool(session.get(SESSION_SITE_OWNER_KEY)),
+                "admin_mode": bool(admin_mode),
+            }
+            if guild_id:
+                auth["guild_id"] = str(guild_id)
+    except Exception:
+        auth = None
+
+    # Accept the connection so the client can send an auth frame (token auth path).
+    # Reject before accept if origin check already failed (handled above).
+    await websocket.accept()
+
+    # If session auth didn't work, wait for an auth frame containing the API token.
+    # This keeps the token out of server access logs (no longer in the URL query string).
     if not auth:
         try:
-            session = websocket.session
-            if bool(session.get(SESSION_AUTH_KEY)):
-                role = session.get(SESSION_ROLE_KEY) or "admin"
-                guild_id = session.get(SESSION_GUILD_ID_KEY)
-                admin_mode = session.get(SESSION_ADMIN_MODE_KEY)
-                if admin_mode is None:
-                    admin_mode = str(role).lower() == "admin" and not guild_id
-                auth = {
-                    "mode": "session",
-                    "username": session.get(SESSION_USERNAME_KEY),
-                    "role": role,
-                    "site_owner": bool(session.get(SESSION_SITE_OWNER_KEY)),
-                    "admin_mode": bool(admin_mode),
-                }
-                if guild_id:
-                    auth["guild_id"] = str(guild_id)
-        except Exception:
+            raw = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
+            msg = json.loads(raw)
+            if msg.get("type") == "auth":
+                token = str(msg.get("token") or "")
+                auth = verify_api_token(token, settings.session_secret, settings.api_token_ttl_seconds)
+        except (asyncio.TimeoutError, json.JSONDecodeError, Exception):
             auth = None
+
     if not auth:
         await websocket.close(code=4401)
         return
-    await websocket.accept()
+
     connection = {"websocket": websocket, "auth": auth, "last_dashboard_digest": None}
     active_connections.append(connection)
     _ensure_dashboard_broadcast_loop()
