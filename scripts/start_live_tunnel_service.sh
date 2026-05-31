@@ -633,7 +633,8 @@ if [[ "${TUNNEL_PROVIDER}" == "cloudflare" || "${TUNNEL_PROVIDER}" == "auto" ]];
       else
         set_global_tunnel_cooldown "${GLOBAL_SUCCESS_COOLDOWN_SECONDS}"
         release_global_tunnel_slot
-        announce_live_url "${PANEL_URL}"
+        # Wait for the tunnel to actually answer before publishing the URL,
+        # so the frontend never picks up a URL that the backend isn't serving yet.
         wait_for_public_readiness "${PANEL_URL}" "/api/session" || {
           echo "Cloudflare quick tunnel died before it became reachable." >&2
           tail -80 "${TUNNEL_LOG}" >&2 || true
@@ -645,6 +646,7 @@ if [[ "${TUNNEL_PROVIDER}" == "cloudflare" || "${TUNNEL_PROVIDER}" == "auto" ]];
           fi
           continue
         }
+        announce_live_url "${PANEL_URL}"
 
         # Tunnel was live and has now exited — immediately try a new one.
         wait "${TUNNEL_PID}"

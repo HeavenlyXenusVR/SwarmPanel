@@ -62,6 +62,7 @@ class Settings:
     session_secret: str
     bot_tokens: dict[str, str]
     cors_allowed_origins: list[str]
+    cors_allow_origin_regex: str
     trusted_hosts: list[str]
     api_token_ttl_seconds: int
     pages_public_url: str
@@ -103,6 +104,10 @@ def load_settings() -> Settings:
         session_secret=session_secret,
         bot_tokens=tokens,
         cors_allowed_origins=_env_csv("PANEL_CORS_ALLOWED_ORIGINS"),
+        cors_allow_origin_regex=_env(
+            "PANEL_CORS_ALLOW_ORIGIN_REGEX",
+            r"https://[a-zA-Z0-9-]+\.trycloudflare\.com",
+        ),
         trusted_hosts=_env_csv("PANEL_TRUSTED_HOSTS"),
         api_token_ttl_seconds=int(_env("PANEL_API_TOKEN_TTL_SECONDS", "43200")),
         pages_public_url=_env("PANEL_PAGES_PUBLIC_URL"),

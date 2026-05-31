@@ -524,6 +524,13 @@ def _ensure_allowed_browser_origin(request: Request) -> None:
     current = _normalize_origin(str(request.base_url))
     if origin == current or origin in _allowed_browser_origins():
         return
+    regex = settings.cors_allow_origin_regex
+    if regex:
+        try:
+            if re.fullmatch(regex, origin):
+                return
+        except re.error:
+            pass
     raise HTTPException(status_code=403, detail="Blocked cross-origin request.")
 
 
@@ -1794,10 +1801,11 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="SwarmPanel", version="1.0.0", lifespan=lifespan)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=_trusted_hosts())
-if settings.cors_allowed_origins:
+if settings.cors_allowed_origins or settings.cors_allow_origin_regex:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allowed_origins,
+        allow_origin_regex=settings.cors_allow_origin_regex or None,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
