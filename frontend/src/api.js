@@ -7,8 +7,8 @@ const API_FETCH_TIMEOUT_MS = 30_000;
 const CACHE_STORE_PREFIX = "swarm_panel_api_cache:";
 const MAX_STORED_CACHE_BYTES = 450_000;
 const REMOTE_ORIGIN_KEY = "swarm_panel_remote_origin";
-const REMOTE_ORIGIN_TTL = 60_000;
-const REMOTE_ORIGIN_STALE_TTL = 15 * 60_000;
+const REMOTE_ORIGIN_TTL = 20_000;
+const REMOTE_ORIGIN_STALE_TTL = 3 * 60_000;
 
 const cache = new Map();
 const inFlightFetches = new Map();
@@ -253,6 +253,18 @@ async function refreshRemoteOrigin() {
     remoteOriginPromise = null;
   });
   return remoteOriginPromise;
+}
+
+export function forceRefreshRemoteOrigin() {
+  remoteOriginRefreshAfter = 0;
+}
+
+let _pollTimer = null;
+export function startRemoteOriginPolling() {
+  if (_pollTimer !== null || typeof window === "undefined" || !isRemoteStaticHost()) return;
+  _pollTimer = window.setInterval(() => {
+    loadRemoteOrigin({ force: true }).catch(() => {});
+  }, 20_000);
 }
 
 async function loadRemoteOrigin({ force = false } = {}) {

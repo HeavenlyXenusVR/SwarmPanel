@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { resolveWebSocketUrl, readToken } from "../api.js";
+import { resolveWebSocketUrl, readToken, forceRefreshRemoteOrigin } from "../api.js";
 
 const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000];
 
@@ -36,6 +36,9 @@ export function useDashboardStream({ enabled = true, onSnapshot, onError } = {})
       retryIndex += 1;
       retryTimer = window.setTimeout(() => {
         retryTimer = 0;
+        // Invalidate the cached tunnel URL before reconnecting — the WS may
+        // have dropped because the Cloudflare tunnel rotated to a new subdomain.
+        forceRefreshRemoteOrigin();
         connect();
       }, delay);
     };
