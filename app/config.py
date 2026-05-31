@@ -146,8 +146,6 @@ def validate_settings(settings: Settings) -> None:
         missing.append("PANEL_DB_PASSWORD")
     if not settings.admin_password:
         missing.append("PANEL_ADMIN_PASSWORD")
-    elif len(settings.admin_password) < 12:
-        raise RuntimeError("PANEL_ADMIN_PASSWORD must be at least 12 characters long")
     if not settings.session_secret:
         missing.append("PANEL_SESSION_SECRET")
     elif len(settings.session_secret) < 32:
