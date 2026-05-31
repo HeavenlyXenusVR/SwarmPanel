@@ -2709,6 +2709,41 @@ class PanelDatabase:
             },
         }
 
+    async def _batch_table_exists(self, schema: str, table_names: list[str]) -> dict[str, bool]:
+        """Check existence of multiple tables in one information_schema query.
+
+        Uses the TTL cache per table so repeated calls within the cache window are free.
+        Returns a mapping of table_name -> bool.
+        """
+        schema = _validate_identifier(schema, "schema")
+        now = time.monotonic()
+        result: dict[str, bool] = {}
+        missing: list[str] = []
+        for table in table_names:
+            key = (schema, table)
+            cached = self._table_exists_cache.get(key)
+            if cached and cached[0] > now:
+                result[table] = bool(cached[1])
+            else:
+                missing.append(table)
+        if missing:
+            placeholders = ", ".join(["%s"] * len(missing))
+            rows = await self._fetchall(
+                f"""
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = %s AND table_name IN ({placeholders})
+                """,
+                (schema, *missing),
+                dict_cursor=False,
+            )
+            found = {row[0] for row in rows}
+            for table in missing:
+                exists = table in found
+                self._table_exists_cache[(schema, table)] = (now + PANEL_TABLE_CACHE_TTL_SECONDS, exists)
+                result[table] = exists
+        return result
+
     async def _music_bot_snapshot(self, bot: BotDefinition) -> dict[str, Any]:
         assert bot.db_schema and bot.table_prefix
         schema = _validate_identifier(bot.db_schema, "schema")
@@ -2723,16 +2758,23 @@ class PanelDatabase:
         intelligence_table = f"{prefix}_track_intelligence"
         recommendations_table = f"{prefix}_smart_recommendations"
 
+        # Batch all table-existence checks into a single information_schema query
+        # instead of 9 sequential round-trips.
+        _table_names = [
+            playback_table, settings_table, queue_table, backup_table,
+            home_table, heartbeat_table, metrics_table, intelligence_table, recommendations_table,
+        ]
+        _exists = await self._batch_table_exists(schema, _table_names)
         table_exists = {
-            "playback": await self._table_exists(schema, playback_table),
-            "settings": await self._table_exists(schema, settings_table),
-            "queue": await self._table_exists(schema, queue_table),
-            "backup": await self._table_exists(schema, backup_table),
-            "home": await self._table_exists(schema, home_table),
-            "heartbeat": await self._table_exists(schema, heartbeat_table),
-            "metrics": await self._table_exists(schema, metrics_table),
-            "intelligence": await self._table_exists(schema, intelligence_table),
-            "recommendations": await self._table_exists(schema, recommendations_table),
+            "playback": _exists.get(playback_table, False),
+            "settings": _exists.get(settings_table, False),
+            "queue": _exists.get(queue_table, False),
+            "backup": _exists.get(backup_table, False),
+            "home": _exists.get(home_table, False),
+            "heartbeat": _exists.get(heartbeat_table, False),
+            "metrics": _exists.get(metrics_table, False),
+            "intelligence": _exists.get(intelligence_table, False),
+            "recommendations": _exists.get(recommendations_table, False),
         }
 
         playback_rows: list[dict[str, Any]] = []
@@ -2748,7 +2790,7 @@ class PanelDatabase:
         if table_exists["playback"]:
             try:
                 playback_rows = await self._fetchall(
-                    f"SELECT * FROM `{schema}`.`{playback_table}` ORDER BY guild_id"
+                    f"SELECT * FROM `{schema}`.`{playback_table}` ORDER BY guild_id LIMIT 500"
                 )
             except Exception:
                 playback_rows = []
@@ -2758,7 +2800,10 @@ class PanelDatabase:
                     known_guilds.add(int(guild_id))
 
         if table_exists["settings"]:
-            rows = await self._fetchall(f"SELECT * FROM `{schema}`.`{settings_table}`")
+            rows = await self._fetchall(
+                f"SELECT guild_id, filter_mode, loop_mode, transition_mode, fade_seconds, fade_curve "
+                f"FROM `{schema}`.`{settings_table}` LIMIT 500"
+            )
             for row in rows:
                 guild_id = int(row["guild_id"])
                 filter_map[guild_id] = {
@@ -2801,7 +2846,7 @@ class PanelDatabase:
 
         if table_exists["home"]:
             rows = await self._fetchall(
-                f"SELECT guild_id, home_vc_id FROM `{schema}`.`{home_table}` WHERE bot_name = %s",
+                f"SELECT guild_id, home_vc_id FROM `{schema}`.`{home_table}` WHERE bot_name = %s LIMIT 500",
                 (bot.key,),
             )
             for row in rows:
@@ -2812,7 +2857,8 @@ class PanelDatabase:
         if table_exists.get("metrics"):
             try:
                 rows = await self._fetchall(
-                    f"SELECT *, TIMESTAMPDIFF(SECOND, updated_at, NOW()) AS metric_age_seconds FROM `{schema}`.`{metrics_table}` WHERE bot_name = %s",
+                    f"SELECT *, TIMESTAMPDIFF(SECOND, updated_at, NOW()) AS metric_age_seconds "
+                    f"FROM `{schema}`.`{metrics_table}` WHERE bot_name = %s LIMIT 500",
                     (bot.key,),
                 )
                 for row in rows:
@@ -2832,6 +2878,7 @@ class PanelDatabase:
                            COALESCE(SUM(dislike_count), 0) AS dislikes
                     FROM `{schema}`.`{intelligence_table}`
                     GROUP BY guild_id
+                    LIMIT 500
                     """
                 )
                 for row in rows:
@@ -2849,7 +2896,7 @@ class PanelDatabase:
         if table_exists.get("recommendations"):
             try:
                 rows = await self._fetchall(
-                    f"SELECT guild_id, COUNT(*) AS recommendations FROM `{schema}`.`{recommendations_table}` GROUP BY guild_id"
+                    f"SELECT guild_id, COUNT(*) AS recommendations FROM `{schema}`.`{recommendations_table}` GROUP BY guild_id LIMIT 500"
                 )
                 for row in rows:
                     recommendation_map[int(row["guild_id"])] = int(row.get("recommendations") or 0)
