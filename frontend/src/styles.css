@@ -2937,6 +2937,107 @@ tbody tr:hover td {
   }
 }
 
+.mini-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mini-row .avatar {
+  flex: 0 0 auto;
+}
+
+.mini-row > span:last-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mini-row strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.mini-row small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-panel {
+  display: grid;
+  gap: 6px;
+}
+
+.collection-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 52px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(17, 23, 27, 0.62);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-fast), border-color var(--motion-fast);
+}
+
+.collection-row:hover {
+  background: rgba(26, 35, 48, 0.84);
+  border-color: var(--line-strong);
+}
+
+.collection-row.active {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
+  background: color-mix(in srgb, var(--accent) 10%, rgba(17, 23, 27, 0.84));
+}
+
+.collection-row > span:last-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.collection-row strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collection-row small {
+  display: block;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.comment-form {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.comment-form input {
+  flex: 1;
+  min-width: 0;
+}
+
+.comment-form button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .toast {
   position: fixed;
   right: 18px;
@@ -2950,6 +3051,34 @@ tbody tr:hover td {
   color: var(--text);
   box-shadow: var(--shadow);
   animation: toast-in var(--motion-med) both;
+}
+
+.panel-notify-bl .toast {
+  right: auto;
+  left: 18px;
+}
+
+.panel-notify-tr .toast {
+  bottom: auto;
+  top: 80px;
+}
+
+.panel-notify-tc .toast {
+  right: auto;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+@media (max-width: 760px) {
+  .panel-notify-tr .toast,
+  .panel-notify-tc .toast {
+    top: auto;
+    bottom: calc(96px + env(safe-area-inset-bottom));
+    left: 10px;
+    right: 10px;
+    transform: none;
+    max-width: none;
+  }
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -3019,9 +3148,9 @@ tbody tr:hover td {
 
 .loading-section-content {
   transition:
-    opacity var(--motion-mid) ease,
-    transform var(--motion-mid) ease,
-    filter var(--motion-mid) ease;
+    opacity var(--motion-med) ease,
+    transform var(--motion-med) ease,
+    filter var(--motion-med) ease;
 }
 
 .loading-section.is-loading .loading-section-content {
@@ -3041,8 +3170,8 @@ tbody tr:hover td {
   pointer-events: none;
   transform: translateY(14px);
   transition:
-    opacity var(--motion-mid) ease,
-    transform var(--motion-mid) ease;
+    opacity var(--motion-med) ease,
+    transform var(--motion-med) ease;
 }
 
 .loading-section.is-loading .loading-section-overlay {

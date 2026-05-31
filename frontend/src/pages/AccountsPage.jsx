@@ -12,6 +12,7 @@ export default function AccountsPage({ ctx }) {
   const [metrics, setMetrics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [passwords, setPasswords] = useState({});
+  const showToast = ctx.showToast;
   const load = useCallback(async ({ background = false, force = false } = {}) => {
     try {
       if (!background) setLoading(true);
@@ -24,20 +25,20 @@ export default function AccountsPage({ ctx }) {
       if (stabilityData.status === "fulfilled") setStability(stabilityData.value);
       if (metricsData.status === "fulfilled") setMetrics(metricsData.value);
     } catch (error) {
-      if (!background) ctx.showToast(error.message, "error");
+      if (!background) showToast(error.message, "error");
     } finally {
       if (!background) setLoading(false);
     }
-  }, [ctx, q]);
+  }, [showToast, q]);
   useEffect(() => { load(); }, [load]);
   useLiveRefresh(() => load({ background: true, force: true }), { interval: 5_000 });
   async function mutate(path, payload, message) {
     try {
       await apiFetch(path, { method: "POST", body: JSON.stringify(payload) });
-      ctx.showToast(message, "success");
+      showToast(message, "success");
       await load();
     } catch (error) {
-      ctx.showToast(error.message, "error");
+      showToast(error.message, "error");
     }
   }
   return (

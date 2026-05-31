@@ -23,14 +23,16 @@ export default function MessagesPage({ ctx }) {
     try {
       const data = await apiFetch("/api/messages/threads", { force });
       setThreads(data.threads || []);
-      if (!selected && data.threads?.length) setSelected(data.threads[0]);
+      // Use functional form to avoid capturing `selected` in the dependency array
+      setSelected((prev) => (prev ? prev : (data.threads?.[0] ?? null)));
     } catch (error) {
       if (!background) ctx.showToast(error.message, "error");
     } finally {
       if (!background) setThreadsLoading(false);
     }
-  }, [ctx, selected]);
+  }, [ctx]);
 
+  const ctxShowToast = ctx.showToast;
   const loadMessages = useCallback(async ({ background = false, force = false } = {}) => {
     if (!selectedId) return;
     try {
@@ -39,11 +41,11 @@ export default function MessagesPage({ ctx }) {
       setMessages(data.messages || []);
       if (background) loadThreads({ background: true, force });
     } catch (error) {
-      if (!background) ctx.showToast(error.message, "error");
+      if (!background) ctxShowToast(error.message, "error");
     } finally {
       if (!background) setMessagesLoading(false);
     }
-  }, [ctx, loadThreads, selectedId]);
+  }, [ctxShowToast, loadThreads, selectedId]);
 
   useEffect(() => { loadThreads(); }, [loadThreads]);
   useEffect(() => { if (location.state?.user) setSelected(location.state.user); }, [location.state]);
@@ -79,12 +81,12 @@ export default function MessagesPage({ ctx }) {
       setBody("");
       loadThreads({ background: true });
     } catch (error) {
-      ctx.showToast(error.message, "error");
+      ctxShowToast(error.message, "error");
     }
   }
 
   return (
-    <Page title="Messages" eyebrow="Swarm Social" actions={<button type="button" onClick={() => refreshAll().catch((error) => ctx.showToast(error.message, "error"))}><RefreshCw size={16} />Refresh</button>}>
+    <Page title="Messages" eyebrow="Swarm Social" actions={<button type="button" onClick={() => refreshAll().catch((error) => ctxShowToast(error.message, "error"))}><RefreshCw size={16} />Refresh</button>}>
       <section className="settings-grid">
         <LoadingSection
           loading={threadsLoading}

@@ -26,6 +26,7 @@ export default function GalleryAdminPage({ ctx }) {
   const [tableLoading, setTableLoading] = useState(false);
   const [tableError, setTableError] = useState("");
   const [passwords, setPasswords] = useState({});
+  const showToast = ctx.showToast;
   const load = useCallback(async ({ background = false, includeTable = false, selectedTable = "", force = false } = {}) => {
     try {
       const [admin, tableData] = await Promise.all([
@@ -42,9 +43,9 @@ export default function GalleryAdminPage({ ctx }) {
         setTableError("");
       }
     } catch (error) {
-      if (!background) ctx.showToast(error.message, "error");
+      if (!background) showToast(error.message, "error");
     }
-  }, [ctx]);
+  }, [showToast]);
   useEffect(() => { load(); }, [load]);
   useLiveRefresh(() => load({ background: true, force: true, includeTable: Boolean(table), selectedTable: table }), { interval: 5_000 });
   async function loadTable() {
@@ -57,7 +58,7 @@ export default function GalleryAdminPage({ ctx }) {
     } catch (error) {
       setRows([]);
       setTableError(error.message);
-      ctx.showToast(error.message, "error");
+      showToast(error.message, "error");
     } finally {
       setTableLoading(false);
     }
@@ -65,10 +66,10 @@ export default function GalleryAdminPage({ ctx }) {
   async function mutate(path, payload, message) {
     try {
       await apiFetch(path, { method: "POST", body: JSON.stringify(payload) });
-      ctx.showToast(message, "success");
+      showToast(message, "success");
       await load();
     } catch (error) {
-      ctx.showToast(error.message, "error");
+      showToast(error.message, "error");
     }
   }
   const users = summary?.users || summary?.recent_users || [];

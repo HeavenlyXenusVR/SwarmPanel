@@ -318,7 +318,7 @@ export default function ProfilePage({ ctx }) {
               <label className="field"><span>Tags</span><input value={form.profile_tags_text || ""} onChange={(event) => setForm((current) => ({ ...current, profile_tags_text: event.target.value }))} disabled={!editable} /></label>
               <div className="link-editor">
                 {(form.profile_links || []).slice(0, 5).map((link, index) => (
-                  <div className="two-col" key={index}>
+                  <div className="two-col" key={`link-slot-${index}`}>
                     <label className="field"><span>Link Label</span><input value={link.label || ""} onChange={(event) => setForm((current) => ({ ...current, profile_links: (current.profile_links || []).map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item) }))} disabled={!editable} /></label>
                     <label className="field"><span>Link URL</span><input value={link.url || ""} onChange={(event) => setForm((current) => ({ ...current, profile_links: (current.profile_links || []).map((item, itemIndex) => itemIndex === index ? { ...item, url: event.target.value } : item) }))} disabled={!editable} /></label>
                   </div>

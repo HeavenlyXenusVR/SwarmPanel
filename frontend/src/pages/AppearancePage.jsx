@@ -142,7 +142,7 @@ function previewModeCopy(mode, draft) {
 }
 
 export default function AppearancePage({ ctx }) {
-  const [draft, setDraft] = useState({ ...DEFAULT_PREFERENCES, ...(ctx.preferences || {}) });
+  const [draft, setDraft] = useState(() => ({ ...DEFAULT_PREFERENCES, ...(ctx.preferences || {}) }));
   const [previewMode, setPreviewMode] = useState("live");
   const [saving, setSaving] = useState(false);
   const savedPreferences = { ...DEFAULT_PREFERENCES, ...(ctx.preferences || {}) };
@@ -154,7 +154,10 @@ export default function AppearancePage({ ctx }) {
   const SecondaryIcon = secondaryCard.icon;
   const TertiaryIcon = tertiaryCard.icon;
 
-  useEffect(() => setDraft(savedPreferences), [ctx.preferences]);
+  const ctxPreferences = ctx.preferences;
+  useEffect(() => {
+    setDraft({ ...DEFAULT_PREFERENCES, ...(ctxPreferences || {}) });
+  }, [ctxPreferences]);
 
   function update(key, value) {
     setDraft((current) => ({ ...current, [key]: value }));

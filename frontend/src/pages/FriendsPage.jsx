@@ -9,6 +9,7 @@ export default function FriendsPage({ ctx }) {
   const [state, setState] = useState({ incoming: [], outgoing: [], friends: [] });
   const [loading, setLoading] = useState(true);
 
+  const showToast = ctx.showToast;
   const load = useCallback(async ({ background = false, force = false } = {}) => {
     if (!background) setLoading(true);
     try {
@@ -18,11 +19,11 @@ export default function FriendsPage({ ctx }) {
       ]);
       setState({ incoming: requests.incoming || [], outgoing: requests.outgoing || [], friends: friends.friends || [] });
     } catch (error) {
-      if (!background) ctx.showToast(error.message, "error");
+      if (!background) showToast(error.message, "error");
     } finally {
       if (!background) setLoading(false);
     }
-  }, [ctx]);
+  }, [showToast]);
 
   useEffect(() => { load(); }, [load]);
   useLiveRefresh(() => load({ background: true, force: true }), { interval: 5_000 });

@@ -17,6 +17,7 @@ from dotenv import dotenv_values
 
 from .bots import MUSIC_BOTS
 from .config import Settings
+from .database import _validate_identifier as _validate_db_identifier
 from .discord_api import DiscordInventoryService
 
 
@@ -286,7 +287,11 @@ class RuntimeDiagnosticsService:
                         row_counts[table_name] = None
                         continue
                     try:
-                        await cur.execute(f"SELECT COUNT(*) AS c FROM `{table_name}`")
+                        # table_name is already validated to be present in information_schema above
+                        # and is matched against the caller-supplied list, but we validate the
+                        # identifier explicitly before interpolating it into SQL.
+                        safe_table = _validate_db_identifier(table_name, "table")
+                        await cur.execute(f"SELECT COUNT(*) AS c FROM `{safe_table}`")
                         row = await cur.fetchone() or {}
                         row_counts[table_name] = int(row.get("c") or 0)
                     except Exception:

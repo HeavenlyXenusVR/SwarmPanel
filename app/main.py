@@ -151,6 +151,7 @@ PANEL_NOTIFICATION_POSITIONS = {"br", "bl", "tr", "tc"}
 PANEL_BOT_CARD_DETAILS = {"full", "compact", "minimal"}
 PANEL_RADIUS_MODES = {"none", "small", "medium", "large", "pill"}
 AUTH_RATE_BUCKETS: dict[str, list[float]] = {}
+AUTH_RATE_BUCKETS_MAX = 2000  # prevent unbounded memory growth under load
 DISCORD_INVITE_HOSTS = {
     "discord.gg",
     "www.discord.gg",
@@ -261,6 +262,9 @@ def _normalize_public_base_url(value: str | None) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path.rstrip('/')}"
 
 
+_SAFE_HOST_RE = re.compile(r"^[A-Za-z0-9.\-:\[\]]+$")
+
+
 def _external_base_url(request: Request) -> str:
     configured = _normalize_public_base_url(settings.pages_public_url)
     if configured:
@@ -268,7 +272,9 @@ def _external_base_url(request: Request) -> str:
 
     forwarded_proto = str(request.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip().lower()
     forwarded_host = str(request.headers.get("x-forwarded-host") or "").split(",", 1)[0].strip()
-    if forwarded_proto in {"http", "https"} and forwarded_host:
+    # Only trust forwarded headers that contain safe hostname characters to prevent
+    # header-injection attacks producing malicious redirect or verification URLs.
+    if forwarded_proto in {"http", "https"} and forwarded_host and _SAFE_HOST_RE.fullmatch(forwarded_host):
         root_path = str(request.scope.get("root_path") or "").rstrip("/")
         return f"{forwarded_proto}://{forwarded_host}{root_path}".rstrip("/")
 
@@ -288,7 +294,11 @@ def _image_gallery_verification_url(request: Request, token: str) -> str:
         config_path = BASE_DIR.parents[1] / "Image Gallery" / "live-config.json"
         try:
             payload = json.loads(config_path.read_text(encoding="utf-8"))
-            origin = str(payload.get("gallery_url") or "").strip().rstrip("/")
+            raw_origin = str(payload.get("gallery_url") or "").strip().rstrip("/")
+            # Only accept http/https URLs from config to prevent injection
+            parsed_origin = urlparse(raw_origin)
+            if parsed_origin.scheme in {"http", "https"} and parsed_origin.netloc:
+                origin = raw_origin
         except Exception:
             origin = ""
     if origin:
@@ -398,11 +408,16 @@ def _rate_limit_auth(key: str, *, limit: int, window_seconds: int) -> None:
         raise HTTPException(status_code=429, detail="Too many authentication attempts. Try again later.")
     bucket.append(now)
     AUTH_RATE_BUCKETS[key] = bucket
-    # Prune stale buckets to prevent unbounded memory growth
-    if len(AUTH_RATE_BUCKETS) > 500:
+    # Prune stale buckets to prevent unbounded memory growth under high load
+    if len(AUTH_RATE_BUCKETS) > AUTH_RATE_BUCKETS_MAX:
         stale = [k for k, v in AUTH_RATE_BUCKETS.items() if all(now - t >= window_seconds for t in v)]
         for k in stale:
             AUTH_RATE_BUCKETS.pop(k, None)
+        # If still over limit after pruning expired entries, drop oldest half
+        if len(AUTH_RATE_BUCKETS) > AUTH_RATE_BUCKETS_MAX:
+            overflow = sorted(AUTH_RATE_BUCKETS.items(), key=lambda item: max(item[1]) if item[1] else 0)
+            for k, _ in overflow[: len(overflow) // 2]:
+                AUTH_RATE_BUCKETS.pop(k, None)
 
 
 def _bounded_query_limit(value: Any, *, default: int = 50, max_limit: int | None = None) -> int:
@@ -1696,7 +1711,9 @@ async def _telegram_health_watch_loop() -> None:
     await asyncio.sleep(20)
     while True:
         try:
-            await db.ping()
+            db_ok = await db.ping()
+            if not db_ok:
+                raise RuntimeError("Database ping returned False")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -1704,9 +1721,14 @@ async def _telegram_health_watch_loop() -> None:
             await _send_panel_telegram_alert("db", "SwarmPanel database problem", str(exc))
             try:
                 await db.connect()
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 action_logger.exception("SwarmPanel database reconnect failed after health alert.")
-        await asyncio.sleep(TELEGRAM_HEALTH_INTERVAL_SECONDS)
+        try:
+            await asyncio.sleep(TELEGRAM_HEALTH_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            raise
 
 
 @asynccontextmanager
@@ -1752,9 +1774,14 @@ async def lifespan(_: FastAPI):
     else:
         action_logger.info("SwarmPanel Telegram polling is disabled by PANEL_TELEGRAM_POLLING_ENABLED.")
     yield
-    if telegram_service:
-        await telegram_service.close()
+    # Stop Telegram first so it can flush before the DB pool closes
+    if telegram_service is not None:
+        try:
+            await telegram_service.close()
+        except Exception:
+            logging.getLogger("swarm_panel").exception("Error stopping Telegram service during shutdown.")
         telegram_service = None
+    # Cancel background tasks and wait for them
     for task in background_tasks:
         task.cancel()
     if background_tasks:
@@ -2611,11 +2638,22 @@ async def api_swarm_accounts_delete(request: Request, payload: SwarmAccountDelet
     return {"ok": True}
 
 
+@app.get("/healthz", include_in_schema=False)
+async def public_healthz():
+    """Lightweight unauthenticated liveness probe for container/load-balancer checks."""
+    db_ok = await db.ping()
+    if db_ok:
+        return {"ok": True, "db": "ok"}
+    return JSONResponse(status_code=503, content={"ok": False, "db": "unavailable"})
+
+
 @app.get("/api/health")
 async def api_health(request: Request):
     _require_api_auth(request)
+    db_ok = await db.ping()
     return {
-        "ok": True,
+        "ok": db_ok,
+        "db": "ok" if db_ok else "unavailable",
         "request_id": getattr(request.state, "request_id", ""),
         "api_max_rows": settings.api_max_rows,
         "bot_control_source_max_chars": settings.bot_control_source_max_chars,
@@ -3286,14 +3324,19 @@ async def websocket_endpoint(websocket: WebSocket):
             try:
                 message = await asyncio.wait_for(websocket.receive_text(), timeout=WS_RECEIVE_TIMEOUT_SECONDS)
             except asyncio.TimeoutError:
-                await websocket.send_text(json.dumps({"type": "ping", "timestamp": datetime.now(timezone.utc).isoformat()}))
+                try:
+                    await websocket.send_text(json.dumps({"type": "ping", "timestamp": datetime.now(timezone.utc).isoformat()}))
+                except Exception:
+                    break
                 continue
             if len(str(message or "")) > WS_MAX_INBOUND_CHARS:
                 await websocket.close(code=4409)
                 break
     except WebSocketDisconnect:
-        _remove_connection(connection)
+        pass
     except Exception:
+        pass
+    finally:
         _remove_connection(connection)
 
 
@@ -3328,12 +3371,10 @@ async def _dashboard_broadcast_loop() -> None:
                             "error": str(exc),
                             "generated_at": datetime.now(timezone.utc).isoformat(),
                         }
-                    serialized = json.dumps(payload)
-                    payload_cache[scope_key] = (
-                        json.dumps(payload, sort_keys=True, separators=(",", ":")),
-                        payload,
-                        serialized,
-                    )
+                    # Use a single compact serialization for both the digest and the wire message.
+                    # Using separate serializations caused false-positive "changed" detections.
+                    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+                    payload_cache[scope_key] = (serialized, payload, serialized)
                 digest, _payload, serialized = payload_cache[scope_key]
                 if connection.get("last_dashboard_digest") == digest:
                     continue
@@ -3353,10 +3394,13 @@ async def _dashboard_broadcast_loop() -> None:
         dashboard_broadcast_task = None
 
 async def broadcast(data: dict):
-    dead=[]
+    dead: list[dict[str, Any]] = []
     serialized = json.dumps(data)
     for connection in list(active_connections):
         ws = connection.get("websocket")
+        if ws is None:
+            dead.append(connection)
+            continue
         try:
             await asyncio.wait_for(ws.send_text(serialized), timeout=WS_SEND_TIMEOUT_SECONDS)
         except Exception:

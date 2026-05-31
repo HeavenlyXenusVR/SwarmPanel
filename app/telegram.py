@@ -62,7 +62,7 @@ class TelegramPollingService:
         self.commands = list(commands or [])
         self.poll_timeout_seconds = max(5, int(poll_timeout_seconds or 25))
         self._task: asyncio.Task[Any] | None = None
-        self._closing = asyncio.Event()
+        self._closing: asyncio.Event | None = None  # created lazily inside the running event loop
         self._offset: int | None = None
         self.status = TelegramServiceStatus(
             enabled=bool(self.token),
@@ -76,6 +76,8 @@ class TelegramPollingService:
     async def start(self) -> None:
         if not self.token or (self._task and not self._task.done()):
             return
+        # Create the event in the running loop so it's always bound to the correct loop
+        self._closing = asyncio.Event()
         try:
             info = await self._api("getMe", timeout=12)
             bot = info.get("result") or {}
@@ -91,11 +93,11 @@ class TelegramPollingService:
         except Exception as exc:
             self.status.last_error = str(exc)[:240]
             logger.warning("%s Telegram bridge could not verify token yet: %s", self.name, exc)
-        self._closing.clear()
         self._task = asyncio.create_task(self._poll_loop(), name=f"{self.name}-telegram")
 
     async def close(self) -> None:
-        self._closing.set()
+        if self._closing is not None:
+            self._closing.set()
         if self._task and not self._task.done():
             self._task.cancel()
             try:
@@ -132,7 +134,7 @@ class TelegramPollingService:
 
     async def _poll_loop(self) -> None:
         self.status.running = True
-        while not self._closing.is_set():
+        while self._closing is None or not self._closing.is_set():
             try:
                 params: dict[str, Any] = {"timeout": self.poll_timeout_seconds, "allowed_updates": json.dumps(["message"])}
                 if self._offset is not None:

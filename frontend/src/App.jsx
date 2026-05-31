@@ -258,8 +258,10 @@ function App() {
     canGallery,
   }), [canGallery, isAdmin, isOwner, loadPreferences, loadSession, loginWith, logout, preferences, session, showToast, switchAdminMode, token]);
 
+  const notifyPos = preferences?.notification_position || "br";
+  const notifyClass = notifyPos === "br" ? "" : `panel-notify-${notifyPos}`;
   return (
-    <div className={panelClassName(preferences)} style={panelStyle(preferences)}>
+    <div className={`${panelClassName(preferences)} ${notifyClass}`.trim()} style={panelStyle(preferences)}>
       <Shell ctx={ctx}>
         <RouteViewport ctx={ctx} pathname={location.pathname} />
       </Shell>
@@ -271,7 +273,7 @@ function App() {
           tip={BOOT_TIPS[bootTipIndex]}
         />
       ) : null}
-      {toast ? <div className={`toast toast-${toast.tone}`}>{toast.message}</div> : null}
+      {toast ? <div role="status" aria-live="polite" aria-atomic="true" className={`toast toast-${toast.tone}`}>{toast.message}</div> : null}
     </div>
   );
 }
@@ -340,7 +342,7 @@ class RouteErrorBoundary extends React.Component {
   }
 
   componentDidUpdate(prevProps) {
-    if (prevProps.children !== this.props.children && this.state.error) {
+    if (prevProps.pathname !== this.props.pathname && this.state.error) {
       this.setState({ error: null });
     }
   }
@@ -360,11 +362,12 @@ class RouteErrorBoundary extends React.Component {
 }
 
 function Protected({ ctx, children, admin = false, gallery = false }) {
+  const location = useLocation();
   if (ctx.session.loading) return <Page title="Loading" eyebrow="Session"><SkeletonGrid count={4} /></Page>;
   if (!ctx.session.authenticated) return <Navigate to="/login" replace />;
   if (admin && !ctx.isAdmin) return <Denied message="Admin mode is required." />;
   if (gallery && !ctx.canGallery) return <Denied message="Image Gallery owner access is required." />;
-  return <RouteErrorBoundary>{children}</RouteErrorBoundary>;
+  return <RouteErrorBoundary pathname={location.pathname}>{children}</RouteErrorBoundary>;
 }
 
 export default App;

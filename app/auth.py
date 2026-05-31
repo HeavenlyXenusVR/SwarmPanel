@@ -117,4 +117,8 @@ def require_api_auth(
 
 
 def verify_credentials(username: str, password: str, expected_username: str, expected_password: str) -> bool:
+    # Reject login when the expected password is empty — this prevents accidentally
+    # authenticating anyone if the admin password env var is missing or blank.
+    if not expected_password:
+        return False
     return hmac.compare_digest(username, expected_username) and hmac.compare_digest(password, expected_password)

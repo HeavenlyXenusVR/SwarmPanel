@@ -552,8 +552,8 @@ class PanelDatabase:
                 return await self._run_with_timeout(cur.fetchone())
 
     async def _execute(self, query: str, params: tuple[Any, ...] = ()) -> int:
-        await self._ensure_connected()
-        async with self.pool.acquire() as conn:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await self._run_with_timeout(cur.execute(query, params))
                 return cur.rowcount
@@ -568,9 +568,10 @@ class PanelDatabase:
         for column_name, definition in GUILD_SETTINGS_COLUMNS:
             try:
                 safe_column = _validate_identifier(column_name, "column name")
+                # definition contains only known safe literals from GUILD_SETTINGS_COLUMNS
                 await asyncio.wait_for(cur.execute(
                     f"ALTER TABLE `{schema}`.`{prefix}_guild_settings` "
-                    f"ADD COLUMN {safe_column} {definition}"
+                    f"ADD COLUMN `{safe_column}` {definition}"
                 ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
             except Exception:
                 pass
@@ -706,6 +707,8 @@ class PanelDatabase:
     ) -> dict[str, Any]:
         username = _normalize_account_username(username)
         gid = _coerce_int(guild_id, "guild_id")
+        if gid <= 0:
+            raise ValueError("Guild ID must be a positive integer.")
         normalized_password = _normalize_account_password(password)
         password_hash = _account_password_hash(normalized_password)
         email = _normalize_email(email)
@@ -713,8 +716,8 @@ class PanelDatabase:
         webhook_channel_id = str(verification_webhook_channel_id or "").strip() or None
         webhook_name = str(verification_webhook_name or "").strip()[:120] or None
         code_hash = _verification_token_hash(webhook_verification_code) if webhook_url and webhook_verification_code else None
-        await self._ensure_connected()
-        async with self.pool.acquire() as conn:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await asyncio.wait_for(conn.begin(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                 try:
@@ -1321,8 +1324,8 @@ class PanelDatabase:
         if unknown:
             raise ValueError(f"Unsupported account fields: {', '.join(sorted(unknown))}")
 
-        await self._ensure_connected()
-        async with self.pool.acquire() as conn:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await asyncio.wait_for(conn.begin(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                 try:
@@ -1424,8 +1427,8 @@ class PanelDatabase:
 
     async def delete_account_admin(self, account_id: int) -> None:
         safe_account_id = _coerce_int(account_id, "account_id")
-        await self._ensure_connected()
-        async with self.pool.acquire() as conn:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await asyncio.wait_for(conn.begin(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
                 try:
@@ -1551,11 +1554,15 @@ class PanelDatabase:
         safe_limit = max(1, min(50, int(limit or 24)))
         like = f"%{normalized_query}%"
         viewer_id = int(viewer_account_id or 0)
-        guild_clause = "AND guild_id = %s" if guild_id and str(guild_id).strip() else ""
+        # guild_id filter: parameterize the value; use a compile-time flag to toggle the clause
+        # rather than string-interpolating the clause itself.
+        guild_filter_enabled = bool(guild_id and str(guild_id).strip())
+        safe_guild_id = _coerce_int(guild_id, "guild_id") if guild_filter_enabled else None
         params: list[Any] = [viewer_id, normalized_query, like, like, like, like]
-        if guild_clause:
-            params.append(str(guild_id).strip())
+        if guild_filter_enabled:
+            params.append(safe_guild_id)
         params.append(safe_limit)
+        guild_clause = "AND guild_id = %s" if guild_filter_enabled else ""
         rows = await self._fetchall(
             f"""
             SELECT id, username, guild_id, email, email_verified_at,
@@ -1754,7 +1761,11 @@ class PanelDatabase:
         return {"status": "pending_out", "request": self._serialize_social_row(row or {})}
 
     async def list_account_friend_requests(self, account_id: int, mode: str = "incoming") -> list[dict[str, Any]]:
-        own_col, other_col = ("requester_account_id", "addressee_account_id") if mode == "outgoing" else ("addressee_account_id", "requester_account_id")
+        # Both column names are literals from this codebase — never from user input.
+        if mode == "outgoing":
+            own_col, other_col = "requester_account_id", "addressee_account_id"
+        else:
+            own_col, other_col = "addressee_account_id", "requester_account_id"
         rows = await self._fetchall(
             f"""
             SELECT fr.*, u.id AS user_id, u.username, u.guild_id, u.display_name, u.avatar_url, u.server_name, u.server_icon_url, u.public_profile, u.last_seen_at
@@ -1772,16 +1783,18 @@ class PanelDatabase:
         status = {"accept": "accepted", "decline": "declined", "cancel": "cancelled"}.get(str(action or "").lower())
         if not status:
             raise ValueError("Action must be accept, decline, or cancel.")
+        safe_request_id = _coerce_int(request_id, "request_id")
+        safe_account_id = _coerce_int(account_id, "account_id")
         if action == "cancel":
             where = "id=%s AND requester_account_id=%s AND status='pending'"
         else:
             where = "id=%s AND addressee_account_id=%s AND status='pending'"
-        row = await self._fetchone(f"SELECT * FROM `{ACCOUNT_LOGIN_SCHEMA}`.`account_friend_requests` WHERE {where}", (request_id, account_id))
+        row = await self._fetchone(f"SELECT * FROM `{ACCOUNT_LOGIN_SCHEMA}`.`account_friend_requests` WHERE {where}", (safe_request_id, safe_account_id))
         if not row:
             return None
         await self._execute(
             f"UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`account_friend_requests` SET status=%s, responded_at=CURRENT_TIMESTAMP WHERE id=%s",
-            (status, request_id),
+            (status, safe_request_id),
         )
         row["status"] = status
         return self._serialize_social_row(row)
@@ -1814,21 +1827,31 @@ class PanelDatabase:
             raise ValueError("Message must be 2000 characters or fewer.")
         if not await self.get_account_by_id(recipient_account_id):
             raise ValueError("Account not found.")
-        await self._execute(
-            f"INSERT INTO `{ACCOUNT_LOGIN_SCHEMA}`.`account_messages` (sender_account_id, recipient_account_id, body) VALUES (%s, %s, %s)",
-            (sender_account_id, recipient_account_id, cleaned),
-        )
-        message = await self._fetchone(
-            f"""
-            SELECT msg.*, u.username, u.guild_id, u.display_name, u.avatar_url, u.server_name, u.server_icon_url, u.public_profile, u.last_seen_at
-            FROM `{ACCOUNT_LOGIN_SCHEMA}`.`account_messages` msg
-            JOIN `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}` u ON u.id=msg.sender_account_id
-            WHERE msg.sender_account_id=%s AND msg.recipient_account_id=%s AND msg.body=%s
-            ORDER BY msg.id DESC
-            LIMIT 1
-            """,
-            (sender_account_id, recipient_account_id, cleaned),
-        )
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await asyncio.wait_for(
+                    cur.execute(
+                        f"INSERT INTO `{ACCOUNT_LOGIN_SCHEMA}`.`account_messages` (sender_account_id, recipient_account_id, body) VALUES (%s, %s, %s)",
+                        (sender_account_id, recipient_account_id, cleaned),
+                    ),
+                    timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS,
+                )
+                last_id = cur.lastrowid
+                await asyncio.wait_for(
+                    cur.execute(
+                        f"""
+                        SELECT msg.*, u.username, u.guild_id, u.display_name, u.avatar_url, u.server_name, u.server_icon_url, u.public_profile, u.last_seen_at
+                        FROM `{ACCOUNT_LOGIN_SCHEMA}`.`account_messages` msg
+                        JOIN `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}` u ON u.id=msg.sender_account_id
+                        WHERE msg.id=%s
+                        LIMIT 1
+                        """,
+                        (last_id,),
+                    ),
+                    timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS,
+                )
+                message = await asyncio.wait_for(cur.fetchone(), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
         return self._serialize_social_row(message or {})
 
     async def list_account_message_threads(self, account_id: int) -> list[dict[str, Any]]:
@@ -2946,7 +2969,12 @@ class PanelDatabase:
 
     async def get_stability_snapshot(self) -> dict[str, Any]:
         """Return Aria recovery/degraded-mode status plus bot metric freshness."""
-        snapshot: dict[str, Any] = {"cooldowns": [], "recent_repairs": [], "metrics": await self.get_metrics_snapshot(), "status": "ok"}
+        metrics_result: dict[str, Any] = {}
+        try:
+            metrics_result = await self.get_metrics_snapshot()
+        except Exception as exc:
+            logger.warning("get_stability_snapshot: metrics unavailable: %s", exc)
+        snapshot: dict[str, Any] = {"cooldowns": [], "recent_repairs": [], "metrics": metrics_result, "status": "ok"}
         try:
             pool = await self._get_pool()
             async with pool.acquire() as conn:
@@ -2983,7 +3011,7 @@ class PanelDatabase:
         now = time.monotonic()
         if self._dashboard_cache and self._dashboard_cache[0] > now:
             return copy.deepcopy(self._dashboard_cache[1])
-        await self._ensure_connected()
+        await self._get_pool()  # ensures pool is initialized before spawning concurrent snapshots
         snapshot_limit = min(PANEL_DASHBOARD_SNAPSHOT_CONCURRENCY, max(1, PANEL_DB_POOL_MAX_SIZE))
         semaphore = asyncio.Semaphore(snapshot_limit)
 
@@ -3030,7 +3058,8 @@ class PanelDatabase:
         aria_heartbeat_age = None
         aria_heartbeat_status = "n/a"
         try:
-            async with self.pool.acquire() as conn:
+            pool = await self._get_pool()
+            async with pool.acquire() as conn:
                 async with conn.cursor(aiomysql.DictCursor) as cur:
                     await cur.execute("SELECT status, TIMESTAMPDIFF(SECOND, last_pulse, NOW()) as age FROM `discord_aria`.`swarm_health` WHERE bot_name = 'aria'")
                     row = await cur.fetchone()
@@ -3133,7 +3162,7 @@ class PanelDatabase:
 
     async def get_metrics_snapshot(self) -> dict[str, Any]:
         """Aggregate bot-written voice persistence and runtime metrics for the panel."""
-        await self._ensure_connected()
+        pool = await self._get_pool()
 
         bots: list[dict[str, Any]] = []
         totals = {
@@ -3149,7 +3178,7 @@ class PanelDatabase:
             "stale_metrics": 0,
         }
 
-        async with self.pool.acquire() as conn:
+        async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 for bot in MUSIC_BOTS:
                     schema = bot.db_schema
@@ -3251,11 +3280,11 @@ class PanelDatabase:
 
 
     async def get_recent_aria_medic_events(self, limit: int = 25) -> list[dict[str, Any]]:
-        await self._ensure_connected()
+        pool = await self._get_pool()
 
         bounded_limit = max(1, min(int(limit), 50))
         events: list[dict[str, Any]] = []
-        async with self.pool.acquire() as conn:
+        async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 try:
                     await cur.execute(
@@ -3305,11 +3334,11 @@ class PanelDatabase:
 
 
     async def get_recent_bot_error_events(self, limit: int = 50) -> list[dict[str, Any]]:
-        await self._ensure_connected()
+        pool = await self._get_pool()
 
         per_bot_limit = max(3, min(25, int(limit // max(len(MUSIC_BOTS), 1)) + 2))
         events: list[dict[str, Any]] = []
-        async with self.pool.acquire() as conn:
+        async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 for bot in MUSIC_BOTS:
                     schema = bot.db_schema
@@ -3359,8 +3388,8 @@ class PanelDatabase:
         table = _validate_identifier(table, "table")
         if schema in SYSTEM_SCHEMAS:
             raise ValueError(f"Refusing operation on system schema: {schema}")
-        await self._ensure_connected()
-        async with self.pool.acquire() as conn:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute("SET FOREIGN_KEY_CHECKS = 0")
                 try:
@@ -3373,9 +3402,9 @@ class PanelDatabase:
         schema = _validate_identifier(schema, "schema")
         if schema in SYSTEM_SCHEMAS:
             raise ValueError(f"Refusing operation on system schema: {schema}")
-        await self._ensure_connected()
+        pool = await self._get_pool()
         tables = await self.list_tables(schema)
-        async with self.pool.acquire() as conn:
+        async with pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute("SET FOREIGN_KEY_CHECKS = 0")
                 try:
@@ -3402,9 +3431,9 @@ class PanelDatabase:
         if cached:
             self._table_data_cache.pop(cache_key, None)
 
-        await self._ensure_connected()
+        pool = await self._get_pool()
 
-        async with self.pool.acquire() as conn:
+        async with pool.acquire() as conn:
             # Use DictCursor so the frontend gets column names alongside the values
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute(f"SELECT * FROM `{schema}`.`{table}` LIMIT %s", (safe_limit,))
@@ -3454,8 +3483,8 @@ class PanelDatabase:
             return copy.deepcopy(cached[1])
         if cached:
             self._image_gallery_admin_cache.pop(safe_limit, None)
-        await self._ensure_connected()
-        async with self.pool.acquire() as conn:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 summary: dict[str, Any] = {"schema": schema}
                 for key, table in (
@@ -3847,8 +3876,8 @@ class PanelDatabase:
 
         result: dict[str, Any] = {"action": action, "command": action}
 
-        await self._ensure_connected()
-        async with self.pool.acquire() as conn:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
             # Explicit DictCursor fixes Shuffle crashes, explicit commit fixes silent rollbacks
             async with conn.cursor(aiomysql.DictCursor) as cur:
                 await cur.execute("START TRANSACTION")

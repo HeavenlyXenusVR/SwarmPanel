@@ -52,6 +52,7 @@ export default function ControlsPage({ ctx }) {
   });
   const [busy, setBusy] = useState(false);
 
+  const showToast = ctx.showToast;
   const loadBase = useCallback(async ({ background = false, force = false } = {}) => {
     if (!background) setCatalog((current) => ({ ...current, loading: true }));
     try {
@@ -68,11 +69,11 @@ export default function ControlsPage({ ctx }) {
         guild_id: current.guild_id || dash.sessions?.[0]?.guild_id || "",
       }));
     } catch (error) {
-      if (!background) ctx.showToast(error.message, "error");
+      if (!background) showToast(error.message, "error");
     } finally {
       if (!background) setCatalog((current) => ({ ...current, loading: false }));
     }
-  }, [ctx]);
+  }, [showToast]);
 
   useEffect(() => {
     loadBase();

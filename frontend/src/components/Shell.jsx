@@ -97,7 +97,7 @@ export function Shell({ ctx, children }) {
                 <span className="profile-link-badge">{username.slice(0, 1).toUpperCase()}</span>
                 <span>{username}</span>
               </Link>
-              <button className="icon-button" type="button" onClick={ctx.logout} title="Logout"><LogOut size={18} /></button>
+              <button className="icon-button" type="button" aria-label="Logout" onClick={ctx.logout} title="Logout"><LogOut size={18} /></button>
             </>
           ) : location.pathname !== "/login" ? (
             <Link className="button-link primary" to="/login"><LogIn size={16} />Login</Link>

@@ -19,20 +19,30 @@ def _send_email_sync(settings: Settings, to_email: str, subject: str, body: str)
         logger.warning("SMTP is not configured; could not send email to %s", to_email)
         return False
 
+    if not to_email or "@" not in to_email:
+        logger.warning("SMTP: refusing to send to invalid recipient address")
+        return False
+
     message = EmailMessage()
     message["From"] = settings.smtp_from_email
     message["To"] = to_email
-    message["Subject"] = subject
+    message["Subject"] = subject[:998]  # RFC 5321 max subject line
     message.set_content(body)
 
     try:
         with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as smtp:
             if settings.smtp_use_tls:
                 smtp.starttls(context=ssl.create_default_context())
-            if settings.smtp_username:
+            if settings.smtp_username and settings.smtp_password:
                 smtp.login(settings.smtp_username, settings.smtp_password)
             smtp.send_message(message)
         return True
+    except smtplib.SMTPRecipientsRefused as exc:
+        logger.warning("SMTP rejected recipient %s: %s", to_email, exc)
+        return False
+    except smtplib.SMTPAuthenticationError as exc:
+        logger.error("SMTP authentication failed: %s", exc)
+        return False
     except Exception:
         logger.exception("Could not send email to %s", to_email)
         return False

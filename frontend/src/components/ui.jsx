@@ -66,7 +66,7 @@ export function SkeletonGrid({ count = 6 }) {
   return (
     <div>
       <div className="loading-tip">{tips[count % tips.length]}</div>
-      <div className="skeleton-grid">{Array.from({ length: count }, (_, index) => <div className="skeleton-card" key={index} />)}</div>
+      <div className="skeleton-grid">{Array.from({ length: count }, (_, index) => <div className="skeleton-card" key={`skel-${index}`} />)}</div>
     </div>
   );
 }
@@ -84,7 +84,7 @@ export function SectionLoadingScreen({
         <p>{tip}</p>
       </div>
       <div className={`section-loading-grid ${compact ? "compact" : ""}`}>
-        {Array.from({ length: count }, (_, index) => <div className="section-loading-card" key={index} />)}
+        {Array.from({ length: count }, (_, index) => <div className="section-loading-card" key={`load-${index}`} />)}
       </div>
     </div>
   );
@@ -115,5 +115,19 @@ export function LoadingSection({
 }
 
 export function Segmented({ value, onChange, options }) {
-  return <div className="segmented">{options.map(([key, label]) => <button className={value === key ? "active" : ""} type="button" onClick={() => onChange(key)} key={key}>{label}</button>)}</div>;
+  return (
+    <div className="segmented" role="group">
+      {options.map(([key, label]) => (
+        <button
+          className={value === key ? "active" : ""}
+          type="button"
+          aria-pressed={value === key}
+          onClick={() => onChange(key)}
+          key={key}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
 }

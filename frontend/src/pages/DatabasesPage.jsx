@@ -23,6 +23,7 @@ export default function DatabasesPage({ ctx }) {
   const [rows, setRows] = useState([]);
   const [loadingRows, setLoadingRows] = useState(false);
   const [error, setError] = useState("");
+  const showToast = ctx.showToast;
   const load = useCallback(async ({ includeRows = false, selected = null, force = false } = {}) => {
     try {
       const data = await apiFetch("/api/databases?include_tables=true", { force });
@@ -37,9 +38,9 @@ export default function DatabasesPage({ ctx }) {
       setError("");
     } catch (error) {
       setError(error.message);
-      ctx.showToast(error.message, "error");
+      showToast(error.message, "error");
     }
-  }, [ctx]);
+  }, [showToast]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
     const tables = schemas.find((schema) => schema.schema === selection.schema)?.tables || [];
@@ -58,7 +59,7 @@ export default function DatabasesPage({ ctx }) {
     } catch (error) {
       setRows([]);
       setError(error.message);
-      ctx.showToast(error.message, "error");
+      showToast(error.message, "error");
     } finally {
       setLoadingRows(false);
     }
