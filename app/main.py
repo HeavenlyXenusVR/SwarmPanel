@@ -3430,7 +3430,7 @@ recent_feed_events: deque[dict[str, str]] = deque(maxlen=100)
 dashboard_broadcast_task: asyncio.Task[Any] | None = None
 WS_SEND_TIMEOUT_SECONDS = max(2.0, float(os.getenv("SWARM_WS_SEND_TIMEOUT_SECONDS", "6") or "6"))
 WS_DASHBOARD_BUILD_TIMEOUT_SECONDS = max(5.0, float(os.getenv("SWARM_WS_DASHBOARD_BUILD_TIMEOUT_SECONDS", "25") or "25"))
-WS_RECEIVE_TIMEOUT_SECONDS = max(20.0, float(os.getenv("SWARM_WS_RECEIVE_TIMEOUT_SECONDS", "90") or "90"))
+WS_RECEIVE_TIMEOUT_SECONDS = max(20.0, float(os.getenv("SWARM_WS_RECEIVE_TIMEOUT_SECONDS", "45") or "45"))
 WS_MAX_INBOUND_CHARS = max(16, int(os.getenv("SWARM_WS_MAX_INBOUND_CHARS", "512") or "512"))
 
 def _remove_connection(connection: dict[str, Any]) -> None:
@@ -3495,6 +3495,8 @@ async def websocket_endpoint(websocket: WebSocket):
             try:
                 message = await asyncio.wait_for(websocket.receive_text(), timeout=WS_RECEIVE_TIMEOUT_SECONDS)
             except asyncio.TimeoutError:
+                # No message received within the window — send a ping to keep the
+                # Cloudflare/proxy tunnel alive (idle timeout is ~100 s; we ping at 45 s).
                 try:
                     await websocket.send_text(json.dumps({"type": "ping", "timestamp": datetime.now(timezone.utc).isoformat()}))
                 except Exception:
@@ -3503,6 +3505,14 @@ async def websocket_endpoint(websocket: WebSocket):
             if len(str(message or "")) > WS_MAX_INBOUND_CHARS:
                 await websocket.close(code=4409)
                 break
+            # Handle pong replies from the client — no action needed, receipt resets
+            # the receive timeout so the connection stays classified as alive.
+            try:
+                msg = json.loads(message)
+                if msg.get("type") == "pong":
+                    continue
+            except (json.JSONDecodeError, Exception):
+                pass
     except WebSocketDisconnect:
         pass
     except Exception:

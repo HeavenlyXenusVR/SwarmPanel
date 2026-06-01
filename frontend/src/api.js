@@ -226,7 +226,13 @@ function currentApiOrigin() {
 }
 
 function isRemoteStaticHost() {
-  return Boolean(window.SWARM_PANEL_REMOTE_MODE) || window.location.hostname.endsWith("github.io");
+  if (Boolean(window.SWARM_PANEL_REMOTE_MODE) || window.location.hostname.endsWith("github.io")) return true;
+  // Auto-detect tunnel/remote access: if the page is served from a non-local hostname
+  // that is NOT the panel's own FastAPI backend (i.e. a Cloudflare/Pinggy/ngrok tunnel),
+  // treat it as remote-static mode so live-config.json discovery and retry logic activate.
+  const hostname = window.location.hostname;
+  const isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || /^192\.168\.|^10\.|^172\.(1[6-9]|2\d|3[01])\./.test(hostname);
+  return !isLocal;
 }
 
 function remoteConfigUrl() {
@@ -383,7 +389,12 @@ async function fetchWithRemoteRetry(path, options, headers) {
 function shouldRefreshOriginBeforeRequest(options) {
   if (!isRemoteStaticHost()) return false;
   const method = String(options.method || "GET").toUpperCase();
-  return method !== "GET" && method !== "HEAD";
+  // Always refresh before mutating requests.
+  if (method !== "GET" && method !== "HEAD") return true;
+  // Also refresh before GET/HEAD if the cached origin has passed its TTL — this
+  // catches the case where the tunnel URL rotated while the user was idle and
+  // the first action after idle is a read (e.g., opening a page or polling).
+  return remoteOriginRefreshAfter <= Date.now();
 }
 
 async function fetchWithTimeout(url, options = {}) {

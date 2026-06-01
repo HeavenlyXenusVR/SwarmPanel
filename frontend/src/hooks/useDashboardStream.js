@@ -46,6 +46,14 @@ export function useDashboardStream({ enabled = true, onSnapshot, onError } = {})
     const handleMessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
+        if (payload?.type === "ping") {
+          // Reply to server keepalive pings so the connection stays alive through
+          // Cloudflare/proxy tunnels that close idle connections after ~100 s.
+          if (socket && socket.readyState === window.WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: "pong" }));
+          }
+          return;
+        }
         if (payload?.type === "dashboard_snapshot" && payload.data) {
           retryIndex = 0;
           snapshotRef.current?.(payload.data);
