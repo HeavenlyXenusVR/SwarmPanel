@@ -3147,9 +3147,11 @@ async def databases(request: Request, include_tables: bool = False):
     if not include_tables:
         return {"schemas": schemas}
 
-    output: list[dict[str, Any]] = []
-    for schema in schemas:
-        output.append({"schema": schema, "tables": await db.list_tables(schema)})
+    tables_results = await asyncio.gather(*[db.list_tables(schema) for schema in schemas], return_exceptions=True)
+    output = [
+        {"schema": schema, "tables": tables if not isinstance(tables, BaseException) else []}
+        for schema, tables in zip(schemas, tables_results)
+    ]
     return {"schemas": output}
 
 

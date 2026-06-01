@@ -3211,28 +3211,14 @@ class PanelDatabase:
         """Aggregate bot-written voice persistence and runtime metrics for the panel."""
         pool = await self._get_pool()
 
-        bots: list[dict[str, Any]] = []
-        totals = {
-            "bots": 0,
-            "guilds": 0,
-            "voice_connected": 0,
-            "playing": 0,
-            "paused": 0,
-            "queued_tracks": 0,
-            "backup_tracks": 0,
-            "recovering": 0,
-            "lavalink_ready": 0,
-            "stale_metrics": 0,
-        }
-
-        async with pool.acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cur:
-                for bot in MUSIC_BOTS:
-                    schema = bot.db_schema
-                    prefix = bot.table_prefix
-                    bot_metrics: list[dict[str, Any]] = []
-                    error: str | None = None
-                    try:
+        async def _fetch_bot_metrics(bot: BotDefinition) -> dict[str, Any]:
+            schema = bot.db_schema
+            prefix = bot.table_prefix
+            bot_metrics: list[dict[str, Any]] = []
+            error: str | None = None
+            try:
+                async with pool.acquire() as conn:
+                    async with conn.cursor(aiomysql.DictCursor) as cur:
                         await cur.execute(
                             f"""
                             SELECT
@@ -3267,57 +3253,88 @@ class PanelDatabase:
                             (bot.key,),
                         )
                         rows = list(await cur.fetchall() or [])
-                        for row in rows:
-                            age = int(row.get("metrics_age_seconds") or 0)
-                            stale = age > 45
-                            item = {
-                                "guild_id": str(row.get("guild_id")),
-                                "voice_connected": bool(row.get("voice_connected")),
-                                "connected_channel_id": str(row.get("connected_channel_id") or row.get("voice_state_connected_channel_id") or ""),
-                                "last_channel_id": str(row.get("last_channel_id") or ""),
-                                "desired_connected": bool(row.get("desired_connected")),
-                                "player_connected": bool(row.get("player_connected")),
-                                "player_playing": bool(row.get("player_playing")),
-                                "player_paused": bool(row.get("player_paused")),
-                                "queue_count": int(row.get("queue_count") or 0),
-                                "backup_queue_count": int(row.get("backup_queue_count") or 0),
-                                "is_playing_db": bool(row.get("is_playing_db")),
-                                "is_paused_db": bool(row.get("is_paused_db")),
-                                "position_seconds": int(row.get("position_seconds") or 0),
-                                "recovery_pending": bool(row.get("recovery_pending")),
-                                "lavalink_ready": bool(row.get("lavalink_ready")),
-                                "reconnect_attempts": int(row.get("reconnect_attempts") or 0),
-                                "metrics_age_seconds": age,
-                                "voice_age_seconds": int(row.get("voice_age_seconds") or 0),
-                                "stale": stale,
-                                "last_error": row.get("last_error") or row.get("voice_last_error"),
-                            }
-                            bot_metrics.append(item)
-                            totals["guilds"] += 1
-                            totals["voice_connected"] += int(item["voice_connected"])
-                            totals["playing"] += int(item["player_playing"])
-                            totals["paused"] += int(item["player_paused"])
-                            totals["queued_tracks"] += item["queue_count"]
-                            totals["backup_tracks"] += item["backup_queue_count"]
-                            totals["recovering"] += int(item["recovery_pending"])
-                            totals["lavalink_ready"] += int(item["lavalink_ready"])
-                            totals["stale_metrics"] += int(stale)
-                    except Exception as exc:
-                        msg = str(exc)
-                        if "doesn't exist" in msg or "1146" in msg:
-                            error = None
-                        else:
-                            error = msg
+                for row in rows:
+                    age = int(row.get("metrics_age_seconds") or 0)
+                    stale = age > 45
+                    item = {
+                        "guild_id": str(row.get("guild_id")),
+                        "voice_connected": bool(row.get("voice_connected")),
+                        "connected_channel_id": str(row.get("connected_channel_id") or row.get("voice_state_connected_channel_id") or ""),
+                        "last_channel_id": str(row.get("last_channel_id") or ""),
+                        "desired_connected": bool(row.get("desired_connected")),
+                        "player_connected": bool(row.get("player_connected")),
+                        "player_playing": bool(row.get("player_playing")),
+                        "player_paused": bool(row.get("player_paused")),
+                        "queue_count": int(row.get("queue_count") or 0),
+                        "backup_queue_count": int(row.get("backup_queue_count") or 0),
+                        "is_playing_db": bool(row.get("is_playing_db")),
+                        "is_paused_db": bool(row.get("is_paused_db")),
+                        "position_seconds": int(row.get("position_seconds") or 0),
+                        "recovery_pending": bool(row.get("recovery_pending")),
+                        "lavalink_ready": bool(row.get("lavalink_ready")),
+                        "reconnect_attempts": int(row.get("reconnect_attempts") or 0),
+                        "metrics_age_seconds": age,
+                        "voice_age_seconds": int(row.get("voice_age_seconds") or 0),
+                        "stale": stale,
+                        "last_error": row.get("last_error") or row.get("voice_last_error"),
+                    }
+                    bot_metrics.append(item)
+            except Exception as exc:
+                msg = str(exc)
+                if "doesn't exist" in msg or "1146" in msg:
+                    error = None
+                else:
+                    error = msg
 
-                    totals["bots"] += 1
-                    bots.append({
-                        "key": bot.key,
-                        "display_name": bot.display_name,
-                        "schema": schema,
-                        "metrics": bot_metrics,
-                        "error": error,
-                        "status": "error" if error else ("stale" if any(m["stale"] for m in bot_metrics) else "ok"),
-                    })
+            return {
+                "key": bot.key,
+                "display_name": bot.display_name,
+                "schema": schema,
+                "metrics": bot_metrics,
+                "error": error,
+                "status": "error" if error else ("stale" if any(m["stale"] for m in bot_metrics) else "ok"),
+            }
+
+        bot_results = await asyncio.gather(*(_fetch_bot_metrics(bot) for bot in MUSIC_BOTS), return_exceptions=True)
+
+        bots: list[dict[str, Any]] = []
+        totals = {
+            "bots": 0,
+            "guilds": 0,
+            "voice_connected": 0,
+            "playing": 0,
+            "paused": 0,
+            "queued_tracks": 0,
+            "backup_tracks": 0,
+            "recovering": 0,
+            "lavalink_ready": 0,
+            "stale_metrics": 0,
+        }
+
+        for i, result in enumerate(bot_results):
+            if isinstance(result, BaseException):
+                bot = MUSIC_BOTS[i]
+                bots.append({
+                    "key": bot.key,
+                    "display_name": bot.display_name,
+                    "schema": bot.db_schema,
+                    "metrics": [],
+                    "error": str(result),
+                    "status": "error",
+                })
+            else:
+                bots.append(result)
+                for item in result["metrics"]:
+                    totals["guilds"] += 1
+                    totals["voice_connected"] += int(item["voice_connected"])
+                    totals["playing"] += int(item["player_playing"])
+                    totals["paused"] += int(item["player_paused"])
+                    totals["queued_tracks"] += item["queue_count"]
+                    totals["backup_tracks"] += item["backup_queue_count"]
+                    totals["recovering"] += int(item["recovery_pending"])
+                    totals["lavalink_ready"] += int(item["lavalink_ready"])
+                    totals["stale_metrics"] += int(item["stale"])
+            totals["bots"] += 1
 
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
