@@ -3,12 +3,15 @@ const USER_KEY = "swarm_panel_remote_username";
 const CACHE_TTL = 12_000;
 const CACHE_STALE_TTL = 10_000;
 const CACHE_VERSION = "v5";
-const API_FETCH_TIMEOUT_MS = 30_000;
+const API_FETCH_TIMEOUT_MS = 12_000;
 const CACHE_STORE_PREFIX = "swarm_panel_api_cache:";
 const MAX_STORED_CACHE_BYTES = 450_000;
 const REMOTE_ORIGIN_KEY = "swarm_panel_remote_origin";
 const REMOTE_ORIGIN_TTL = 20_000;
 const REMOTE_ORIGIN_STALE_TTL = 3 * 60_000;
+// Delays between automatic grace-period retries on transient failures.
+// Two retries for network errors (tunnel blip / brief restart); one for timeouts.
+const TRANSIENT_RETRY_DELAYS_MS = [1_500, 2_500];
 
 const cache = new Map();
 const inFlightFetches = new Map();
@@ -372,6 +375,39 @@ async function fetchWithRemoteRetry(path, options, headers) {
     return response;
   } catch (error) {
     if (error?.isAbort && !error?.retriable) throw error;
+
+    // Grace-period retry loop — keeps the UI clean during brief tunnel rotations
+    // or backend restarts that resolve within a few seconds.  Two automatic retries
+    // for network-unreachable failures (each preceded by a short sleep + tunnel URL
+    // refresh), and one retry for timeouts (with a capped timeout so we don't
+    // double the wait on a genuinely slow backend).
+    if (canRetryWithFreshRemote(options)) {
+      const isNetwork = error?.code === "NETWORK";
+      const isTimeout = error?.code === "TIMEOUT";
+      const delays = isNetwork ? TRANSIENT_RETRY_DELAYS_MS : isTimeout ? [TRANSIENT_RETRY_DELAYS_MS[0]] : [];
+      if (delays.length) {
+        let lastGraceError;
+        for (const delayMs of delays) {
+          await sleep(delayMs);
+          await refreshRemoteOrigin();
+          const graceTarget = await resolveApiUrl(path);
+          const graceTimeoutMs = isTimeout
+            ? Math.min(Number(options.timeoutMs) || API_FETCH_TIMEOUT_MS, 8_000)
+            : (options.timeoutMs || API_FETCH_TIMEOUT_MS);
+          try {
+            return await fetchWithTimeout(graceTarget, { ...options, headers, timeoutMs: graceTimeoutMs });
+          } catch (graceError) {
+            if (graceError?.isAbort && !graceError?.retriable) throw graceError;
+            lastGraceError = graceError;
+            // If a retry itself timed out, stop looping — more waiting won't help.
+            if (graceError?.code === "TIMEOUT") break;
+          }
+        }
+        throw lastGraceError || error;
+      }
+    }
+
+    // Non-transient failure or non-retryable body: legacy single-retry path.
     if (error?.retriable && isNetworkFailure(error)) {
       await sleep(350);
     }
@@ -410,7 +446,7 @@ async function fetchWithTimeout(url, options = {}) {
     return await fetch(url, { ...options, signal: merged.signal });
   } catch (error) {
     if (timedOut) {
-      throw requestError("SwarmPanel request timed out while waiting for the live backend.", {
+      throw requestError("The backend is taking longer than expected. It may be restarting — please try again in a moment.", {
         code: "TIMEOUT",
         status: 408,
         retriable: true,
@@ -426,7 +462,7 @@ async function fetchWithTimeout(url, options = {}) {
       });
     }
     if (isNetworkFailure(error)) {
-      throw requestError("SwarmPanel could not reach the live backend. Refresh the panel or restart the live backend/tunnel if this keeps happening.", {
+      throw requestError("SwarmPanel lost contact with the live backend. The tunnel may be briefly restarting — it will reconnect automatically.", {
         code: "NETWORK",
         status: 503,
         retriable: true,

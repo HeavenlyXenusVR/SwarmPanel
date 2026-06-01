@@ -76,8 +76,16 @@ function App() {
         setToken(data.token);
       }
       setSession({ ...data, loading: false });
-    } catch (_error) {
-      setSession({ authenticated: false, loading: false });
+    } catch (error) {
+      // Only clear authentication on an explicit auth rejection (401/403).
+      // Transient network failures, tunnel rotations, and backend restarts must NOT
+      // log the user out — their session is still valid, the backend is just briefly
+      // unreachable.  Keep the current session state and just unblock any loading spinner.
+      if (error?.status === 401 || error?.status === 403) {
+        setSession({ authenticated: false, loading: false });
+      } else {
+        setSession((prev) => (prev.loading ? { ...prev, loading: false } : prev));
+      }
     }
   }, []);
 
