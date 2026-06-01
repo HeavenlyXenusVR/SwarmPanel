@@ -467,8 +467,8 @@ def _normalize_origin(value: str | None) -> str:
 def _allowed_browser_origins() -> set[str]:
     origins = {
         _normalize_origin(settings.pages_public_url),
-        "http://127.0.0.1:8000",
-        "http://localhost:8000",
+        "http://127.0.0.1:8002",
+        "http://localhost:8002",
         "http://127.0.0.1:8788",
         "http://localhost:8788",
     }
