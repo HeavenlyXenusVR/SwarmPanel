@@ -344,9 +344,10 @@ function BotSeekBar({ session, botKey }) {
       setSeekPos(null);
       const targetSeconds = Math.round(fraction * duration);
       try {
-        await apiFetch(`/api/bots/${botKey}/control`, {
+        await apiFetch("/api/bots/control", {
           method: "POST",
           body: JSON.stringify({
+            bot_key: botKey,
             action: "SEEK",
             guild_id: session.guild_id,
             payload: { position_seconds: targetSeconds },

@@ -4251,6 +4251,37 @@ class PanelDatabase:
                         result["voice_channel_id"] = voice_channel_id
                         result["message"] = f"Set home channel for {bot.display_name} in guild {gid}."
 
+                    elif action == "SEEK":
+                        if not isinstance(payload, dict):
+                            raise ValueError("SEEK payload must be an object with position_seconds")
+                        position_seconds = max(0, _coerce_int(payload.get("position_seconds"), "position_seconds"))
+                        await cur.execute(
+                            f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_swarm_direct_orders` ("
+                            "id INT AUTO_INCREMENT PRIMARY KEY, "
+                            "bot_name VARCHAR(50), guild_id BIGINT, vc_id BIGINT, text_channel_id BIGINT, "
+                            "command VARCHAR(50), data TEXT, attempts INT NOT NULL DEFAULT 0, last_error TEXT NULL, "
+                            "claimed_at TIMESTAMP NULL, claim_token VARCHAR(128) NULL, "
+                            "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+                        )
+                        # Replace any pending SEEK for this bot/guild so rapid scrubbing
+                        # doesn't accumulate a queue of stale positions.
+                        await cur.execute(
+                            f"DELETE FROM `{schema}`.`{prefix}_swarm_direct_orders` "
+                            "WHERE guild_id = %s AND bot_name = %s AND command = 'SEEK'",
+                            (gid, bot_key),
+                        )
+                        await cur.execute(
+                            f"INSERT INTO `{schema}`.`{prefix}_swarm_direct_orders` "
+                            "(bot_name, guild_id, vc_id, text_channel_id, command, data) "
+                            "VALUES (%s, %s, %s, %s, %s, %s)",
+                            (bot_key, gid, 0, 0, "SEEK", str(position_seconds)),
+                        )
+                        result["position_seconds"] = position_seconds
+                        result["message"] = (
+                            f"Seek order queued for {bot.display_name} in guild {gid} "
+                            f"at position {position_seconds}s."
+                        )
+
                     else:
                         raise ValueError(f"Unsupported action: {action}")
             
