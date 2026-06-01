@@ -1409,6 +1409,8 @@ async def _build_dashboard_payload(auth: dict[str, Any], *, enrich_discord: bool
             bot["known_guild_count"] = 1
             bot["guild_count"] = 1
             bot["active_playing_count"] = sum(1 for session in sessions if session.get("is_playing"))
+            bot["queue_depth"] = sum(int(s.get("queue_count") or 0) for s in sessions)
+            bot["backup_queue_depth"] = sum(int(s.get("backup_queue_count") or 0) for s in sessions)
             scoped_bots.append(bot)
         data["bots"] = scoped_bots
 
