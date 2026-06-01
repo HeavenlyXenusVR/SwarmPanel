@@ -38,6 +38,10 @@ fi
 LOG_DIR="${ROOT_DIR}/.runtime"
 UVICORN_LOG="${LOG_DIR}/uvicorn.log"
 TUNNEL_LOG="${LOG_DIR}/cloudflared.log"
+TUNNEL_PROVIDER="${PANEL_TUNNEL_PROVIDER:-auto}"
+# Set PANEL_NGROK_DOMAIN to your free static ngrok subdomain to get a stable URL.
+# Claim one at https://dashboard.ngrok.com/domains (free, one per account).
+NGROK_STATIC_DOMAIN="${PANEL_NGROK_DOMAIN:-${NGROK_STATIC_DOMAIN:-}}"
 PID_FILE="${LOG_DIR}/live_backend.pid"
 INSTANCE_LOCK_FILE="${LOG_DIR}/live-manager.lock"
 AUTO_PUSH_CONFIG="${PANEL_AUTO_PUSH_CONFIG:-1}"
@@ -195,6 +199,72 @@ install_python_deps() {
   "${PYTHON_BIN}" -m pip install -r "${ROOT_DIR}/requirements.txt"
 }
 
+ngrok_bin() {
+  # Prefer the user-local install we put in ~/.local/bin, then PATH, then .bin/
+  for candidate in "${HOME}/.local/bin/ngrok" "${BIN_DIR}/ngrok"; do
+    if [[ -x "${candidate}" ]]; then echo "${candidate}"; return; fi
+  done
+  if command -v ngrok >/dev/null 2>&1; then command -v ngrok; return; fi
+  echo "" # not found
+}
+
+start_ngrok_tunnel() {
+  local bin
+  bin="$(ngrok_bin)"
+  if [[ -z "${bin}" ]]; then
+    echo "ngrok binary not found; skipping ngrok tunnel." >&2
+    return 1
+  fi
+  local ngrok_log="${LOG_DIR}/ngrok.log"
+  : > "${ngrok_log}"
+
+  if [[ -n "${NGROK_STATIC_DOMAIN}" ]]; then
+    echo "Opening ngrok tunnel on static domain ${NGROK_STATIC_DOMAIN}..."
+    "${bin}" http "--domain=${NGROK_STATIC_DOMAIN}" --log=stdout --log-format=json "${PORT}" >"${ngrok_log}" 2>&1 &
+  else
+    echo "Opening ngrok tunnel (random URL — set PANEL_NGROK_DOMAIN for a stable URL)..."
+    "${bin}" http --log=stdout --log-format=json "${PORT}" >"${ngrok_log}" 2>&1 &
+  fi
+  TUNNEL_PID="$!"
+
+  local panel_url=""
+  for _ in {1..80}; do
+    if ! kill -0 "${TUNNEL_PID}" >/dev/null 2>&1; then
+      echo "ngrok exited early. Last log lines:" >&2; tail -40 "${ngrok_log}" >&2 || true; return 1
+    fi
+    panel_url="$(python3 -c "
+import sys, json
+for line in open('${ngrok_log}'):
+    try:
+        d=json.loads(line)
+        u=d.get('url','')
+        if u.startswith('https://'): print(u); break
+    except: pass
+" 2>/dev/null || true)"
+    if [[ -n "${panel_url}" ]]; then
+      echo "Waiting for ${panel_url} to answer through ngrok..."
+      for _ in {1..40}; do
+        if curl -fsS --max-time 10 "${panel_url}/api/session" >/dev/null 2>&1; then break; fi
+        if ! kill -0 "${TUNNEL_PID}" >/dev/null 2>&1; then break; fi
+        sleep 1
+      done
+      if curl -fsS --max-time 10 "${panel_url}/api/session" >/dev/null 2>&1; then
+        TUNNEL_LOG="${ngrok_log}"
+        write_config "${panel_url}"
+        flush_local_dns_cache
+        PUBLISHED_PANEL_URL="${panel_url}"
+        publish_config
+        echo; echo "Live backend URL: ${panel_url}"; echo "GitHub Pages front-end: ${PAGES_URL}"; echo
+        echo "Keep this script running while you want the live site connected."
+        wait "${TUNNEL_PID}"; exit $?
+      fi
+      echo "ngrok URL never became reachable." >&2; tail -40 "${ngrok_log}" >&2 || true; return 1
+    fi
+    sleep 0.5
+  done
+  echo "Timed out waiting for ngrok URL." >&2; tail -40 "${ngrok_log}" >&2 || true; return 1
+}
+
 cloudflared_bin() {
   if command -v cloudflared >/dev/null 2>&1; then
     command -v cloudflared
@@ -273,52 +343,53 @@ for _ in {1..40}; do
   sleep 0.5
 done
 
-echo "Opening Cloudflare quick tunnel..."
-"${CLOUDFLARED}" tunnel --no-autoupdate --protocol http2 --url "http://127.0.0.1:${PORT}" >"${TUNNEL_LOG}" 2>&1 &
-TUNNEL_PID="$!"
+# ── Tunnel provider dispatch ──────────────────────────────────────────────────
+# Priority (auto mode): ngrok with static domain → Cloudflare quick tunnel
+# Set PANEL_TUNNEL_PROVIDER=ngrok|cloudflare to force a specific provider.
 
-PANEL_URL=""
-for _ in {1..80}; do
-  if ! kill -0 "${TUNNEL_PID}" >/dev/null 2>&1; then
-    echo "Tunnel exited early. Last log lines:" >&2
-    tail -80 "${TUNNEL_LOG}" >&2 || true
-    exit 1
-  fi
-  PANEL_URL="$(grep -Eo 'https://[-a-zA-Z0-9.]+trycloudflare\.com' "${TUNNEL_LOG}" | tail -1 || true)"
-  if [[ -n "${PANEL_URL}" ]]; then
-    echo "Waiting for ${PANEL_URL} to answer through Cloudflare..."
-    for _ in {1..40}; do
-      if curl -fsS --max-time 10 "${PANEL_URL}/api/session" >/dev/null 2>&1; then
-        break
-      fi
-      if ! kill -0 "${TUNNEL_PID}" >/dev/null 2>&1; then
-        echo "Tunnel exited before it became reachable. Last log lines:" >&2
-        tail -80 "${TUNNEL_LOG}" >&2 || true
-        exit 1
-      fi
-      sleep 1
-    done
-    if ! curl -fsS --max-time 10 "${PANEL_URL}/api/session" >/dev/null 2>&1; then
-      echo "Tunnel URL was created but never became reachable. Last log lines:" >&2
+if [[ "${TUNNEL_PROVIDER}" == "ngrok" ]] || \
+   [[ "${TUNNEL_PROVIDER}" == "auto" && -n "${NGROK_STATIC_DOMAIN}" ]]; then
+  start_ngrok_tunnel && exit 0 || true
+fi
+
+if [[ "${TUNNEL_PROVIDER}" == "cloudflare" || "${TUNNEL_PROVIDER}" == "auto" ]]; then
+  echo "Opening Cloudflare quick tunnel..."
+  "${CLOUDFLARED}" tunnel --no-autoupdate --protocol http2 --url "http://127.0.0.1:${PORT}" >"${TUNNEL_LOG}" 2>&1 &
+  TUNNEL_PID="$!"
+
+  PANEL_URL=""
+  for _ in {1..80}; do
+    if ! kill -0 "${TUNNEL_PID}" >/dev/null 2>&1; then
+      echo "Tunnel exited early. Last log lines:" >&2
       tail -80 "${TUNNEL_LOG}" >&2 || true
-      exit 1
+      break
     fi
-write_config "${PANEL_URL}"
-    flush_local_dns_cache
-    PUBLISHED_PANEL_URL="${PANEL_URL}"
-    publish_config
-    echo
-    echo "Live backend URL: ${PANEL_URL}"
-    echo "Updated ${CONFIG_FILE}"
-    echo "GitHub Pages front-end: ${PAGES_URL}"
-    echo
-    echo "Keep this script running while you want the live site connected."
-    wait "${TUNNEL_PID}"
-    exit $?
-  fi
-  sleep 0.5
-done
+    PANEL_URL="$(grep -Eo 'https://[-a-zA-Z0-9.]+trycloudflare\.com' "${TUNNEL_LOG}" | tail -1 || true)"
+    if [[ -n "${PANEL_URL}" ]]; then
+      echo "Waiting for ${PANEL_URL} to answer through Cloudflare..."
+      for _ in {1..40}; do
+        if curl -fsS --max-time 10 "${PANEL_URL}/api/session" >/dev/null 2>&1; then break; fi
+        if ! kill -0 "${TUNNEL_PID}" >/dev/null 2>&1; then break; fi
+        sleep 1
+      done
+      if curl -fsS --max-time 10 "${PANEL_URL}/api/session" >/dev/null 2>&1; then
+        write_config "${PANEL_URL}"
+        flush_local_dns_cache
+        PUBLISHED_PANEL_URL="${PANEL_URL}"
+        publish_config
+        echo; echo "Live backend URL: ${PANEL_URL}"; echo "Updated ${CONFIG_FILE}"
+        echo "GitHub Pages front-end: ${PAGES_URL}"; echo
+        echo "Keep this script running while you want the live site connected."
+        wait "${TUNNEL_PID}"; exit $?
+      fi
+      echo "Cloudflare URL was created but never became reachable. Last log lines:" >&2
+      tail -80 "${TUNNEL_LOG}" >&2 || true
+      break
+    fi
+    sleep 0.5
+  done
+  echo "Cloudflare quick tunnel did not become usable." >&2
+fi
 
-echo "Timed out waiting for Cloudflare tunnel URL. Last log lines:" >&2
-tail -80 "${TUNNEL_LOG}" >&2 || true
+echo "No tunnel could be established." >&2
 exit 1
