@@ -27,7 +27,13 @@ CONFIG_PUSH_COOLDOWN_SECONDS="${PANEL_CONFIG_PUSH_COOLDOWN_SECONDS:-120}"
 LAST_PUSH_FILE="${LOG_DIR}/last-live-config-push"
 PUSH_OFFLINE_CONFIG="${PANEL_PUSH_OFFLINE_CONFIG:-0}"
 ALLOW_FALLBACK_BACKEND="${PANEL_SERVICE_START_BACKEND_IF_MISSING:-0}"
-TUNNEL_PROVIDER="${PANEL_TUNNEL_PROVIDER:-cloudflare}"
+TUNNEL_PROVIDER="${PANEL_TUNNEL_PROVIDER:-$(read_env_value PANEL_TUNNEL_PROVIDER)}"
+TUNNEL_PROVIDER="${TUNNEL_PROVIDER:-auto}"
+NGROK_STATIC_DOMAIN="${PANEL_NGROK_DOMAIN:-$(read_env_value PANEL_NGROK_DOMAIN)}"
+NGROK_CONFIG_FILE="${PANEL_NGROK_CONFIG:-$(read_env_value PANEL_NGROK_CONFIG)}"
+if [[ -n "${NGROK_CONFIG_FILE}" && ! "${NGROK_CONFIG_FILE}" = /* ]]; then
+  NGROK_CONFIG_FILE="${ROOT_DIR}/${NGROK_CONFIG_FILE}"
+fi
 PAGES_ORIGIN="${PANEL_PAGES_ORIGIN:-$(read_env_value PANEL_PAGES_ORIGIN)}"
 PAGES_URL="${PANEL_PAGES_PUBLIC_URL:-$(read_env_value PANEL_PAGES_PUBLIC_URL)}"
 if [[ -z "${PAGES_URL}" ]]; then
@@ -285,6 +291,70 @@ install_python_deps() {
 
   "${VENV_DIR}/bin/python" -m pip install --upgrade pip
   "${VENV_DIR}/bin/python" -m pip install -r "${ROOT_DIR}/requirements.txt"
+}
+
+
+ngrok_bin() {
+  for candidate in "${HOME}/.local/bin/ngrok" "${BIN_DIR}/ngrok"; do
+    if [[ -x "${candidate}" ]]; then echo "${candidate}"; return; fi
+  done
+  if command -v ngrok >/dev/null 2>&1; then command -v ngrok; return; fi
+  echo ""
+}
+
+start_ngrok_tunnel() {
+  local bin health_path="$1"
+  bin="$(ngrok_bin)"
+  if [[ -z "${bin}" ]]; then
+    echo "ngrok binary not found; falling through to Cloudflare." >&2; return 1
+  fi
+  local cfg_flag=()
+  if [[ -n "${NGROK_CONFIG_FILE}" && -f "${NGROK_CONFIG_FILE}" ]]; then
+    cfg_flag=("--config=${NGROK_CONFIG_FILE}")
+  fi
+  local ngrok_log="${LOG_DIR}/ngrok.log"
+  : > "${ngrok_log}"
+  if [[ -n "${NGROK_STATIC_DOMAIN}" ]]; then
+    echo "Opening ngrok tunnel on static domain ${NGROK_STATIC_DOMAIN}..."
+    "${bin}" http "${cfg_flag[@]}" "--domain=${NGROK_STATIC_DOMAIN}" --log=stdout --log-format=json "${PORT}" >"${ngrok_log}" 2>&1 &
+  else
+    echo "Opening ngrok tunnel (random URL — set NGROK_DOMAIN for a stable URL)..."
+    "${bin}" http "${cfg_flag[@]}" --log=stdout --log-format=json "${PORT}" >"${ngrok_log}" 2>&1 &
+  fi
+  TUNNEL_PID="$!"
+  local tunnel_url=""
+  for _ in {1..80}; do
+    if ! kill -0 "${TUNNEL_PID}" >/dev/null 2>&1; then
+      echo "ngrok exited early. Last log:" >&2; tail -20 "${ngrok_log}" >&2 || true; return 1
+    fi
+    tunnel_url="$(python3 -c "
+import json
+for line in open('${ngrok_log}'):
+    try:
+        d=json.loads(line)
+        if d.get('url','').startswith('https://'): print(d['url']); break
+    except: pass
+" 2>/dev/null || true)"
+    if [[ -n "${tunnel_url}" ]]; then
+      echo "Waiting for ${tunnel_url} to answer..."
+      for ((r=1; r<=60; r++)); do
+        if curl -fsS --max-time 8 "${tunnel_url}${health_path}" >/dev/null 2>&1; then break; fi
+        if ! kill -0 "${TUNNEL_PID}" >/dev/null 2>&1; then break; fi
+        sleep 1
+      done
+      if ! curl -fsS --max-time 8 "${tunnel_url}${health_path}" >/dev/null 2>&1; then
+        echo "ngrok URL never became reachable." >&2; tail -20 "${ngrok_log}" >&2 || true; return 1
+      fi
+      announce_live_url "${tunnel_url}"
+      echo "ngrok tunnel is live. Waiting (systemd will restart on exit)..."
+      wait "${TUNNEL_PID}"
+      local rc=$?
+      TUNNEL_PID=""
+      return ${rc}
+    fi
+    sleep 0.5
+  done
+  echo "Timed out waiting for ngrok URL." >&2; tail -20 "${ngrok_log}" >&2 || true; return 1
 }
 
 cloudflared_bin() {
@@ -577,6 +647,13 @@ if ! backend_ready; then
   echo "Start Docker or run scripts/start_live_backend.sh ${PORT}." >&2
   publish_offline_config
   exit 1
+fi
+
+# ── ngrok: static domain, no reconnect loop needed (systemd restarts on exit) ──
+if [[ "${TUNNEL_PROVIDER}" == "ngrok" ]] || \
+   [[ "${TUNNEL_PROVIDER}" == "auto" && -n "${NGROK_STATIC_DOMAIN}" ]]; then
+  start_ngrok_tunnel "/api/session" && exit 0 || true
+  echo "ngrok tunnel failed; falling through to Cloudflare." >&2
 fi
 
 if [[ "${TUNNEL_PROVIDER}" == "cloudflare" || "${TUNNEL_PROVIDER}" == "auto" ]]; then

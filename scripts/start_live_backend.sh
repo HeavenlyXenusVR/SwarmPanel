@@ -104,23 +104,51 @@ flush_local_dns_cache() {
   fi
 }
 
+local_urls_json() {
+  PORT="${PORT}" python3 <<'PY'
+import json, os, socket
+port = os.environ["PORT"]
+urls = [f"http://127.0.0.1:{port}", f"http://localhost:{port}"]
+try:
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp.connect(("1.1.1.1", 80)); urls.append(f"http://{udp.getsockname()[0]}:{port}"); udp.close()
+except Exception: pass
+seen = set(); deduped = []
+for u in urls:
+    if u not in seen: seen.add(u); deduped.append(u)
+print(json.dumps(deduped))
+PY
+}
+
 write_config() {
   local panel_url="$1"
-  cat > "${CONFIG_FILE}" <<EOF
+  local local_urls
+  local_urls="$(local_urls_json)"
+  tmp="${CONFIG_FILE}.tmp.$$"
+  cat > "${tmp}" <<EOF
 {
   "panel_url": "${panel_url}",
+  "status": "live",
+  "local_urls": ${local_urls},
   "updated_at": "$(date -Is)"
 }
 EOF
+  python3 -m json.tool "${tmp}" >/dev/null && mv "${tmp}" "${CONFIG_FILE}" || rm -f "${tmp}"
 }
 
 write_offline_config() {
-  cat > "${CONFIG_FILE}" <<EOF
+  local local_urls
+  local_urls="$(local_urls_json)"
+  tmp="${CONFIG_FILE}.tmp.$$"
+  cat > "${tmp}" <<EOF
 {
   "panel_url": "",
+  "status": "offline",
+  "local_urls": ${local_urls},
   "updated_at": "$(date -Is)"
 }
 EOF
+  python3 -m json.tool "${tmp}" >/dev/null && mv "${tmp}" "${CONFIG_FILE}" || rm -f "${tmp}"
 }
 
 
