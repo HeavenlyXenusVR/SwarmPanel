@@ -87,7 +87,7 @@ action_logger = logging.getLogger("swarm_panel.actions")
 background_tasks: list[asyncio.Task[Any]] = []
 VOICE_CHANNEL_TYPES = {2, 13}
 TEXT_CHANNEL_TYPES = {0, 5}
-VALID_ACTIONS = {"PAUSE", "RESUME", "SKIP", "STOP", "CLEAR", "SHUFFLE", "LOOP", "PLAY", "RESTART", "FILTER", "LEAVE", "SET_HOME", "RECOVER", "SMART_RECOMMEND"}
+VALID_ACTIONS = {"PAUSE", "RESUME", "SKIP", "STOP", "CLEAR", "SHUFFLE", "LOOP", "PLAY", "RESTART", "FILTER", "LEAVE", "SET_HOME", "RECOVER", "SMART_RECOMMEND", "SEEK"}
 CONTROL_PAYLOAD_KEYS = {
     "source_url",
     "query",
@@ -100,6 +100,7 @@ CONTROL_PAYLOAD_KEYS = {
     "force",
     "vc_id",
     "webhook_url",
+    "position_seconds",
 }
 REQUEST_ID_RE = re.compile(r"[^A-Za-z0-9_.:-]+")
 PERSONAL_API_PREFIXES = (

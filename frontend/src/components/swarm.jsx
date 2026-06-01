@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Heart, MessageCircle, Music2, PlugZap, UserPlus } from "lucide-react";
 import { apiFetch, clearCache } from "../api.js";
@@ -281,6 +281,7 @@ export function BotCard({ bot }) {
         </div>
       </div>
       {session ? <PlaybackCounter session={session} /> : null}
+      {session ? <BotSeekBar session={session} botKey={bot.key} /> : null}
       <div className="chip-row">
         <span>{bot.active_playing_count || sessions.filter((session) => session.is_playing).length} live</span>
         <span>{bot.known_guild_count || bot.guild_count || 0} guilds</span>
@@ -288,6 +289,106 @@ export function BotCard({ bot }) {
         <span>{bot.backup_queue_depth || sessions.reduce((sum, session) => sum + Number(session.backup_queue_count || 0), 0)} backup</span>
       </div>
     </article>
+  );
+}
+
+function BotSeekBar({ session, botKey }) {
+  const [seeking, setSeeking] = useState(false);
+  const [seekPos, setSeekPos] = useState(null);  // null = not seeking, 0-1 = fraction
+  const barRef = useRef(null);
+
+  const duration = Math.max(0, Number(session?.duration_seconds) || 0);
+  if (!duration) return null;
+
+  const isPlaying = Boolean(session?.is_playing || session?.session_state === "playing");
+  const positionSeconds = Math.max(0, Math.min(Number(session?.position_seconds) || 0, duration));
+  // Live-advancing position while playing
+  const [liveMs, setLiveMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!isPlaying || seeking) return undefined;
+    const t = setInterval(() => setLiveMs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [isPlaying, seeking]);
+
+  const observedAt = session?.position_observed_at || session?.updated_at;
+  const observedAtMs = observedAt ? (Date.parse(observedAt) || 0) : 0;
+  const livePosition = isPlaying && observedAtMs > 0
+    ? Math.min(positionSeconds + Math.floor((liveMs - observedAtMs) / 1000), duration)
+    : positionSeconds;
+
+  const displayFraction = seeking && seekPos !== null ? seekPos : (duration > 0 ? livePosition / duration : 0);
+
+  function getFraction(event) {
+    const bar = barRef.current;
+    if (!bar) return 0;
+    const rect = bar.getBoundingClientRect();
+    return Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+  }
+
+  function onMouseDown(event) {
+    event.preventDefault();
+    setSeeking(true);
+    setSeekPos(getFraction(event));
+  }
+  function onMouseMove(event) {
+    if (!seeking) return;
+    setSeekPos(getFraction(event));
+  }
+
+  useEffect(() => {
+    if (!seeking) return;
+    function onMove(e) { setSeekPos(getFraction(e)); }
+    async function onUp(e) {
+      const fraction = getFraction(e);
+      setSeeking(false);
+      setSeekPos(null);
+      const targetSeconds = Math.round(fraction * duration);
+      try {
+        await apiFetch(`/api/bots/${botKey}/control`, {
+          method: "POST",
+          body: JSON.stringify({
+            action: "SEEK",
+            guild_id: session.guild_id,
+            payload: { position_seconds: targetSeconds },
+          }),
+        });
+      } catch (_err) {
+        // Seek failed silently — position display will self-correct on next poll
+      }
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+  }, [seeking, botKey, session?.guild_id, duration]);
+
+  const pct = Math.round(displayFraction * 100);
+  const currentSecs = Math.round(displayFraction * duration);
+
+  return (
+    <div className="bot-seek-bar" title={seeking ? `Seek to ${formatDurationSeconds(currentSecs)}` : `Position: ${formatDurationSeconds(currentSecs)} / ${formatDurationSeconds(duration)}`}>
+      <div
+        ref={barRef}
+        className={`bot-seek-track${seeking ? " bot-seek-seeking" : ""}`}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        role="slider"
+        aria-label="Seek track position"
+        aria-valuemin={0}
+        aria-valuemax={duration}
+        aria-valuenow={currentSecs}
+        tabIndex={0}
+      >
+        <div className="bot-seek-fill" style={{ width: `${pct}%` }} />
+        <div className="bot-seek-thumb" style={{ left: `${pct}%` }} />
+      </div>
+      <div className="bot-seek-times">
+        <span>{formatDurationSeconds(currentSecs)}</span>
+        <span>{formatDurationSeconds(duration)}</span>
+      </div>
+    </div>
   );
 }
 
