@@ -134,6 +134,7 @@ class TelegramPollingService:
 
     async def _poll_loop(self) -> None:
         self.status.running = True
+        _conflict_logged_at: float = 0.0
         while self._closing is None or not self._closing.is_set():
             try:
                 params: dict[str, Any] = {"timeout": self.poll_timeout_seconds, "allowed_updates": json.dumps(["message"])}
@@ -145,12 +146,28 @@ class TelegramPollingService:
                     self._offset = max(self._offset or 0, update_id + 1)
                     await self._handle_update(update)
                 self.status.last_error = ""
+                _conflict_logged_at = 0.0
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self.status.last_error = str(exc)[:240]
-                logger.warning("%s Telegram polling error: %s", self.name, exc)
-                await asyncio.sleep(5)
+                error_text = str(exc)
+                self.status.last_error = error_text[:240]
+                # Conflict 409 means another instance is polling — reduce log noise
+                # by only logging once per 60 seconds instead of every 5 seconds.
+                is_conflict = "Conflict" in error_text or "terminated by other getUpdates" in error_text
+                if is_conflict:
+                    now = time.time()
+                    if now - _conflict_logged_at >= 60.0:
+                        logger.warning(
+                            "%s Telegram polling conflict: another instance is running. "
+                            "Stop the other SwarmPanel process to fix this.",
+                            self.name,
+                        )
+                        _conflict_logged_at = now
+                    await asyncio.sleep(10)
+                else:
+                    logger.warning("%s Telegram polling error: %s", self.name, exc)
+                    await asyncio.sleep(5)
         self.status.running = False
 
     async def _handle_update(self, update: dict[str, Any]) -> None:
@@ -234,6 +251,8 @@ class TelegramPollingService:
         return False
 
     def _learn_recipient(self, chat_id: int, username: str) -> None:
+        # Learn the numeric chat ID for username-based allowlist entries so that
+        # alert_chat_ids() can reach this user even after a restart.
         if not username or username not in self.allowed_usernames:
             return
         if chat_id in self._learned_chat_ids:
