@@ -9,6 +9,10 @@ const MAX_STORED_CACHE_BYTES = 450_000;
 const REMOTE_ORIGIN_KEY = "swarm_panel_remote_origin";
 const REMOTE_ORIGIN_TTL = 20_000;
 const REMOTE_ORIGIN_STALE_TTL = 3 * 60_000;
+// Minimum gap between forced origin refreshes triggered by failed requests.
+// Without this, N concurrent failures each spawn their own live-config.json
+// fetch and the console fills with duplicate GETs for the same file.
+const FORCE_REFRESH_MIN_INTERVAL_MS = 4_000;
 // Delays between automatic grace-period retries on transient failures.
 // Two retries for network errors (tunnel blip / brief restart); one for timeouts.
 const TRANSIENT_RETRY_DELAYS_MS = [1_500, 2_500];
@@ -16,6 +20,7 @@ const TRANSIENT_RETRY_DELAYS_MS = [1_500, 2_500];
 const cache = new Map();
 const inFlightFetches = new Map();
 let remoteOriginPromise = null;
+let _lastForceRefreshAt = 0;
 let remoteOriginRefreshAfter = 0;
 let remoteConfig = null;
 let inMemoryToken = "";
@@ -258,6 +263,18 @@ async function ensureRemoteOrigin() {
 
 async function refreshRemoteOrigin() {
   if (!isRemoteStaticHost()) return currentApiOrigin();
+  // Reuse any in-flight refresh — when N requests fail at the same time they
+  // all call refreshRemoteOrigin; without this they each spawn their own
+  // live-config.json GET and the console floods with duplicate fetches.
+  if (remoteOriginPromise) return remoteOriginPromise;
+  // Rate-limit forced refreshes.  If the tunnel URL is dead but live-config.json
+  // hasn't been updated yet, back-to-back failed retries would otherwise hammer
+  // the GitHub Pages CDN every few milliseconds for the same stale JSON.
+  const now = Date.now();
+  if (now - _lastForceRefreshAt < FORCE_REFRESH_MIN_INTERVAL_MS && currentApiOrigin()) {
+    return currentApiOrigin();
+  }
+  _lastForceRefreshAt = now;
   remoteOriginPromise = loadRemoteOrigin({ force: true }).finally(() => {
     remoteOriginPromise = null;
   });
@@ -272,7 +289,12 @@ let _pollTimer = null;
 export function startRemoteOriginPolling() {
   if (_pollTimer !== null || typeof window === "undefined" || !isRemoteStaticHost()) return;
   _pollTimer = window.setInterval(() => {
-    loadRemoteOrigin({ force: true }).catch(() => {});
+    // Only poll if no refresh is already in-flight to avoid double-fetching
+    // when the panel fires both a background poll and a request-triggered refresh.
+    if (!remoteOriginPromise) {
+      _lastForceRefreshAt = 0; // allow the poll to bypass the rate limit
+      loadRemoteOrigin({ force: true }).catch(() => {});
+    }
   }, 20_000);
 }
 
