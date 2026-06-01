@@ -1,6 +1,10 @@
 {
-  "panel_url": "https://wiley-ent-dis-trustee.trycloudflare.com",
+  "panel_url": "https://germinate-props-motive.ngrok-free.dev",
   "status": "live",
-  "local_urls": ["http://127.0.0.1:8002", "http://localhost:8002", "http://192.168.12.188:8002"],
-  "updated_at": "2026-06-01T15:04:23-05:00"
+  "local_urls": [
+    "http://127.0.0.1:8002",
+    "http://localhost:8002",
+    "http://192.168.12.188:8002"
+  ],
+  "updated_at": "2026-06-01T18:47:43-05:00"
 }
