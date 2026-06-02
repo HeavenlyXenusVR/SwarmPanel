@@ -303,7 +303,8 @@ ngrok_bin() {
 }
 
 start_ngrok_tunnel() {
-  local bin health_path="$1"
+  local health_path="$1"
+  local bin
   bin="$(ngrok_bin)"
   if [[ -z "${bin}" ]]; then
     echo "ngrok binary not found; falling through to Cloudflare." >&2; return 1
@@ -323,6 +324,7 @@ start_ngrok_tunnel() {
   fi
   TUNNEL_PID="$!"
   local tunnel_url=""
+  # Wait up to 40s for ngrok to log its tunnel URL
   for _ in {1..80}; do
     if ! kill -0 "${TUNNEL_PID}" >/dev/null 2>&1; then
       echo "ngrok exited early. Last log:" >&2; tail -20 "${ngrok_log}" >&2 || true; return 1
@@ -336,17 +338,23 @@ for line in open('${ngrok_log}'):
     except: pass
 " 2>/dev/null || true)"
     if [[ -n "${tunnel_url}" ]]; then
-      echo "Waiting for ${tunnel_url} to answer..."
-      for ((r=1; r<=60; r++)); do
-        if curl -fsS --max-time 8 "${tunnel_url}${health_path}" >/dev/null 2>&1; then break; fi
-        if ! kill -0 "${TUNNEL_PID}" >/dev/null 2>&1; then break; fi
+      # Announce immediately — static domain never changes, so publish before health check
+      announce_live_url "${tunnel_url}"
+      echo "ngrok tunnel is live at ${tunnel_url}. Waiting for health check (up to 120s)..."
+      for ((r=1; r<=120; r++)); do
+        if curl -fsS --max-time 8 "${tunnel_url}${health_path}" >/dev/null 2>&1; then
+          echo "ngrok health check passed."
+          break
+        fi
+        if ! kill -0 "${TUNNEL_PID}" >/dev/null 2>&1; then
+          echo "ngrok exited before health check passed." >&2
+          TUNNEL_PID=""
+          return 1
+        fi
         sleep 1
       done
-      if ! curl -fsS --max-time 8 "${tunnel_url}${health_path}" >/dev/null 2>&1; then
-        echo "ngrok URL never became reachable." >&2; tail -20 "${ngrok_log}" >&2 || true; return 1
-      fi
-      announce_live_url "${tunnel_url}"
-      echo "ngrok tunnel is live. Waiting (systemd will restart on exit)..."
+      # Keep the static tunnel running even if health check timed out — never fall through
+      echo "Holding ngrok tunnel open (systemd will restart on exit)..."
       wait "${TUNNEL_PID}"
       local rc=$?
       TUNNEL_PID=""
@@ -615,16 +623,20 @@ CLOUDFLARED="$(cloudflared_bin)"
 
 if backend_ready; then
   echo "SwarmPanel backend is already reachable on http://127.0.0.1:${PORT}"
-elif port_in_use; then
-  echo "Waiting for SwarmPanel backend on http://127.0.0.1:${PORT}"
-  for _ in {1..45}; do
+else
+  # Wait up to 5 minutes for the backend to appear.  On a fresh boot Docker
+  # containers take time to start even though they carry restart:always; the
+  # old "skip the long wait when port is not in use" shortcut caused the
+  # service to exit immediately and waste four 15-second restart cycles before
+  # Docker was ready.  When ALLOW_FALLBACK_BACKEND=0 (Docker mode) we must
+  # simply be patient.
+  echo "Waiting for SwarmPanel backend on http://127.0.0.1:${PORT} (up to 300s for Docker boot)"
+  for _ in {1..150}; do
     if backend_ready; then
       break
     fi
     sleep 2
   done
-else
-  echo "No backend is listening on port ${PORT}; skipping the long wait and starting fallback immediately."
 fi
 
 if ! backend_ready; then

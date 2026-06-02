@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Activity,
@@ -145,6 +145,10 @@ export default function AppearancePage({ ctx }) {
   const [draft, setDraft] = useState(() => ({ ...DEFAULT_PREFERENCES, ...(ctx.preferences || {}) }));
   const [previewMode, setPreviewMode] = useState("live");
   const [saving, setSaving] = useState(false);
+  // Tracks whether the user has made any manual edits since the last save/revert.
+  // Used to prevent a background useLiveRefresh preferences reload from clobbering
+  // unsaved draft changes while the user is mid-edit.
+  const draftDirtyRef = useRef(false);
   const savedPreferences = { ...DEFAULT_PREFERENCES, ...(ctx.preferences || {}) };
   const hasChanges = JSON.stringify(draft) !== JSON.stringify(savedPreferences);
   const previewCopy = previewModeCopy(previewMode, draft);
@@ -156,26 +160,34 @@ export default function AppearancePage({ ctx }) {
 
   const ctxPreferences = ctx.preferences;
   useEffect(() => {
+    // Skip resetting the draft when the user has unsaved edits in progress or a
+    // save is in flight — a 30-second background loadPreferences must not undo work.
+    if (draftDirtyRef.current || saving) return;
     setDraft({ ...DEFAULT_PREFERENCES, ...(ctxPreferences || {}) });
-  }, [ctxPreferences]);
+  }, [ctxPreferences, saving]);
 
   function update(key, value) {
+    draftDirtyRef.current = true;
     setDraft((current) => ({ ...current, [key]: value }));
   }
 
   function applyPatch(patch) {
+    draftDirtyRef.current = true;
     setDraft((current) => ({ ...current, ...patch }));
   }
 
   function revertDraft() {
+    draftDirtyRef.current = false;
     setDraft(savedPreferences);
   }
 
   function loadDefaults() {
+    draftDirtyRef.current = true;
     setDraft(DEFAULT_PREFERENCES);
   }
 
   function clearBackgroundImage() {
+    draftDirtyRef.current = true;
     setDraft((current) => ({
       ...current,
       background_image_url: "",
@@ -195,6 +207,7 @@ export default function AppearancePage({ ctx }) {
       const nextPreferences = { ...DEFAULT_PREFERENCES, ...(data.preferences || draft) };
       ctx.setPreferences(nextPreferences);
       setDraft(nextPreferences);
+      draftDirtyRef.current = false;
       clearCache("/api/users/preferences");
       ctx.showToast("Appearance saved.", "success");
     } catch (error) {
@@ -254,14 +267,14 @@ export default function AppearancePage({ ctx }) {
               <label className="field">
                 <span>Background Color</span>
                 <div className="appearance-color-row">
-                  <input className="appearance-color-swatch" type="color" value={clampHex(draft.background_color, "#0b0e18")} onChange={(event) => setDraft((current) => ({ ...current, background_color: event.target.value, background_mode: "custom_color" }))} />
-                  <input value={draft.background_color || "#0b0e18"} onChange={(event) => setDraft((current) => ({ ...current, background_color: event.target.value, background_mode: "custom_color" }))} placeholder="#0b0e18" />
+                  <input className="appearance-color-swatch" type="color" value={clampHex(draft.background_color, "#0b0e18")} onChange={(event) => { draftDirtyRef.current = true; setDraft((current) => ({ ...current, background_color: event.target.value, background_mode: "custom_color" })); }} />
+                  <input value={draft.background_color || "#0b0e18"} onChange={(event) => { draftDirtyRef.current = true; setDraft((current) => ({ ...current, background_color: event.target.value, background_mode: "custom_color" })); }} placeholder="#0b0e18" />
                 </div>
               </label>
               <label className="field">
                 <span>Background Image URL</span>
                 <div className="field-inline">
-                  <input value={draft.background_image_url || ""} onChange={(event) => setDraft((current) => ({ ...current, background_image_url: event.target.value, background_mode: event.target.value ? "custom_image" : current.background_mode }))} placeholder="https://..." />
+                  <input value={draft.background_image_url || ""} onChange={(event) => { draftDirtyRef.current = true; setDraft((current) => ({ ...current, background_image_url: event.target.value, background_mode: event.target.value ? "custom_image" : current.background_mode })); }} placeholder="https://..." />
                   <button className="field-inline-action" onClick={clearBackgroundImage} type="button">Clear</button>
                 </div>
               </label>
