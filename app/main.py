@@ -3528,6 +3528,12 @@ async def websocket_endpoint(websocket: WebSocket):
         _remove_connection(connection)
 
 
+def _json_default(obj: Any) -> Any:
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
 def _ensure_dashboard_broadcast_loop() -> None:
     global dashboard_broadcast_task
     if dashboard_broadcast_task and not dashboard_broadcast_task.done():
@@ -3561,7 +3567,7 @@ async def _dashboard_broadcast_loop() -> None:
                         }
                     # Use a single compact serialization for both the digest and the wire message.
                     # Using separate serializations caused false-positive "changed" detections.
-                    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+                    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=_json_default)
                     payload_cache[scope_key] = (serialized, payload, serialized)
                 digest, _payload, serialized = payload_cache[scope_key]
                 if connection.get("last_dashboard_digest") == digest:
@@ -3583,7 +3589,7 @@ async def _dashboard_broadcast_loop() -> None:
 
 async def broadcast(data: dict):
     dead: list[dict[str, Any]] = []
-    serialized = json.dumps(data)
+    serialized = json.dumps(data, default=_json_default)
     for connection in list(active_connections):
         ws = connection.get("websocket")
         if ws is None:
