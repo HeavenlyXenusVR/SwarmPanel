@@ -14,6 +14,7 @@ npm-debug.log*
 .aria_patch_backups/
 backups/*.sql
 # Secret/runtime-safe export hygiene
+.ngrok.yml
 .env.*
 !.env.example
 env.zip
