@@ -9,5 +9,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the panel's code
 COPY . .
 
-# Run the Uvicorn web server on port 8002
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8002"]
+# Run the Uvicorn web server on port 8003 (8002 is reserved for the ios-bridge)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8003"]
