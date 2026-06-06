@@ -1982,7 +1982,7 @@ app.add_middleware(
     SessionMiddleware,
     secret_key=settings.session_secret,
     max_age=60 * 60 * 12,
-    same_site="lax",
+    same_site="none",
     https_only=settings.session_https_only,
 )
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
