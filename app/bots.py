@@ -104,6 +104,7 @@ BOT_ACCENTS = {
     "sapphire": "#4fc3f7",
     "strife": "#ff6b6b",
     "lockhart": "#f9a8d4",
+    "glitch": "#00ff9f",
     "aria": "#cba6f7",
 }
 
@@ -126,6 +127,7 @@ MUSIC_BOTS = [
     BotDefinition("sapphire", "Sapphire", "music", "SAPPHIRE_DISCORD_TOKEN", _music_schema("sapphire", "discord_music_sapphire"), "sapphire"),
     BotDefinition("strife", "Strife", "music", "STRIFE_DISCORD_TOKEN", _music_schema("strife", "discord_music_strife"), "strife"),
     BotDefinition("lockhart", "Lockhart", "music", "LOCKHART_DISCORD_TOKEN", _music_schema("lockhart", "discord_music_lockhart"), "lockhart"),
+    BotDefinition("glitch", "Glitch", "music", "GLITCH_DISCORD_TOKEN", _music_schema("glitch", "discord_music_glitch"), "glitch"),
 ]
 
 ARIA_BOT = BotDefinition("aria", "Aria", "orchestrator", "ARIA_DISCORD_TOKEN")
