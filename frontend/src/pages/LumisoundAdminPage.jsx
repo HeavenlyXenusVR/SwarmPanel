@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Bug, ListMusic, Music, RefreshCw, Radio, Upload, Users } from "lucide-react";
+import { Activity, Bug, Clock, Disc3, ListMusic, Music, RefreshCw, Radio, Upload, Users } from "lucide-react";
 import { apiFetch } from "../api.js";
 import { useLiveRefresh } from "../hooks/useLiveRefresh.js";
 import { DataTable } from "../components/swarm.jsx";
@@ -11,6 +11,13 @@ function formatBytes(bytes) {
   const units = ["B", "KB", "MB", "GB"];
   const exponent = Math.min(units.length - 1, Math.floor(Math.log(value) / Math.log(1024)));
   return `${(value / 1024 ** exponent).toFixed(exponent ? 1 : 0)} ${units[exponent]}`;
+}
+
+function formatDuration(seconds) {
+  const value = Math.max(0, Math.floor(Number(seconds) || 0));
+  const mins = Math.floor(value / 60);
+  const secs = value % 60;
+  return `${mins}:${String(secs).padStart(2, "0")}`;
 }
 
 export default function LumisoundAdminPage({ ctx }) {
@@ -32,6 +39,11 @@ export default function LumisoundAdminPage({ ctx }) {
   const uploads = (data?.uploads || []).map((row) => ({ ...row, file_size: formatBytes(row.file_size_bytes) }));
   const bugReports = data?.bug_reports || [];
   const listenRooms = data?.listen_rooms || [];
+  const nowPlaying = (data?.now_playing || []).map((row) => ({
+    ...row,
+    progress: `${formatDuration(row.position_seconds)} / ${formatDuration(row.duration_seconds)}`,
+  }));
+  const recentPlays = data?.recent_plays || [];
 
   return (
     <Page
@@ -43,13 +55,24 @@ export default function LumisoundAdminPage({ ctx }) {
       <MetricGrid>
         <Metric icon={Users} label="Users" value={summary.users ?? users.length} />
         <Metric icon={Users} label="Active Users" value={summary.active_users ?? 0} />
+        <Metric icon={Disc3} label="Listening Now" value={summary.listening_now ?? nowPlaying.length} />
+        <Metric icon={Clock} label="Plays (24h)" value={summary.plays_24h ?? 0} />
         <Metric icon={Upload} label="Uploads" value={summary.uploads ?? uploads.length} />
+        <Metric icon={Activity} label="Upload Storage" value={formatBytes(summary.uploads_storage_bytes)} />
         <Metric icon={ListMusic} label="Playlists" value={summary.playlists ?? 0} />
         <Metric icon={Music} label="Plays Logged" value={summary.play_history ?? 0} />
         <Metric icon={Bug} label="Open Bug Reports" value={summary.bug_reports_open ?? bugReports.length} />
         <Metric icon={Radio} label="Active Listen Rooms" value={summary.listen_rooms_active ?? listenRooms.length} />
       </MetricGrid>
       <section className="dashboard-grid">
+        <div className="panel wide">
+          <SectionHead title="Listening Now" count={nowPlaying.length} />
+          <DataTable rows={nowPlaying} />
+        </div>
+        <div className="panel wide">
+          <SectionHead title="Recent Plays" count={recentPlays.length} />
+          <DataTable rows={recentPlays} />
+        </div>
         <div className="panel wide">
           <SectionHead title="Users" count={users.length} />
           <DataTable rows={users} />

@@ -342,6 +342,7 @@ class PanelDatabase:
         self._image_gallery_admin_cache: dict[int, tuple[float, dict[str, Any]]] = {}
         self._lumisound_admin_cache: dict[int, tuple[float, dict[str, Any]]] = {}
         self._music_intelligence_cache: dict[tuple[str | None, str | None, int], tuple[float, dict[str, Any]]] = {}
+        self._music_activity_cache: dict[tuple[int, ...], tuple[float, dict[str, dict[str, Any]]]] = {}
 
     def _invalidate_hot_caches(self) -> None:
         self._dashboard_cache = None
@@ -351,6 +352,7 @@ class PanelDatabase:
         self._table_data_cache.clear()
         self._image_gallery_admin_cache.clear()
         self._music_intelligence_cache.clear()
+        self._music_activity_cache.clear()
 
     async def _run_with_timeout(self, awaitable, timeout: float | None = None):
         return await asyncio.wait_for(awaitable, timeout=timeout or PANEL_DB_QUERY_TIMEOUT_SECONDS)
@@ -1945,22 +1947,31 @@ class PanelDatabase:
         if not normalized_guilds:
             return summaries
 
+        cache_key = tuple(normalized_guilds)
+        now = time.monotonic()
+        cached = self._music_activity_cache.get(cache_key)
+        if cached and cached[0] > now:
+            return copy.deepcopy(cached[1])
+
         placeholders = ", ".join(["%s"] * len(normalized_guilds))
         per_guild_tracks: dict[int, dict[str, dict[str, Any]]] = {guild_id: {} for guild_id in normalized_guilds}
         per_guild_bots: dict[int, dict[str, int]] = {guild_id: {} for guild_id in normalized_guilds}
         per_guild_active: dict[int, list[dict[str, Any]]] = {guild_id: [] for guild_id in normalized_guilds}
 
-        for bot in MUSIC_BOTS:
+        async def _collect_bot_activity(bot):
             if not bot.db_schema or not bot.table_prefix:
-                continue
+                return bot, [], []
             schema = _validate_identifier(bot.db_schema, "schema")
             prefix = _validate_identifier(bot.table_prefix, "table prefix")
             history_table = f"{prefix}_history"
             playback_table = f"{prefix}_playback_state"
 
+            history_rows: list[dict[str, Any]] = []
+            active_rows: list[dict[str, Any]] = []
+
             if await self._table_exists(schema, history_table):
                 try:
-                    rows = await self._fetchall(
+                    history_rows = await self._fetchall(
                         f"""
                         SELECT guild_id, title, video_url, COUNT(*) AS plays, MAX(played_at) AS last_played_at
                         FROM `{schema}`.`{history_table}`
@@ -1971,26 +1982,12 @@ class PanelDatabase:
                         """,
                         tuple(normalized_guilds),
                     )
-                    for row in rows:
-                        guild_id = int(row["guild_id"])
-                        title = str(row.get("title") or "Unknown Track").strip()
-                        play_count = int(row.get("plays") or 0)
-                        key = title.lower()
-                        existing = per_guild_tracks[guild_id].setdefault(key, {
-                            "title": title,
-                            "video_url": row.get("video_url"),
-                            "plays": 0,
-                        })
-                        existing["plays"] += play_count
-                        per_guild_bots[guild_id][bot.key] = per_guild_bots[guild_id].get(bot.key, 0) + play_count
-                    for guild_id in normalized_guilds:
-                        summaries[str(guild_id)]["total_plays"] += per_guild_bots[guild_id].get(bot.key, 0)
                 except Exception as exc:
                     logger.debug("Could not read %s.%s for user directory: %s", schema, history_table, exc)
 
             if await self._table_exists(schema, playback_table):
                 try:
-                    rows = await self._fetchall(
+                    active_rows = await self._fetchall(
                         f"""
                         SELECT guild_id, title, video_url, is_playing, is_paused
                         FROM `{schema}`.`{playback_table}`
@@ -2000,7 +1997,7 @@ class PanelDatabase:
                     )
                 except Exception:
                     try:
-                        rows = await self._fetchall(
+                        active_rows = await self._fetchall(
                             f"""
                             SELECT guild_id, title, video_url, is_playing
                             FROM `{schema}`.`{playback_table}`
@@ -2010,19 +2007,36 @@ class PanelDatabase:
                         )
                     except Exception as exc:
                         logger.debug("Could not read %s.%s active state for user directory: %s", schema, playback_table, exc)
-                        rows = []
-                for row in rows:
-                    guild_id = int(row["guild_id"])
-                    per_guild_active[guild_id].append({
-                        "bot_key": bot.key,
-                        "bot_display": bot.display_name,
-                        "title": row.get("title") or "Unknown Track",
-                        "video_url": row.get("video_url"),
-                        "is_playing": bool(row.get("is_playing")),
-                        "is_paused": bool(row.get("is_paused")),
-                    })
+                        active_rows = []
+
+            return bot, history_rows, active_rows
+
+        for bot, history_rows, active_rows in await asyncio.gather(*(_collect_bot_activity(bot) for bot in MUSIC_BOTS)):
+            for row in history_rows:
+                guild_id = int(row["guild_id"])
+                title = str(row.get("title") or "Unknown Track").strip()
+                play_count = int(row.get("plays") or 0)
+                key = title.lower()
+                existing = per_guild_tracks[guild_id].setdefault(key, {
+                    "title": title,
+                    "video_url": row.get("video_url"),
+                    "plays": 0,
+                })
+                existing["plays"] += play_count
+                per_guild_bots[guild_id][bot.key] = per_guild_bots[guild_id].get(bot.key, 0) + play_count
+            for row in active_rows:
+                guild_id = int(row["guild_id"])
+                per_guild_active[guild_id].append({
+                    "bot_key": bot.key,
+                    "bot_display": bot.display_name,
+                    "title": row.get("title") or "Unknown Track",
+                    "video_url": row.get("video_url"),
+                    "is_playing": bool(row.get("is_playing")),
+                    "is_paused": bool(row.get("is_paused")),
+                })
 
         for guild_id in normalized_guilds:
+            summaries[str(guild_id)]["total_plays"] = sum(per_guild_bots[guild_id].values())
             tracks = sorted(per_guild_tracks[guild_id].values(), key=lambda item: (-int(item["plays"]), item["title"].lower()))
             bots = sorted(per_guild_bots[guild_id].items(), key=lambda item: (-item[1], item[0]))
             summaries[str(guild_id)]["top_tracks"] = tracks[:3]
@@ -2061,6 +2075,7 @@ class PanelDatabase:
                 key=lambda item: -float(item.get("smart_score") or 0),
             )[:3]
 
+        self._music_activity_cache[cache_key] = (time.monotonic() + PANEL_MUSIC_INTELLIGENCE_CACHE_TTL_SECONDS, copy.deepcopy(summaries))
         return summaries
 
     async def get_music_intelligence_summary(
@@ -2098,16 +2113,16 @@ class PanelDatabase:
         }
         result_bots: list[dict[str, Any]] = []
 
-        for bot in bots:
+        async def _collect_bot_intelligence(bot):
             if bot.kind != "music" or not bot.db_schema or not bot.table_prefix:
-                continue
+                return None
             schema = _validate_identifier(bot.db_schema, "schema")
             prefix = _validate_identifier(bot.table_prefix, "table prefix")
             intelligence_table = f"{prefix}_track_intelligence"
             affinity_table = f"{prefix}_user_track_affinity"
             recommendations_table = f"{prefix}_smart_recommendations"
             if not await self._table_exists(schema, intelligence_table):
-                continue
+                return None
 
             where = ""
             params: tuple[Any, ...] = ()
@@ -2202,7 +2217,7 @@ class PanelDatabase:
                     for row in guild_rows:
                         row["recommendations"] = rec_map.get(int(row["guild_id"]), 0)
 
-            item = {
+            return {
                 "bot_key": bot.key,
                 "bot_display": bot.display_name,
                 "schema": schema,
@@ -2217,6 +2232,10 @@ class PanelDatabase:
                 "top_users": top_users,
                 "guilds": guild_rows,
             }
+
+        for item in await asyncio.gather(*(_collect_bot_intelligence(bot) for bot in bots)):
+            if item is None:
+                continue
             result_bots.append(item)
             totals["learned_tracks"] += item["learned_tracks"]
             totals["plays"] += item["plays"]
@@ -3693,6 +3712,9 @@ class PanelDatabase:
                     ("playlists", f"SELECT COUNT(*) AS count FROM `{schema}`.`ios_user_playlists`"),
                     ("bug_reports_open", f"SELECT COUNT(*) AS count FROM `{schema}`.`ios_bug_reports` WHERE status='open'"),
                     ("listen_rooms_active", f"SELECT COUNT(*) AS count FROM `{schema}`.`ios_listen_rooms` WHERE updated_at > NOW() - INTERVAL 1 HOUR"),
+                    ("listening_now", f"SELECT COUNT(*) AS count FROM `{schema}`.`ios_playback_state` WHERE updated_at > NOW() - INTERVAL 15 MINUTE"),
+                    ("plays_24h", f"SELECT COUNT(*) AS count FROM `{schema}`.`ios_play_history` WHERE played_at > NOW() - INTERVAL 1 DAY"),
+                    ("uploads_storage_bytes", f"SELECT COALESCE(SUM(file_size_bytes), 0) AS count FROM `{schema}`.`ios_user_music_uploads`"),
                 ):
                     await cur.execute(sql)
                     row = await cur.fetchone() or {}
@@ -3754,6 +3776,34 @@ class PanelDatabase:
                     (safe_limit,),
                 )
                 listen_rooms = [self._json_row(row) for row in await cur.fetchall()]
+
+                await cur.execute(
+                    f"""
+                    SELECT p.user_id, p.song_id, p.title, p.artist, p.source,
+                           p.position_seconds, p.duration_seconds, p.updated_at,
+                           u.username
+                    FROM `{schema}`.`ios_playback_state` p
+                    JOIN `{schema}`.`ios_users` u ON u.id = p.user_id
+                    WHERE p.updated_at > NOW() - INTERVAL 15 MINUTE
+                    ORDER BY p.updated_at DESC
+                    LIMIT %s
+                    """,
+                    (safe_limit,),
+                )
+                now_playing = [self._json_row(row) for row in await cur.fetchall()]
+
+                await cur.execute(
+                    f"""
+                    SELECT h.id, h.user_id, h.title, h.artist, h.played_at, h.listen_seconds,
+                           u.username
+                    FROM `{schema}`.`ios_play_history` h
+                    JOIN `{schema}`.`ios_users` u ON u.id = h.user_id
+                    ORDER BY h.played_at DESC
+                    LIMIT %s
+                    """,
+                    (safe_limit,),
+                )
+                recent_plays = [self._json_row(row) for row in await cur.fetchall()]
         result = {
             "schema": schema,
             "summary": summary,
@@ -3761,6 +3811,8 @@ class PanelDatabase:
             "uploads": uploads,
             "bug_reports": bug_reports,
             "listen_rooms": listen_rooms,
+            "now_playing": now_playing,
+            "recent_plays": recent_plays,
         }
         self._lumisound_admin_cache[safe_limit] = (time.monotonic() + PANEL_IMAGE_GALLERY_ADMIN_CACHE_TTL_SECONDS, copy.deepcopy(result))
         return result

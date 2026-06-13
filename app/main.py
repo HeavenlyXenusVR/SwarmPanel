@@ -41,6 +41,7 @@ from .auth import (
 )
 from .bots import (
     ALL_BOTS,
+    ARIA_BOT,
     BOT_ACCENTS,
     BOT_CAPABILITY_SUMMARIES,
     BOT_INDEX,
@@ -2840,11 +2841,12 @@ async def api_health(request: Request):
 async def list_bots(request: Request):
     auth = _require_api_auth(request)
     scoped_guild_id = _public_scoped_guild_id(auth)
-    visible_music_bots = await _visible_music_bots_for_auth(auth)
-    visible_bots = [*visible_music_bots]
+    # The invite roster advertises every bot available to add to a server, so it
+    # must not be filtered down to bots already registered in the user's guild.
+    visible_bots = [*MUSIC_BOTS, ARIA_BOT]
+    visible_keys = {bot.key for bot in await _visible_music_bots_for_auth(auth)}
     if _is_admin_auth(auth):
-        visible_bots.append(BOT_INDEX["aria"])
-    visible_keys = {bot.key for bot in visible_bots}
+        visible_keys.add(ARIA_BOT.key)
 
     async def invite_payload(bot) -> dict[str, Any]:
         token = settings.bot_tokens.get(bot.key, "")
