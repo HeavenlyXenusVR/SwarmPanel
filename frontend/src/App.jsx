@@ -27,6 +27,7 @@ import DiagnosticsPage from "./pages/DiagnosticsPage.jsx";
 import AccountsPage from "./pages/AccountsPage.jsx";
 import DatabasesPage from "./pages/DatabasesPage.jsx";
 import GalleryAdminPage from "./pages/GalleryAdminPage.jsx";
+import LumisoundAdminPage from "./pages/LumisoundAdminPage.jsx";
 import IntelPage from "./pages/IntelPage.jsx";
 import AuthPage from "./pages/AuthPage.jsx";
 
@@ -472,6 +473,13 @@ function RouteViewport({ ctx, pathname }) {
     return (
       <Protected ctx={ctx} gallery>
         <GalleryAdminPage ctx={ctx} />
+      </Protected>
+    );
+  }
+  if (currentPath === "/lumisound-admin") {
+    return (
+      <Protected ctx={ctx} admin>
+        <LumisoundAdminPage ctx={ctx} />
       </Protected>
     );
   }

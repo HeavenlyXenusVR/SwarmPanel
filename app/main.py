@@ -3238,6 +3238,17 @@ async def get_table_data(
         raise HTTPException(status_code=503, detail=_safe_error_detail("Database unavailable", exc))
 
 
+@app.get("/api/lumisound/admin")
+async def lumisound_admin(request: Request, limit: int = 50):
+    _require_admin_auth(request)
+    limit = _bounded_query_limit(limit, default=50)
+    try:
+        return {"ok": True, "data": await db.get_lumisound_admin_data(limit)}
+    except Exception as exc:
+        action_logger.error("Failed to fetch Lumisound admin data: %s", exc)
+        raise HTTPException(status_code=503, detail=_safe_error_detail("Lumisound database unavailable", exc))
+
+
 @app.get("/api/image-gallery/admin")
 async def image_gallery_admin(request: Request, limit: int = 50):
     _require_image_gallery_owner_auth(request)

@@ -9,6 +9,7 @@ import {
   LogOut,
   Menu,
   MessageCircle,
+  Music,
   Palette,
   Play,
   PlugZap,
@@ -39,6 +40,7 @@ export function Shell({ ctx, children }) {
     if (ctx.isAdmin) items.push({ to: "/accounts", icon: Shield, label: "Accounts", mobileLabel: "Accounts" });
     if (ctx.isAdmin) items.push({ to: "/databases", icon: Database, label: "Data", mobileLabel: "Data" });
     if (ctx.canGallery) items.push({ to: "/gallery-admin", icon: ImageIcon, label: "Gallery", mobileLabel: "Gallery" });
+    if (ctx.isAdmin) items.push({ to: "/lumisound-admin", icon: Music, label: "Lumisound", mobileLabel: "Music" });
     if (ctx.isAdmin) items.push({ to: "/intel", icon: Siren, label: "Intel", mobileLabel: "Intel" });
     return items;
   }, [ctx.canGallery, ctx.isAdmin]);

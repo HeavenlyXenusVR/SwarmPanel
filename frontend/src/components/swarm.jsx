@@ -298,18 +298,20 @@ function BotSeekBar({ session, botKey }) {
   const barRef = useRef(null);
 
   const duration = Math.max(0, Number(session?.duration_seconds) || 0);
-  if (!duration) return null;
-
   const isPlaying = Boolean(session?.is_playing || session?.session_state === "playing");
-  const positionSeconds = Math.max(0, Math.min(Number(session?.position_seconds) || 0, duration));
-  // Live-advancing position while playing
+
+  // Live-advancing position while playing — declared unconditionally so hook count
+  // stays stable even when `duration` is 0 and we bail out below (React error #310).
   const [liveMs, setLiveMs] = useState(() => Date.now());
   useEffect(() => {
-    if (!isPlaying || seeking) return undefined;
+    if (!duration || !isPlaying || seeking) return undefined;
     const t = setInterval(() => setLiveMs(Date.now()), 1000);
     return () => clearInterval(t);
-  }, [isPlaying, seeking]);
+  }, [duration, isPlaying, seeking]);
 
+  if (!duration) return null;
+
+  const positionSeconds = Math.max(0, Math.min(Number(session?.position_seconds) || 0, duration));
   const observedAt = session?.position_observed_at || session?.updated_at;
   const observedAtMs = observedAt ? (Date.parse(observedAt) || 0) : 0;
   const livePosition = isPlaying && observedAtMs > 0
