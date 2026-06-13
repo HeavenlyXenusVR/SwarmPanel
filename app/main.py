@@ -2601,10 +2601,11 @@ async def api_user_directory(request: Request):
         viewer_id = await _account_id_for_auth(auth)
     except Exception:
         viewer_id = None
-    # Non-admin users only see members from their own guild.
-    # Admin mode ON (site owner with admin_mode=True) sees the full directory.
-    scoped_guild_id = _public_scoped_guild_id(auth) if not _is_admin_auth(auth) else None
-    users = await db.search_account_profiles(query, limit, viewer_account_id=viewer_id, guild_id=scoped_guild_id)
+    # The swarm directory is a cross-server roster of public profiles — each
+    # account is tied to its own home guild, so scoping by guild_id would only
+    # ever show a viewer their own profile (or none at all). Visibility is
+    # already gated by public_profile=1 in search_account_profiles.
+    users = await db.search_account_profiles(query, limit, viewer_account_id=viewer_id, guild_id=None)
     return {"ok": True, "query": query, "users": users, "limit": limit}
 
 
@@ -3500,11 +3501,19 @@ async def websocket_endpoint(websocket: WebSocket):
             if msg.get("type") == "auth":
                 token = str(msg.get("token") or "")
                 auth = verify_api_token(token, settings.session_secret, settings.api_token_ttl_seconds)
+        except WebSocketDisconnect:
+            # Client gave up / navigated away before sending the auth frame — the
+            # socket is already gone, so don't attempt to close it below (that
+            # raises a RuntimeError in uvicorn for an already-closed connection).
+            return
         except (asyncio.TimeoutError, json.JSONDecodeError, Exception):
             auth = None
 
     if not auth:
-        await websocket.close(code=4401)
+        try:
+            await websocket.close(code=4401)
+        except Exception:
+            pass
         return
 
     connection = {"websocket": websocket, "auth": auth, "last_dashboard_digest": None}
