@@ -25,6 +25,27 @@ let remoteOriginRefreshAfter = 0;
 let remoteConfig = null;
 let inMemoryToken = "";
 
+// Global backend-reachability state. Surfaced as a full-screen reconnect
+// overlay by App.jsx so a single transient error doesn't get rendered as a
+// page-level error message — the overlay sticks until a request succeeds.
+const connectionListeners = new Set();
+let backendUnreachable = false;
+
+export function subscribeBackendStatus(listener) {
+  connectionListeners.add(listener);
+  return () => connectionListeners.delete(listener);
+}
+
+export function isBackendUnreachable() {
+  return backendUnreachable;
+}
+
+function setBackendUnreachable(value) {
+  if (backendUnreachable === value) return;
+  backendUnreachable = value;
+  connectionListeners.forEach((listener) => listener(value));
+}
+
 function requestError(message, details = {}) {
   const error = new Error(message);
   Object.assign(error, details);
@@ -137,7 +158,16 @@ export async function apiFetch(path, options = {}) {
     headers.set("Content-Type", "application/json");
   }
   const requestOptions = options.force ? { ...options, cache: "no-store" } : options;
-  const response = await fetchWithRemoteRetry(path, requestOptions, headers);
+  let response;
+  try {
+    response = await fetchWithRemoteRetry(path, requestOptions, headers);
+  } catch (error) {
+    if (error?.code === "TIMEOUT" || error?.code === "NETWORK") {
+      setBackendUnreachable(true);
+    }
+    throw error;
+  }
+  setBackendUnreachable(false);
   const contentType = response.headers.get("content-type") || "";
   let payload;
   if (contentType.includes("application/json")) {

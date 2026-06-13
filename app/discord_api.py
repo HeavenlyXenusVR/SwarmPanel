@@ -14,6 +14,9 @@ CHANNEL_TYPE_NAMES = {
     2: "voice",
     4: "category",
     5: "announcement",
+    10: "announcement_thread",
+    11: "public_thread",
+    12: "private_thread",
     13: "stage",
     15: "forum",
 }
@@ -161,7 +164,33 @@ class DiscordInventoryService:
                     "parent_id": str(channel["parent_id"]) if channel.get("parent_id") else None,
                 }
             )
+
+        for thread in await self.fetch_active_threads(token, guild_id):
+            channels.append(thread)
         return channels
+
+    async def fetch_active_threads(self, token: str, guild_id: int | str) -> list[dict[str, Any]]:
+        """Active (non-archived) threads in a guild, e.g. forum/text-channel threads
+        used as feedback channels. These aren't included in /guilds/{id}/channels."""
+        try:
+            data = await self._cached_request(token, f"/guilds/{int(guild_id)}/threads/active")
+        except DiscordAPIError as e:
+            if e.status_code in (403, 404):
+                return []
+            raise
+        threads = []
+        for channel in (data or {}).get("threads", []) if isinstance(data, dict) else []:
+            channel_type = int(channel.get("type", -1))
+            threads.append(
+                {
+                    "id": str(channel.get("id")),
+                    "name": channel.get("name") or f"Thread {channel.get('id')}",
+                    "type": channel_type,
+                    "type_name": CHANNEL_TYPE_NAMES.get(channel_type, str(channel_type)),
+                    "parent_id": str(channel["parent_id"]) if channel.get("parent_id") else None,
+                }
+            )
+        return threads
 
     async def fetch_inventory(
         self,
@@ -265,8 +294,20 @@ class DiscordInventoryService:
                 pass
 
             for channel_id in channel_ids:
+                channel_name = channel_name_map.get(channel_id) if channel_id is not None else None
+                if channel_id is not None and channel_name is None:
+                    # Not in /channels or /threads/active — likely an archived thread
+                    # (e.g. a feedback channel set to a thread that's gone inactive).
+                    channel_name = await self._fetch_channel_name(token, channel_id)
                 output[(guild_id, channel_id)] = {
                     "guild_name": guild_name,
-                    "channel_name": channel_name_map.get(channel_id) if channel_id is not None else None,
+                    "channel_name": channel_name,
                 }
         return output
+
+    async def _fetch_channel_name(self, token: str, channel_id: str) -> str | None:
+        try:
+            data = await self._cached_request(token, f"/channels/{int(channel_id)}")
+        except Exception:
+            return None
+        return data.get("name") if isinstance(data, dict) else None

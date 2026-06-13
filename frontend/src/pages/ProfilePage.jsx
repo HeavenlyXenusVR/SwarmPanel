@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { Check, ExternalLink, Eye, Heart, KeyRound, Mail, MessageCircle, Music2, RefreshCw, Save, ShieldCheck, Sparkles, UserPlus, Webhook } from "lucide-react";
 import { apiFetch, cachedFetch, clearCache } from "../api.js";
 import { EmptyState, Notice, Page, SkeletonGrid } from "../components/ui.jsx";
@@ -50,7 +50,8 @@ function socialModeLabel(value) {
 }
 
 export default function ProfilePage({ ctx }) {
-  const { accountId } = useParams();
+  const location = useLocation();
+  const accountId = location.pathname.match(/\/users\/([^/]+)\/?$/)?.[1];
   const publicMode = Boolean(accountId);
   const [data, setData] = useState(null);
   const [form, setForm] = useState({});

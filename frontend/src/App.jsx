@@ -4,9 +4,11 @@ import {
   apiFetch,
   cachedFetch,
   clearCache,
+  isBackendUnreachable,
   prefetchFetch,
   query,
   readToken,
+  subscribeBackendStatus,
   writeToken,
   writeUsername,
 } from "./api.js";
@@ -60,6 +62,7 @@ function App() {
   const [bootTipIndex, setBootTipIndex] = useState(0);
   const [bootDismissed, setBootDismissed] = useState(false);
   const [bootLeaving, setBootLeaving] = useState(false);
+  const [backendUnreachable, setBackendUnreachable] = useState(() => isBackendUnreachable());
   const isAdmin = Boolean(session.admin_mode);
   const isOwner = Boolean(session.site_owner);
   const canGallery = Boolean(session.image_gallery_owner);
@@ -116,6 +119,8 @@ function App() {
   useEffect(() => {
     if (token) loadPreferences();
   }, [loadPreferences, token]);
+
+  useEffect(() => subscribeBackendStatus(setBackendUnreachable), []);
 
   useLiveRefresh(loadSession, { interval: 20_000 });
   useLiveRefresh(loadPreferences, { enabled: Boolean(token), interval: 30_000 });
@@ -282,6 +287,7 @@ function App() {
           tip={BOOT_TIPS[bootTipIndex]}
         />
       ) : null}
+      {bootDismissed && backendUnreachable ? <SwarmReconnectOverlay /> : null}
       {toast ? <div role="status" aria-live="polite" aria-atomic="true" className={`toast toast-${toast.tone}`}>{toast.message}</div> : null}
     </div>
   );
@@ -330,6 +336,50 @@ function SwarmBootOverlay({ phase, tip, authenticated, leaving }) {
             <span>Tip Deck</span>
             <strong>Rotating</strong>
             <small>{tip}</small>
+          </article>
+        </div>
+        <div className="swarm-loading-progress" aria-hidden="true">
+          <span />
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SwarmReconnectOverlay() {
+  return (
+    <div aria-busy="true" aria-live="polite" className="swarm-loading-screen swarm-reconnect-overlay" role="status">
+      <div className="swarm-loading-backdrop" />
+      <section className="swarm-loading-panel">
+        <div className="swarm-loading-hero">
+          <div className="swarm-loading-radar" aria-hidden="true">
+            <span className="swarm-loading-ring ring-a" />
+            <span className="swarm-loading-ring ring-b" />
+            <span className="swarm-loading-ring ring-c" />
+            <span className="swarm-loading-sweep" />
+            <span className="swarm-loading-core" />
+          </div>
+          <div className="swarm-loading-copy">
+            <span className="swarm-loading-kicker">SwarmPanel // Fleet Command</span>
+            <strong>Reconnecting to the live backend</strong>
+            <p>SwarmPanel lost contact with the live backend. The tunnel may be briefly restarting — this screen will clear automatically once the connection is restored.</p>
+          </div>
+        </div>
+        <div className="swarm-loading-status-grid">
+          <article>
+            <span>Session Link</span>
+            <strong>Reconnecting</strong>
+            <small>Waiting for the live backend to respond again.</small>
+          </article>
+          <article>
+            <span>Telemetry</span>
+            <strong>Paused</strong>
+            <small>Dashboard and queue data will resume streaming once the link is restored.</small>
+          </article>
+          <article>
+            <span>Status</span>
+            <strong>Auto-Retry</strong>
+            <small>No action needed — SwarmPanel keeps retrying in the background.</small>
           </article>
         </div>
         <div className="swarm-loading-progress" aria-hidden="true">

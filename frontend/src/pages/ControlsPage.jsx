@@ -137,7 +137,7 @@ export default function ControlsPage({ ctx }) {
   const selectedGuild = guilds.find((guild) => String(guild.id) === String(form.guild_id));
   const channels = selectedGuild?.channels || inventory?.channels || [];
   const voiceChannels = channels.filter((channel) => [2, 13].includes(Number(channel.type)));
-  const textChannels = channels.filter((channel) => [0, 5].includes(Number(channel.type)));
+  const textChannels = channels.filter((channel) => [0, 5, 10, 11, 12].includes(Number(channel.type)));
   const sessionGuilds = uniqueBy((dashboard?.sessions || []).map((session) => ({ id: session.guild_id, name: session.guild_name || `Guild ${session.guild_id}` })), "id");
 
   function update(key, value) {

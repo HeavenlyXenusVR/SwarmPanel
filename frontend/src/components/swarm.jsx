@@ -542,11 +542,17 @@ export function EventList({ events }) {
   );
 }
 
+const THREAD_CHANNEL_TYPES = new Set([10, 11, 12]);
+
 export function ChannelSelect({ value, channels, onChange, optional = false }) {
   return (
     <select value={value} onChange={(event) => onChange(event.target.value)}>
       <option value="">{optional ? "None" : "Choose channel"}</option>
-      {channels.map((channel) => <option value={channel.id} key={channel.id}>{channel.name || channel.id}</option>)}
+      {channels.map((channel) => (
+        <option value={channel.id} key={channel.id}>
+          {(channel.name || channel.id) + (THREAD_CHANNEL_TYPES.has(Number(channel.type)) ? " (thread)" : "")}
+        </option>
+      ))}
     </select>
   );
 }
