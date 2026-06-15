@@ -38,7 +38,7 @@ export function MetricGrid({ children }) {
 }
 
 export function Metric({ icon: Icon, label, value }) {
-  return <article className="metric"><Icon size={19} /><div><strong>{number(value)}</strong><span>{label}</span></div></article>;
+  return <article className="metric"><Icon size={19} /><div><strong>{typeof value === "string" ? value : number(value)}</strong><span>{label}</span></div></article>;
 }
 
 export function Notice({ tone = "info", children }) {
