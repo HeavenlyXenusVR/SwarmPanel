@@ -554,7 +554,19 @@ def _ensure_allowed_websocket_origin(websocket: WebSocket) -> bool:
     if not origin:
         return True
     current = _normalize_origin(str(websocket.base_url))
-    return origin == current or origin in _allowed_browser_origins()
+    if origin == current or origin in _allowed_browser_origins():
+        return True
+    # Mirror the HTTP path's regex fallback (_ensure_allowed_browser_origin) — without
+    # this, REST calls through a rotating Cloudflare/ngrok tunnel succeed (regex match)
+    # while every /ws upgrade is rejected with 4403, looking like constant WS drops.
+    regex = settings.cors_allow_origin_regex
+    if regex:
+        try:
+            if re.fullmatch(regex, origin):
+                return True
+        except re.error:
+            pass
+    return False
 
 
 def _security_headers(request: Request, response: Response) -> None:
