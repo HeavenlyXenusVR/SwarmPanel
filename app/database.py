@@ -3707,14 +3707,14 @@ class PanelDatabase:
                 for key, sql in (
                     ("users", f"SELECT COUNT(*) AS count FROM `{schema}`.`ios_users`"),
                     ("active_users", f"SELECT COUNT(*) AS count FROM `{schema}`.`ios_users` WHERE is_active=1"),
-                    ("uploads", f"SELECT COUNT(*) AS count FROM `{schema}`.`ios_user_music_uploads`"),
+                    ("uploads", f"SELECT COUNT(*) AS count FROM `{schema}`.`ios_user_music_metadata`"),
                     ("play_history", f"SELECT COUNT(*) AS count FROM `{schema}`.`ios_play_history`"),
                     ("playlists", f"SELECT COUNT(*) AS count FROM `{schema}`.`ios_user_playlists`"),
                     ("bug_reports_open", f"SELECT COUNT(*) AS count FROM `{schema}`.`ios_bug_reports` WHERE status='open'"),
                     ("listen_rooms_active", f"SELECT COUNT(*) AS count FROM `{schema}`.`ios_listen_rooms` WHERE updated_at > NOW() - INTERVAL 1 HOUR"),
                     ("listening_now", f"SELECT COUNT(*) AS count FROM `{schema}`.`ios_playback_state` WHERE updated_at > NOW() - INTERVAL 15 MINUTE"),
                     ("plays_24h", f"SELECT COUNT(*) AS count FROM `{schema}`.`ios_play_history` WHERE played_at > NOW() - INTERVAL 1 DAY"),
-                    ("uploads_storage_bytes", f"SELECT COALESCE(SUM(file_size_bytes), 0) AS count FROM `{schema}`.`ios_user_music_uploads`"),
+                    ("uploads_storage_bytes", f"SELECT COALESCE(SUM(file_size_bytes), 0) AS count FROM `{schema}`.`ios_user_music_metadata`"),
                 ):
                     await cur.execute(sql)
                     row = await cur.fetchone() or {}
@@ -3728,7 +3728,7 @@ class PanelDatabase:
                            COUNT(DISTINCT up.id) AS upload_count
                     FROM `{schema}`.`ios_users` u
                     LEFT JOIN `{schema}`.`ios_user_playlists` p ON p.user_id = u.id
-                    LEFT JOIN `{schema}`.`ios_user_music_uploads` up ON up.user_id = u.id
+                    LEFT JOIN `{schema}`.`ios_user_music_metadata` up ON up.user_id = u.id
                     GROUP BY u.id
                     ORDER BY u.created_at DESC
                     LIMIT %s
@@ -3739,9 +3739,9 @@ class PanelDatabase:
 
                 await cur.execute(
                     f"""
-                    SELECT up.id, up.user_id, up.filename, up.folder, up.file_size_bytes, up.uploaded_at,
+                    SELECT up.id, up.user_id, up.filename, up.title, up.artist, up.file_size_bytes, up.uploaded_at,
                            u.username
-                    FROM `{schema}`.`ios_user_music_uploads` up
+                    FROM `{schema}`.`ios_user_music_metadata` up
                     JOIN `{schema}`.`ios_users` u ON u.id = up.user_id
                     ORDER BY up.uploaded_at DESC
                     LIMIT %s
