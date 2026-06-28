@@ -320,6 +320,43 @@ def _derive_thumbnail_url(video_url: str | None) -> str | None:
     return f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
 
 
+# Read-only view of the music-bot audio cache (mounted into the panel container). Lets the
+# panel report what's cached and whether a track is playing locally vs streaming.
+_AUDIO_CACHE_DIR = os.getenv("AUDIO_CACHE_PANEL_DIR", "/audiocache")
+_AUDIO_CACHE_EXTS = ("opus", "ogg", "mp3")
+
+
+def _is_track_cached(video_url: str | None) -> bool:
+    vid = _extract_youtube_video_id(video_url)
+    if not vid:
+        return False
+    for ext in _AUDIO_CACHE_EXTS:
+        try:
+            if os.path.getsize(os.path.join(_AUDIO_CACHE_DIR, f"{vid}.{ext}")) >= 8192:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _audio_cache_summary() -> dict[str, int]:
+    files = 0
+    total = 0
+    try:
+        with os.scandir(_AUDIO_CACHE_DIR) as it:
+            for e in it:
+                if e.name.startswith(".") or not e.name.endswith(_AUDIO_CACHE_EXTS):
+                    continue
+                try:
+                    total += e.stat().st_size
+                    files += 1
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return {"files": files, "bytes": total}
+
+
 def _smart_query_from_title(title: str | None) -> str:
     cleaned = re.sub(r"https?://\S+", "", str(title or ""))
     cleaned = SMART_TITLE_NOISE_RE.sub(" ", cleaned)
@@ -2938,6 +2975,7 @@ class PanelDatabase:
             smart = dict(intelligence_map.get(guild_id, {}))
             smart["recommendations"] = recommendation_map.get(guild_id, 0)
             source_info = _detect_media_source(playback.get("video_url"))
+            track_cached = _is_track_cached(playback.get("video_url"))
             metric_fresh = int(metric.get("metric_age_seconds") or 999999) <= 90 if metric else False
             is_playing = bool(metric.get("player_playing")) if metric_fresh else bool(playback.get("is_playing"))
             is_paused = bool(metric.get("player_paused")) if metric_fresh else bool(playback.get("is_paused"))
@@ -2970,6 +3008,9 @@ class PanelDatabase:
                     "video_url": playback.get("video_url"),
                     "media_source": source_info["key"],
                     "media_source_label": source_info["label"],
+                    "cached": track_cached,
+                    "playback_source": (("local" if track_cached else "stream") if is_playing else None),
+                    "playback_source_label": (("Local cache" if track_cached else "Streaming") if is_playing else None),
                     "thumbnail": None,
                     "position_seconds": effective_position,
                     "duration_seconds": effective_duration,
@@ -3031,6 +3072,8 @@ class PanelDatabase:
             "backup_queue_depth": sum(int(item.get("backup_queue_count") or 0) for item in sessions),
             "learned_track_count": sum(int(item.get("learned_tracks") or 0) for item in intelligence_map.values()),
             "smart_recommendation_count": sum(recommendation_map.values()),
+            "local_playing_count": sum(1 for item in sessions if item.get("playback_source") == "local"),
+            "audio_cache": _audio_cache_summary(),
             "sessions": sessions,
         }
 

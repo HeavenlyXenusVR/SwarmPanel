@@ -278,6 +278,16 @@ export function BotCard({ bot }) {
         <div className="bot-now-copy">
           <strong>{session?.title || bot.db_error || bot.schema || "Waiting for live playback."}</strong>
           <small>{session?.guild_name || session?.channel_name || "Live state will fill in automatically."}</small>
+          {session?.playback_source ? (
+            <span style={{
+              display: "inline-block", marginTop: 4, padding: "1px 8px", borderRadius: 10,
+              fontSize: 11, fontWeight: 700, letterSpacing: 0.3,
+              background: session.playback_source === "local" ? "#13351f" : "#332617",
+              color: session.playback_source === "local" ? "#5bd97e" : "#e8b366",
+            }}>
+              {session.playback_source === "local" ? "● LOCAL CACHE" : "● STREAMING"}
+            </span>
+          ) : null}
         </div>
       </div>
       {session ? <PlaybackCounter session={session} /> : null}
@@ -287,6 +297,7 @@ export function BotCard({ bot }) {
         <span>{bot.known_guild_count || bot.guild_count || 0} guilds</span>
         <span>{bot.queue_depth || sessions.reduce((sum, session) => sum + Number(session.queue_count || 0), 0)} queued</span>
         <span>{bot.backup_queue_depth || sessions.reduce((sum, session) => sum + Number(session.backup_queue_count || 0), 0)} backup</span>
+        <span>{Number(bot.audio_cache?.files || 0).toLocaleString()} cached{bot.local_playing_count ? ` · ${bot.local_playing_count} local` : ""}</span>
       </div>
     </article>
   );
@@ -423,6 +434,7 @@ export function ControlState({ state, compact = false }) {
         <span>{session.channel_name || "No channel"}</span>
         <span>{session.queue_count || 0} queued</span>
         <span>{session.backup_queue_count || 0} backup</span>
+        {session.playback_source ? <span>{session.playback_source === "local" ? "▣ local cache" : "▶ streaming"}</span> : null}
       </div>
       {!compact && backupPreview.length ? (
         <div className="backup-preview">
