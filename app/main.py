@@ -1,29 +1,24 @@
 import asyncio
-import aiohttp
-import base64
 import copy
-import html
 import json
 import logging
 import os
 import re
-import secrets
 import time
-from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote, urlparse
+from urllib.parse import quote
 from typing import Any
 
-from fastapi import FastAPI, Form, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Form, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, model_validator
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from . import services as _services_module
 from .auth import (
     SESSION_ADMIN_MODE_KEY,
     SESSION_AUTH_KEY,
@@ -31,13 +26,32 @@ from .auth import (
     SESSION_ROLE_KEY,
     SESSION_SITE_OWNER_KEY,
     SESSION_USERNAME_KEY,
-    get_api_auth,
     is_authenticated,
     issue_api_token,
-    require_api_auth,
     verify_api_token,
-    verify_credentials,
-    safe_session,
+)
+from .auth_deps import (
+    _account_guild_id,
+    _account_id_for_auth,
+    _authenticate_login,
+    _client_id_from_token,
+    _get_api_auth,
+    _hydrate_site_owner_auth,
+    _is_admin_auth,
+    _is_image_gallery_owner_auth,
+    _is_site_owner_account,
+    _is_site_owner_auth,
+    _public_scoped_guild_id,
+    _require_admin_auth,
+    _require_api_auth,
+    _require_guild_scope,
+    _require_image_gallery_owner_auth,
+    _resolve_account_guild_id,
+    _schedule_presence_touch,
+    _scoped_guild_id,
+    _set_account_session,
+    _set_admin_session,
+    _sync_account_session_owner_state,
 )
 from .bots import (
     ALL_BOTS,
@@ -50,12 +64,101 @@ from .bots import (
     permission_value,
     permissions_for_bot,
 )
-from .config import load_settings
-from .database import PanelDatabase
-from .diagnostics import RuntimeDiagnosticsService
-from .discord_api import DiscordInventoryService
 from .emailer import send_image_gallery_verification_email
+from .schemas import (
+    BotControlRequest,
+    GalleryCommentDeleteRequest,
+    GalleryMediaDeleteRequest,
+    GalleryMediaUpdateRequest,
+    GalleryPasswordResetRequest,
+    GalleryReportStatusRequest,
+    GalleryUserDeleteRequest,
+    GalleryUserFlagRequest,
+    GalleryUserUpdateRequest,
+    PanelPreferencesUpdateRequest,
+    SessionAdminModeRequest,
+    SessionEmailCodeRequest,
+    SessionEmailUpdateRequest,
+    SessionLoginRequest,
+    SessionPasswordUpdateRequest,
+    SessionRegisterRequest,
+    SessionVerificationWebhookRequest,
+    SocialFollowRequest,
+    SocialFriendActionRequest,
+    SocialMessageRequest,
+    SwarmAccountDeleteRequest,
+    SwarmAccountFlagRequest,
+    SwarmAccountPasswordResetRequest,
+    SwarmAccountUpdateRequest,
+    TruncateSchemaRequest,
+    TruncateTableRequest,
+    UserProfileUpdateRequest,
+)
+from .security import (
+    _bounded_query_limit,
+    _client_ip,
+    _ensure_allowed_browser_origin,
+    _ensure_allowed_websocket_origin,
+    _rate_limit_auth,
+    _request_id_for,
+    _safe_error_detail,
+    _security_headers,
+    _trusted_hosts,
+    _wants_json,
+)
+from .services import (
+    _feed_event,
+    action_logger,
+    active_connections,
+    db,
+    diagnostics_service,
+    discord_service,
+    push_feed_event,
+    recent_feed_events,
+    settings,
+)
 from .telegram import TelegramPollingService
+from .validators import (
+    PANEL_BACKGROUND_MODES,
+    PANEL_BOT_CARD_DETAILS,
+    PANEL_CARD_HOVER_EFFECTS,
+    PANEL_DASHBOARD_DENSITY_MODES,
+    PANEL_DENSITY_MODES,
+    PANEL_FONT_FAMILIES,
+    PANEL_FONT_MODES,
+    PANEL_LAYOUT_MODES,
+    PANEL_MOTION_MODES,
+    PANEL_NOTIFICATION_POSITIONS,
+    PANEL_OPERATOR_LAYOUT_MODES,
+    PANEL_RADIUS_MODES,
+    PANEL_ROSTER_LAYOUT_MODES,
+    PANEL_SHAPE_MODES,
+    PANEL_SIDEBAR_STYLES,
+    PANEL_STREAM_CARD_MODES,
+    PANEL_TAB_STYLE_MODES,
+    PANEL_THEME_MODES,
+    PROFILE_BANNER_MODES,
+    PROFILE_BORDER_ACCENTS,
+    PROFILE_CARD_STYLES,
+    PROFILE_HEADER_STYLES,
+    PROFILE_LAYOUT_MODES,
+    PROFILE_SOCIAL_MODES,
+    _normalize_choice,
+    _normalize_optional_text,
+    _normalize_panel_look_choice,
+    _normalize_profile_accent,
+    _normalize_public_url,
+    _normalize_server_invite_url,
+    _validate_discord_webhook_url,
+)
+from .verification import (
+    _image_gallery_verification_url,
+    _send_verification_webhook_code,
+    _verification_code,
+    _verification_is_complete,
+    _verification_page,
+    _verify_guild_registration_proof,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -77,14 +180,7 @@ APP_SHELL_PATHS = {
     "/gallery-admin",
     "/intel",
 }
-settings = load_settings()
-db = PanelDatabase(settings)
-discord_service = DiscordInventoryService()
-diagnostics_service = RuntimeDiagnosticsService(settings, discord_service)
-telegram_service: TelegramPollingService | None = None
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-action_logger = logging.getLogger("swarm_panel.actions")
 background_tasks: list[asyncio.Task[Any]] = []
 VOICE_CHANNEL_TYPES = {2, 13}
 TEXT_CHANNEL_TYPES = {0, 5}
@@ -103,812 +199,12 @@ CONTROL_PAYLOAD_KEYS = {
     "webhook_url",
     "position_seconds",
 }
-REQUEST_ID_RE = re.compile(r"[^A-Za-z0-9_.:-]+")
-PERSONAL_API_PREFIXES = (
-    "/api/session",
-    "/api/users",
-    "/api/swarm-accounts",
-    "/api/bots",
-    "/api/dashboard",
-    "/api/music-intelligence",
-    "/api/database",
-    "/api/databases",
-    "/api/image-gallery",
-    "/api/events",
-    "/api/stability",
-    "/api/system-diagnostics",
-    "/api/telegram",
-)
-PRESENCE_TOUCH_INTERVAL_SECONDS = max(15, int(os.getenv("SWARM_PANEL_PRESENCE_TOUCH_INTERVAL_SECONDS", "30") or "30"))
-PROFILE_ACCENT_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
-PANEL_THEME_MODES = {"dark", "light", "system"}
-PANEL_BACKGROUND_MODES = {"default", "midnight", "aurora", "ember", "custom_color", "custom_image"}
-PANEL_LAYOUT_MODES = {"standard", "focused", "wide"}
-PANEL_DENSITY_MODES = {"comfortable", "compact"}
-PANEL_SHAPE_MODES = {"soft", "crisp"}
-PANEL_FONT_MODES = {"normal", "large", "dense"}
-PANEL_MOTION_MODES = {"standard", "reduced"}
-PANEL_OPERATOR_LAYOUT_MODES = {"command", "console", "compact"}
-PANEL_ROSTER_LAYOUT_MODES = {"cards", "signals", "ledger"}
-PANEL_TAB_STYLE_MODES = {"rail", "underline", "minimal"}
-PANEL_STREAM_CARD_MODES = {"telemetry", "compact", "cinematic"}
-PANEL_DASHBOARD_DENSITY_MODES = {"command", "dense"}
-PANEL_LOOK_ALIASES = {
-    "operator_layout": {"spotlight": "command", "studio": "console"},
-    "roster_layout": {"grid": "cards", "magazine": "signals", "stack": "ledger"},
-    "tab_style": {"pills": "rail"},
-    "stream_card_style": {"editorial": "telemetry"},
-    "dashboard_density": {"comfortable": "command", "compact": "dense"},
-}
-PROFILE_BANNER_MODES = {"gradient", "image", "signal", "quiet", "contrast"}
-PROFILE_CARD_STYLES = {"solid", "glass", "outline", "terminal"}
-PROFILE_SOCIAL_MODES = {"open", "friends", "quiet"}
-PROFILE_LAYOUT_MODES = {"default", "sidebar", "stacked", "split"}
-PROFILE_HEADER_STYLES = {"solid", "glass", "blur", "transparent", "gradient"}
-PROFILE_BORDER_ACCENTS = {"none", "glow", "pulse", "neon", "solid"}
-PANEL_SIDEBAR_STYLES = {"full", "icons", "minimal"}
-PANEL_FONT_FAMILIES = {"system", "mono", "rounded"}
-PANEL_CARD_HOVER_EFFECTS = {"lift", "glow", "border", "none"}
-PANEL_NOTIFICATION_POSITIONS = {"br", "bl", "tr", "tc"}
-PANEL_BOT_CARD_DETAILS = {"full", "compact", "minimal"}
-PANEL_RADIUS_MODES = {"none", "small", "medium", "large", "pill"}
-AUTH_RATE_BUCKETS: dict[str, list[float]] = {}
-AUTH_RATE_BUCKETS_MAX = 2000  # prevent unbounded memory growth under load
-DISCORD_INVITE_HOSTS = {
-    "discord.gg",
-    "www.discord.gg",
-    "discord.com",
-    "www.discord.com",
-    "discordapp.com",
-    "www.discordapp.com",
-}
-OWNER_SCOPE_SENTINEL = "__site_owner_only__"
 DISCORD_IDENTITY_LOOKUP_TIMEOUT_SECONDS = max(1.0, float(os.getenv("SWARM_PANEL_DISCORD_IDENTITY_TIMEOUT_SECONDS", "4.0") or "4.0"))
 DISCORD_NAME_RESOLUTION_TIMEOUT_SECONDS = max(1.5, float(os.getenv("SWARM_PANEL_DISCORD_NAME_RESOLUTION_TIMEOUT_SECONDS", "6.0") or "6.0"))
 
 
 def _app_shell_path() -> Path:
     return REACT_SHELL_PATH if REACT_SHELL_PATH.exists() else BASE_DIR.parent / "index.html"
-
-
-def _validate_discord_webhook_url(value: Any) -> str:
-    url = str(value or "").strip()
-    parsed = urlparse(url)
-    host = (parsed.netloc or "").lower()
-    if parsed.scheme != "https" or host not in {"discord.com", "www.discord.com", "discordapp.com", "www.discordapp.com"}:
-        raise ValueError("Invalid Discord webhook URL")
-    parts = [part for part in parsed.path.split("/") if part]
-    if len(parts) < 4 or parts[0] != "api" or parts[1] != "webhooks":
-        raise ValueError("Invalid Discord webhook URL")
-    return url
-
-
-def _normalize_optional_text(value: Any, field_name: str, max_length: int) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text:
-        return None
-    if len(text) > max_length:
-        raise ValueError(f"{field_name} must be {max_length} characters or fewer")
-    return text
-
-
-def _normalize_public_url(value: Any, field_name: str, max_length: int = 600) -> str | None:
-    url = _normalize_optional_text(value, field_name, max_length)
-    if not url:
-        return None
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError(f"{field_name} must be a public http or https URL")
-    return url
-
-
-def _normalize_server_invite_url(value: Any) -> str | None:
-    url = _normalize_optional_text(value, "Server invite URL", 600)
-    if not url:
-        return None
-    if url.startswith("discord.gg/"):
-        url = f"https://{url}"
-    parsed = urlparse(url)
-    host = (parsed.netloc or "").lower()
-    parts = [part for part in parsed.path.split("/") if part]
-    valid_discord_invite = (
-        parsed.scheme == "https"
-        and host in DISCORD_INVITE_HOSTS
-        and (
-            host.endswith("discord.gg")
-            or (len(parts) >= 2 and parts[0] == "invite")
-        )
-    )
-    if not valid_discord_invite:
-        raise ValueError("Server invite URL must be a Discord invite link")
-    return url
-
-
-def _normalize_profile_accent(value: Any) -> str | None:
-    accent = _normalize_optional_text(value, "Theme accent", 20)
-    if not accent:
-        return None
-    if not PROFILE_ACCENT_RE.fullmatch(accent):
-        raise ValueError("Theme accent must be a hex color like #89b4fa")
-    return accent.lower()
-
-
-def _normalize_choice(value: Any, field_name: str, allowed: set[str], default: str) -> str:
-    choice = str(value or default).strip().lower()
-    if choice not in allowed:
-        raise ValueError(f"{field_name} must be one of: {', '.join(sorted(allowed))}")
-    return choice
-
-
-def _normalize_panel_look_choice(value: Any, field_name: str, key: str, allowed: set[str], default: str) -> str:
-    aliases = PANEL_LOOK_ALIASES.get(key, {})
-    choice = str(value or default).strip().lower()
-    choice = aliases.get(choice, choice)
-    if choice not in allowed:
-        raise ValueError(f"{field_name} must be one of: {', '.join(sorted(allowed))}")
-    return choice
-
-
-def _normalize_public_base_url(value: str | None) -> str:
-    raw = str(value or "").strip()
-    if not raw:
-        return ""
-    try:
-        parsed = urlparse(raw)
-    except Exception:
-        return ""
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return ""
-    return f"{parsed.scheme}://{parsed.netloc}{parsed.path.rstrip('/')}"
-
-
-_SAFE_HOST_RE = re.compile(r"^[A-Za-z0-9.\-:\[\]]+$")
-
-
-def _external_base_url(request: Request) -> str:
-    configured = _normalize_public_base_url(settings.pages_public_url)
-    if configured:
-        return configured
-
-    forwarded_proto = str(request.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip().lower()
-    forwarded_host = str(request.headers.get("x-forwarded-host") or "").split(",", 1)[0].strip()
-    # Only trust forwarded headers that contain safe hostname characters to prevent
-    # header-injection attacks producing malicious redirect or verification URLs.
-    if forwarded_proto in {"http", "https"} and forwarded_host and _SAFE_HOST_RE.fullmatch(forwarded_host):
-        root_path = str(request.scope.get("root_path") or "").rstrip("/")
-        return f"{forwarded_proto}://{forwarded_host}{root_path}".rstrip("/")
-
-    base = str(request.base_url).rstrip("/")
-    if settings.session_https_only and base.startswith("http://"):
-        return "https://" + base[len("http://"):]
-    return base
-
-
-def _verification_url(request: Request, token: str) -> str:
-    return f"{_external_base_url(request)}/api/session/verify-email?token={quote(token, safe='')}"
-
-
-def _image_gallery_verification_url(request: Request, token: str) -> str:
-    origin = os.getenv("IMAGE_GALLERY_PUBLIC_BACKEND_URL", "").strip().rstrip("/")
-    if not origin:
-        config_path = BASE_DIR.parents[1] / "Image Gallery" / "live-config.json"
-        try:
-            payload = json.loads(config_path.read_text(encoding="utf-8"))
-            raw_origin = str(payload.get("gallery_url") or "").strip().rstrip("/")
-            # Only accept http/https URLs from config to prevent injection
-            parsed_origin = urlparse(raw_origin)
-            if parsed_origin.scheme in {"http", "https"} and parsed_origin.netloc:
-                origin = raw_origin
-        except Exception:
-            origin = ""
-    if origin:
-        return f"{origin}/api/auth/verify-email?token={quote(token, safe='')}"
-    return f"{_external_base_url(request)}/api/auth/verify-email?token={quote(token, safe='')}"
-
-
-def _verification_code() -> str:
-    return f"{secrets.randbelow(100_000_000):08d}"
-
-
-def _verification_token() -> str:
-    return secrets.token_urlsafe(32)
-
-
-def _verification_material() -> tuple[str, str]:
-    return _verification_token(), _verification_code()
-
-
-def _verification_is_complete(account: dict[str, Any] | None) -> bool:
-    if not account:
-        return False
-    return bool(
-        account.get("verification_verified")
-        or account.get("webhook_verified")
-        or account.get("webhook_verified_at")
-        or account.get("email_verified")
-        or account.get("email_verified_at")
-    )
-
-
-async def _send_verification_webhook_code(
-    webhook_url: str,
-    code: str,
-    *,
-    username: str,
-    guild_id: str | int,
-) -> bool:
-    normalized_url = _validate_discord_webhook_url(webhook_url)
-    timeout = aiohttp.ClientTimeout(total=10)
-    content = (
-        f"SwarmPanel verification for `{username}` in guild `{guild_id}`\n"
-        f"Code: **{code}**\n"
-        "Enter this code in SwarmPanel to verify your account. "
-        "If you did not request this, you can ignore this message."
-    )
-    payload = {
-        "content": content[:1900],
-        "allowed_mentions": {"parse": []},
-        "username": "SwarmPanel Verify",
-    }
-    try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(normalized_url, json=payload) as response:
-                if response.status >= 400:
-                    body = (await response.text())[:300]
-                    action_logger.warning("SwarmPanel webhook verification send failed status=%s body=%s", response.status, body)
-                    return False
-        return True
-    except Exception:
-        action_logger.exception("SwarmPanel webhook verification send failed for %s", username)
-        return False
-
-
-async def _verify_guild_registration_proof(guild_id: str | int, proof_url: Any) -> dict[str, str]:
-    verified_guild_id = str(int(str(guild_id).strip()))
-    normalized_url = _validate_discord_webhook_url(proof_url)
-    parsed = urlparse(normalized_url)
-    parts = [part for part in parsed.path.split("/") if part]
-    webhook_id = parts[2]
-    webhook_token = parts[3]
-    lookup_url = f"https://discord.com/api/v10/webhooks/{quote(webhook_id, safe='')}/{quote(webhook_token, safe='')}"
-    timeout = aiohttp.ClientTimeout(total=10)
-    try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(lookup_url) as response:
-                if response.status >= 400:
-                    raise ValueError("The Discord webhook proof could not be verified. Create a new webhook in that server and try again.")
-                payload = await response.json(content_type=None)
-    except ValueError:
-        raise
-    except Exception as exc:
-        raise ValueError("The Discord webhook proof could not be verified right now. Try again in a moment.") from exc
-
-    resolved_guild_id = str(payload.get("guild_id") or "").strip()
-    if resolved_guild_id != verified_guild_id:
-        raise ValueError("The Discord webhook proof belongs to a different guild.")
-    channel_id = str(payload.get("channel_id") or "").strip()
-    if not channel_id:
-        raise ValueError("The Discord webhook proof did not return a channel binding.")
-    return {
-        "guild_id": resolved_guild_id,
-        "channel_id": channel_id,
-        "webhook_name": str(payload.get("name") or "Webhook").strip()[:80],
-    }
-
-
-def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-    return forwarded or (request.client.host if request.client else "unknown")
-
-
-def _rate_limit_auth(key: str, *, limit: int, window_seconds: int) -> None:
-    now = datetime.now(timezone.utc).timestamp()
-    bucket = [t for t in AUTH_RATE_BUCKETS.get(key, []) if now - t < window_seconds]
-    if len(bucket) >= limit:
-        raise HTTPException(status_code=429, detail="Too many authentication attempts. Try again later.")
-    bucket.append(now)
-    AUTH_RATE_BUCKETS[key] = bucket
-    # Prune stale buckets to prevent unbounded memory growth under high load
-    if len(AUTH_RATE_BUCKETS) > AUTH_RATE_BUCKETS_MAX:
-        stale = [k for k, v in AUTH_RATE_BUCKETS.items() if all(now - t >= window_seconds for t in v)]
-        for k in stale:
-            AUTH_RATE_BUCKETS.pop(k, None)
-        # If still over limit after pruning expired entries, drop oldest half
-        if len(AUTH_RATE_BUCKETS) > AUTH_RATE_BUCKETS_MAX:
-            overflow = sorted(AUTH_RATE_BUCKETS.items(), key=lambda item: max(item[1]) if item[1] else 0)
-            for k, _ in overflow[: len(overflow) // 2]:
-                AUTH_RATE_BUCKETS.pop(k, None)
-
-
-def _bounded_query_limit(value: Any, *, default: int = 50, max_limit: int | None = None) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = default
-    ceiling = max(1, int(max_limit or settings.api_max_rows))
-    return max(1, min(parsed, ceiling))
-
-
-def _request_id_for(request: Request) -> str:
-    incoming = request.headers.get("x-request-id") or request.headers.get("x-correlation-id")
-    cleaned = REQUEST_ID_RE.sub("", str(incoming or ""))[:80]
-    return cleaned or secrets.token_hex(12)
-
-
-def _safe_error_detail(prefix: str, exc: Exception) -> str:
-    request_id = secrets.token_hex(6)
-    action_logger.warning("%s request_id=%s error=%s", prefix, request_id, exc, exc_info=True)
-    return f"{prefix}. Check SwarmPanel logs with request id {request_id}."
-
-
-def _set_no_store_headers(response: Response) -> None:
-    response.headers["Cache-Control"] = "no-store"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
-
-
-def _should_no_store(path: str) -> bool:
-    return path in APP_SHELL_PATHS or any(path.startswith(prefix) for prefix in PERSONAL_API_PREFIXES)
-
-
-def _normalize_origin(value: str | None) -> str:
-    raw = str(value or "").strip()
-    if not raw:
-        return ""
-    try:
-        parsed = urlparse(raw)
-    except Exception:
-        return ""
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return ""
-    return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
-
-
-def _allowed_browser_origins() -> set[str]:
-    origins = {
-        _normalize_origin(settings.pages_public_url),
-        "http://127.0.0.1:8002",
-        "http://localhost:8002",
-        "http://127.0.0.1:8788",
-        "http://localhost:8788",
-    }
-    origins.update(_normalize_origin(origin) for origin in settings.cors_allowed_origins)
-    return {origin for origin in origins if origin}
-
-
-def _trusted_hosts() -> list[str]:
-    if settings.trusted_hosts:
-        return list(dict.fromkeys(settings.trusted_hosts))
-    hosts = {
-        "localhost",
-        "127.0.0.1",
-        "host.docker.internal",
-        "*.trycloudflare.com",
-        "*.pinggy-free.link",
-        "*.serveousercontent.com",
-        "*.lhr.life",
-        "*.ngrok-free.dev",
-        "*.ngrok.io",
-    }
-    for origin in _allowed_browser_origins():
-        try:
-            parsed = urlparse(origin)
-        except Exception:
-            continue
-        if parsed.hostname:
-            hosts.add(parsed.hostname)
-    return sorted(hosts)
-
-
-def _request_origin(request: Request) -> str:
-    origin = _normalize_origin(request.headers.get("origin"))
-    if origin:
-        return origin
-    return _normalize_origin(request.headers.get("referer"))
-
-
-def _has_bearer_auth(request: Request) -> bool:
-    return str(request.headers.get("authorization") or "").strip().lower().startswith("bearer ")
-
-
-def _has_session_cookie(request: Request) -> bool:
-    return "session" in request.cookies or bool(safe_session(request).get(SESSION_AUTH_KEY))
-
-
-def _ensure_allowed_browser_origin(request: Request) -> None:
-    origin = _request_origin(request)
-    if not origin:
-        # Allow CLI/internal calls and bearer-token API calls without browser Origin/Referer.
-        # Authenticated cookie requests must prove they came from the panel origin.
-        if _has_session_cookie(request) and not _has_bearer_auth(request):
-            raise HTTPException(status_code=403, detail="Missing trusted browser origin.")
-        return
-    current = _normalize_origin(str(request.base_url))
-    if origin == current or origin in _allowed_browser_origins():
-        return
-    regex = settings.cors_allow_origin_regex
-    if regex:
-        try:
-            if re.fullmatch(regex, origin):
-                return
-        except re.error:
-            pass
-    raise HTTPException(status_code=403, detail="Blocked cross-origin request.")
-
-
-def _csp_connect_sources(request: Request) -> str:
-    sources = ["'self'"]
-    for origin in _allowed_browser_origins():
-        if origin not in sources:
-            sources.append(origin)
-    current = _normalize_origin(str(request.base_url))
-    if current and current not in sources:
-        sources.append(current)
-    return " ".join(sources)
-
-
-def _ensure_allowed_websocket_origin(websocket: WebSocket) -> bool:
-    origin = _normalize_origin(websocket.headers.get("origin"))
-    if not origin:
-        return True
-    current = _normalize_origin(str(websocket.base_url))
-    if origin == current or origin in _allowed_browser_origins():
-        return True
-    # Mirror the HTTP path's regex fallback (_ensure_allowed_browser_origin) — without
-    # this, REST calls through a rotating Cloudflare/ngrok tunnel succeed (regex match)
-    # while every /ws upgrade is rejected with 4403, looking like constant WS drops.
-    regex = settings.cors_allow_origin_regex
-    if regex:
-        try:
-            if re.fullmatch(regex, origin):
-                return True
-        except re.error:
-            pass
-    return False
-
-
-def _security_headers(request: Request, response: Response) -> None:
-    connect_sources = _csp_connect_sources(request)
-    csp = "; ".join([
-        "default-src 'self'",
-        "base-uri 'self'",
-        "object-src 'none'",
-        "frame-ancestors 'none'",
-        "form-action 'self'",
-        "img-src 'self' data: blob: https:",
-        "media-src 'self' blob: data: https:",
-        "font-src 'self' data: https://fonts.gstatic.com",
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-        "script-src 'self'",
-        f"connect-src {connect_sources}",
-    ])
-    response.headers.setdefault("Content-Security-Policy", csp)
-    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-    response.headers.setdefault("X-Frame-Options", "DENY")
-    response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
-    response.headers.setdefault("Origin-Agent-Cluster", "?1")
-    response.headers.setdefault(
-        "Cross-Origin-Resource-Policy",
-        "cross-origin" if request.url.path.startswith("/api/") else "same-origin",
-    )
-    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
-    response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
-    if getattr(request.state, "request_id", None):
-        response.headers.setdefault("X-Request-ID", request.state.request_id)
-    if request.url.scheme == "https":
-        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-    if request.url.path.startswith("/static/react/assets/"):
-        response.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
-    elif request.url.path.startswith("/static/"):
-        response.headers.setdefault("Cache-Control", "public, max-age=86400")
-    if _should_no_store(request.url.path):
-        _set_no_store_headers(response)
-
-
-def _wants_json(request: Request) -> bool:
-    accept = request.headers.get("accept", "")
-    return "application/json" in accept and "text/html" not in accept
-
-
-def _verification_page(title: str, message: str, *, ok: bool) -> HTMLResponse:
-    color = "#89b4fa" if ok else "#ff6b6b"
-    return HTMLResponse(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
-        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-        f"<title>{html.escape(title)}</title>"
-        "<style>body{margin:0;min-height:100vh;display:grid;place-items:center;"
-        "font-family:Inter,system-ui,sans-serif;background:#10151f;color:#edf4ff}"
-        "main{width:min(520px,calc(100vw - 32px));padding:28px;border:1px solid #273244;"
-        "background:#151d2b;border-radius:8px}h1{margin:0 0 10px;font-size:1.5rem}"
-        "p{color:#aab6c8;line-height:1.5}.badge{display:inline-block;margin-bottom:16px;"
-        f"color:{color};font-weight:700}}a{{color:#7dd3fc}}</style></head><body><main>"
-        f"<span class=\"badge\">{'Verified' if ok else 'Needs Attention'}</span>"
-        f"<h1>{html.escape(title)}</h1><p>{html.escape(message)}</p>"
-        f"<p><a href=\"{html.escape(settings.pages_public_url)}\">Return to SwarmPanel</a></p>"
-        "</main></body></html>"
-    )
-
-class TruncateTableRequest(BaseModel):
-    schema_name: str
-    table_name: str
-    confirm_text: str
-    owner_confirm_text: str = ""
-
-
-class TruncateSchemaRequest(BaseModel):
-    schema_name: str
-    confirm_text: str
-    owner_confirm_text: str = ""
-
-
-class SessionLoginRequest(BaseModel):
-    username: str
-    password: str
-    guild_id: str | int | None = None
-
-
-class SessionRegisterRequest(BaseModel):
-    username: str
-    guild_id: str | int
-    password: str
-    email: str | None = None
-    verification_webhook_url: str | None = None
-    registration_proof_url: str | None = None
-
-
-class SessionAdminModeRequest(BaseModel):
-    enabled: bool
-
-
-class SessionEmailUpdateRequest(BaseModel):
-    email: str | None = None
-
-
-class SessionEmailCodeRequest(BaseModel):
-    code: str
-
-
-class SessionVerificationWebhookRequest(BaseModel):
-    verification_webhook_url: str | None = None
-
-
-class SessionPasswordUpdateRequest(BaseModel):
-    current_password: str
-    new_password: str
-
-
-class SocialFollowRequest(BaseModel):
-    following: bool = True
-
-
-class SocialFriendActionRequest(BaseModel):
-    action: str
-
-
-class SocialMessageRequest(BaseModel):
-    body: str
-
-
-class SwarmAccountDeleteRequest(BaseModel):
-    account_id: int
-
-
-class SwarmAccountUpdateRequest(BaseModel):
-    account_id: int
-    username: str | None = None
-    guild_id: str | int | None = None
-    email: str | None = None
-    display_name: str | None = None
-    public_profile: bool | None = None
-    server_name: str | None = None
-
-
-class SwarmAccountFlagRequest(BaseModel):
-    account_id: int
-    verified: bool
-
-
-class SwarmAccountPasswordResetRequest(BaseModel):
-    account_id: int
-    new_password: str
-
-
-class GalleryUserDeleteRequest(BaseModel):
-    user_id: int
-
-
-class GalleryCommentDeleteRequest(BaseModel):
-    comment_id: int
-
-
-class GalleryPasswordResetRequest(BaseModel):
-    user_id: int
-    new_password: str
-
-
-class GalleryUserUpdateRequest(BaseModel):
-    user_id: int
-    username: str | None = None
-    display_name: str | None = None
-    email: str | None = None
-    public_profile: bool | None = None
-    show_liked_count: bool | None = None
-    adult_content_consent: bool | None = None
-
-
-class GalleryUserFlagRequest(BaseModel):
-    user_id: int
-    verified: bool
-
-
-class GalleryMediaDeleteRequest(BaseModel):
-    media_id: int
-
-
-class GalleryMediaUpdateRequest(BaseModel):
-    media_id: int
-    title: str | None = None
-    is_adult: bool | None = None
-    moderation_status: str | None = None
-    moderation_reason: str | None = None
-
-
-class GalleryReportStatusRequest(BaseModel):
-    report_id: int
-    status: str
-
-
-class UserProfileUpdateRequest(BaseModel):
-    display_name: str | None = None
-    avatar_url: str | None = None
-    bio: str | None = None
-    profile_headline: str | None = None
-    profile_tags: list[str] | None = None
-    profile_links: list[dict[str, str]] | None = None
-    profile_banner_url: str | None = None
-    profile_banner_mode: str | None = None
-    profile_card_style: str | None = None
-    profile_social_mode: str | None = None
-    favorite_bot: str | None = None
-    theme_accent: str | None = None
-    public_profile: bool | None = None
-    server_invite_url: str | None = None
-    server_name: str | None = None
-    server_icon_url: str | None = None
-    profile_quote: str | None = None
-    profile_layout_mode: str | None = None
-    profile_header_style: str | None = None
-    profile_border_accent: str | None = None
-
-
-class PanelPreferencesUpdateRequest(BaseModel):
-    theme_mode: str | None = None
-    accent_color: str | None = None
-    background_mode: str | None = None
-    background_color: str | None = None
-    background_image_url: str | None = None
-    profile_backdrop_image_url: str | None = None
-    profile_backdrop_strength: float | None = None
-    layout_mode: str | None = None
-    density: str | None = None
-    card_shape: str | None = None
-    font_scale: str | None = None
-    motion: str | None = None
-    operator_layout: str | None = None
-    roster_layout: str | None = None
-    profile_layout: str | None = None
-    directory_layout: str | None = None
-    tab_style: str | None = None
-    surface_opacity: float | None = None
-    surface_blur: int | None = None
-    stream_card_style: str | None = None
-    dashboard_density: str | None = None
-    sidebar_style: str | None = None
-    panel_font_family: str | None = None
-    card_hover_effect: str | None = None
-    notification_position: str | None = None
-    bot_card_detail: str | None = None
-    panel_radius: str | None = None
-    accent_secondary: str | None = None
-    show_bot_uptime: bool | None = None
-    show_queue_pressure: bool | None = None
-    compact_sidebar: bool | None = None
-
-
-def _feed_event(level: str, title: str, description: str, *, source: str = "panel", event_type: str = "feed_event") -> dict[str, str]:
-    return {
-        "type": event_type,
-        "level": str(level or "info")[:24],
-        "title": str(title or "")[:160],
-        "description": str(description or "")[:2000],
-        "source": str(source or "panel")[:48],
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-
-
-def _get_api_auth(request: Request) -> dict[str, Any] | None:
-    return get_api_auth(
-        request,
-        secret_key=settings.session_secret,
-        max_age_seconds=settings.api_token_ttl_seconds,
-    )
-
-
-def _require_api_auth(request: Request) -> dict[str, Any]:
-    return require_api_auth(
-        request,
-        secret_key=settings.session_secret,
-        max_age_seconds=settings.api_token_ttl_seconds,
-    )
-
-
-def _is_admin_auth(auth: dict[str, Any] | None) -> bool:
-    if not auth:
-        return False
-    if not _is_site_owner_auth(auth):
-        return False
-    if auth.get("admin_mode") is not None:
-        return bool(auth.get("admin_mode"))
-    return str(auth.get("role") or "admin").lower() == "admin" and not auth.get("guild_id")
-
-
-def _normalize_owner_email(value: Any) -> str:
-    return str(value or "").strip().lower()
-
-
-def _is_site_owner_email(email: Any) -> bool:
-    normalized = _normalize_owner_email(email)
-    return bool(normalized and normalized == settings.site_owner_email)
-
-
-def _owner_email_requires_verification() -> bool:
-    return str(os.getenv("SWARM_PANEL_OWNER_EMAIL_REQUIRES_VERIFICATION", "1") or "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _is_site_owner_account(account: dict[str, Any] | None) -> bool:
-    if not account:
-        return False
-    if not _is_site_owner_email(account.get("email")):
-        return False
-    if _owner_email_requires_verification():
-        return _verification_is_complete(account)
-    return True
-
-
-def _is_site_owner_auth(auth: dict[str, Any] | None) -> bool:
-    return bool(auth and auth.get("site_owner"))
-
-
-def _is_image_gallery_owner_auth(auth: dict[str, Any] | None) -> bool:
-    return _is_admin_auth(auth) and _is_site_owner_auth(auth)
-
-
-def _scoped_guild_id(auth: dict[str, Any] | None) -> str | None:
-    if auth and not _is_site_owner_auth(auth) and not auth.get("guild_id"):
-        return OWNER_SCOPE_SENTINEL
-    if _is_admin_auth(auth):
-        return None
-    guild_id = auth.get("guild_id") if auth else None
-    return str(guild_id) if guild_id not in (None, "") else None
-
-
-def _account_guild_id(auth: dict[str, Any] | None) -> str | None:
-    guild_id = auth.get("guild_id") if auth else None
-    return str(guild_id) if guild_id not in (None, "") else None
-
-
-async def _account_id_for_auth(auth: dict[str, Any]) -> int:
-    username = str(auth.get("username") or "").strip()
-    guild_id = _account_guild_id(auth)
-    if not username or not guild_id:
-        raise HTTPException(status_code=403, detail="Guild account access required")
-    profile = await db.get_account_profile(username, guild_id)
-    if not profile:
-        raise HTTPException(status_code=404, detail="Account profile not found")
-    return int(profile["id"])
 
 
 def _social_mode(profile: dict[str, Any] | None) -> str:
@@ -957,200 +253,6 @@ async def _load_social_target_profile(account_id: int, viewer_id: int | None) ->
         raise HTTPException(status_code=404, detail="Profile not found")
     profile.update(await db.get_account_social_snapshot(int(profile["id"]), viewer_id))
     return profile
-
-
-def _public_scoped_guild_id(auth: dict[str, Any] | None) -> str | None:
-    scoped = _scoped_guild_id(auth)
-    return None if scoped == OWNER_SCOPE_SENTINEL else scoped
-
-
-async def _resolve_account_guild_id(auth: dict[str, Any] | None, username: str | None = None) -> str | None:
-    linked_guild_id = _account_guild_id(auth)
-    if linked_guild_id:
-        return linked_guild_id
-    lookup_username = str(username or (auth or {}).get("username") or "").strip()
-    if not lookup_username:
-        return None
-    try:
-        return await db.get_account_guild_id_for_username(lookup_username)
-    except Exception as exc:
-        action_logger.warning("Failed to resolve account guild for %s: %s", lookup_username, exc)
-        return None
-
-
-def _should_touch_presence(request: Request) -> bool:
-    path = request.url.path
-    if request.method.upper() not in {"GET", "HEAD", "POST", "PATCH", "PUT", "DELETE"}:
-        return False
-    if not path.startswith("/api/"):
-        return False
-    if path == "/api/session/logout":
-        return False
-    return True
-
-
-async def _touch_request_presence(request: Request) -> None:
-    if not _should_touch_presence(request):
-        return
-    auth = await _hydrate_site_owner_auth(request, _get_api_auth(request))
-    if not auth:
-        return
-    username = str(auth.get("username") or "").strip()
-    linked_guild_id = await _resolve_account_guild_id(auth, username)
-    if not username or not linked_guild_id:
-        return
-    try:
-        await db.touch_account_seen(
-            username,
-            linked_guild_id,
-            min_interval_seconds=PRESENCE_TOUCH_INTERVAL_SECONDS,
-        )
-    except Exception:
-        action_logger.debug(
-            "SwarmPanel account presence refresh failed for %s on %s.",
-            username,
-            request.url.path,
-            exc_info=True,
-        )
-
-
-def _background_task(task: asyncio.Task[Any], *, label: str) -> asyncio.Task[Any]:
-    def _consume_result(done: asyncio.Task[Any]) -> None:
-        try:
-            done.result()
-        except asyncio.CancelledError:
-            return
-        except Exception:
-            action_logger.debug("Detached background task failed: %s", label, exc_info=True)
-
-    task.add_done_callback(_consume_result)
-    return task
-
-
-def _schedule_presence_touch(request: Request) -> None:
-    _background_task(asyncio.create_task(_touch_request_presence(request)), label="presence-touch")
-
-
-def _client_id_from_token(token: str) -> str | None:
-    token_head = str(token or "").split(".", 1)[0].strip()
-    if not token_head:
-        return None
-    try:
-        return base64.urlsafe_b64decode(token_head + ("=" * (-len(token_head) % 4))).decode().strip()
-    except Exception:
-        return None
-
-
-def _require_admin_auth(request: Request) -> dict[str, Any]:
-    auth = _require_api_auth(request)
-    if not _is_admin_auth(auth):
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return auth
-
-
-def _require_image_gallery_owner_auth(request: Request) -> dict[str, Any]:
-    auth = _require_api_auth(request)
-    if not _is_image_gallery_owner_auth(auth):
-        raise HTTPException(status_code=403, detail="Image Gallery owner access required")
-    return auth
-
-
-def _require_guild_scope(auth: dict[str, Any], guild_id: str | int | None) -> None:
-    scoped = _scoped_guild_id(auth)
-    if scoped and str(guild_id) != scoped:
-        raise HTTPException(status_code=403, detail="This account can only control its registered guild")
-
-
-def _set_admin_session(request: Request, username: str) -> None:
-    request.session.clear()
-    request.session[SESSION_AUTH_KEY] = True
-    request.session[SESSION_USERNAME_KEY] = username
-    request.session[SESSION_ROLE_KEY] = "admin"
-    request.session[SESSION_SITE_OWNER_KEY] = True
-    request.session[SESSION_ADMIN_MODE_KEY] = True
-    request.session.pop(SESSION_GUILD_ID_KEY, None)
-
-
-def _set_account_session(
-    request: Request,
-    username: str,
-    guild_id: str | int,
-    *,
-    admin_mode: bool = False,
-    site_owner: bool = False,
-) -> None:
-    request.session.clear()
-    request.session[SESSION_AUTH_KEY] = True
-    request.session[SESSION_USERNAME_KEY] = username
-    request.session[SESSION_ROLE_KEY] = "account"
-    request.session[SESSION_GUILD_ID_KEY] = str(guild_id)
-    request.session[SESSION_SITE_OWNER_KEY] = bool(site_owner)
-    request.session[SESSION_ADMIN_MODE_KEY] = bool(site_owner and admin_mode)
-
-
-def _sync_account_session_owner_state(request: Request, profile: dict[str, Any] | None) -> None:
-    if not is_authenticated(request) or not profile:
-        return
-    username = profile.get("username") or request.session.get(SESSION_USERNAME_KEY)
-    guild_id = profile.get("guild_id") or request.session.get(SESSION_GUILD_ID_KEY)
-    if not username or guild_id in (None, ""):
-        return
-    _set_account_session(
-        request,
-        str(username),
-        str(guild_id),
-        admin_mode=bool(request.session.get(SESSION_ADMIN_MODE_KEY)),
-        site_owner=_is_site_owner_account(profile),
-    )
-
-
-async def _hydrate_site_owner_auth(request: Request, auth: dict[str, Any] | None) -> dict[str, Any] | None:
-    if not auth or auth.get("site_owner"):
-        return auth
-    username = str(auth.get("username") or "").strip()
-    linked_guild_id = await _resolve_account_guild_id(auth, username)
-    if not username or not linked_guild_id:
-        return auth
-    try:
-        profile = await db.get_account_profile(username, linked_guild_id)
-    except Exception as exc:
-        action_logger.warning("Failed to hydrate owner auth for %s: %s", username, exc)
-        return auth
-    if not _is_site_owner_account(profile):
-        return auth
-    hydrated = {**auth, "guild_id": str(linked_guild_id), "site_owner": True}
-    if is_authenticated(request):
-        _set_account_session(
-            request,
-            username,
-            linked_guild_id,
-            admin_mode=bool(auth.get("admin_mode")),
-            site_owner=True,
-        )
-    return hydrated
-
-
-async def _authenticate_login(username: str, password: str = "", guild_id: str | int | None = None) -> dict[str, Any] | None:
-    if verify_credentials(username, password, settings.admin_username, settings.admin_password):
-        return {"username": username, "role": "admin", "guild_id": None, "site_owner": True, "admin_mode": True}
-
-    account_secret = password if password not in (None, "") else guild_id
-    if account_secret in (None, ""):
-        return None
-    try:
-        account = await db.authenticate_account_login(username, str(account_secret))
-    except ValueError:
-        return None
-    if not account:
-        return None
-    site_owner = _is_site_owner_account(account)
-    return {
-        "username": account["username"],
-        "role": "account",
-        "guild_id": account["guild_id"],
-        "site_owner": site_owner,
-        "admin_mode": site_owner,
-    }
 
 
 async def _bot_has_registered_guild(bot_key: str, guild_id: str | int) -> bool:
@@ -1862,11 +964,13 @@ _telegram_alert_last: dict[str, float] = {}
 
 
 async def _send_panel_telegram_alert(key: str, title: str, detail: str) -> None:
-    if not telegram_service:
+    # telegram_service lives in app/services.py and is reassigned during
+    # lifespan startup — must read it live via the module, not a bound import.
+    if not _services_module.telegram_service:
         return
     # Use alert_chat_ids() so learned recipients (username→chat_id) are included,
     # not just the raw configured chat IDs.
-    alert_ids = telegram_service.alert_chat_ids()
+    alert_ids = _services_module.telegram_service.alert_chat_ids()
     if not alert_ids:
         action_logger.warning(
             "SwarmPanel Telegram alert '%s' skipped: no allowed chat IDs known yet. "
@@ -1881,7 +985,7 @@ async def _send_panel_telegram_alert(key: str, title: str, detail: str) -> None:
     message = f"{title}\n{str(detail or '').strip()[:1200]}"
     for chat_id in sorted(alert_ids):
         try:
-            await telegram_service.send_message(chat_id, message)
+            await _services_module.telegram_service.send_message(chat_id, message)
         except Exception:
             action_logger.exception("SwarmPanel Telegram alert delivery failed for chat %s.", chat_id)
 
@@ -1912,7 +1016,6 @@ async def _telegram_health_watch_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    global telegram_service
     try:
         await db.connect()
     except Exception:
@@ -1931,7 +1034,7 @@ async def lifespan(_: FastAPI):
             source="system",
         )
     )
-    telegram_service = TelegramPollingService(
+    _services_module.telegram_service = TelegramPollingService(
         token=settings.telegram_bot_token,
         name="SwarmPanel",
         handler=_handle_telegram_command,
@@ -1957,18 +1060,18 @@ async def lifespan(_: FastAPI):
         ],
     )
     if settings.telegram_polling_enabled:
-        await telegram_service.start()
+        await _services_module.telegram_service.start()
         await _send_panel_telegram_alert("startup", "SwarmPanel online", "Telegram bridge and panel health watcher are running.")
     else:
         action_logger.info("SwarmPanel Telegram polling is disabled by PANEL_TELEGRAM_POLLING_ENABLED.")
     yield
     # Stop Telegram first so it can flush before the DB pool closes
-    if telegram_service is not None:
+    if _services_module.telegram_service is not None:
         try:
-            await telegram_service.close()
+            await _services_module.telegram_service.close()
         except Exception:
             logging.getLogger("swarm_panel").exception("Error stopping Telegram service during shutdown.")
-        telegram_service = None
+        _services_module.telegram_service = None
     # Cancel background tasks and wait for them
     for task in background_tasks:
         task.cancel()
@@ -2937,7 +2040,7 @@ async def system_diagnostics(request: Request, force: bool = False):
 @app.get("/api/telegram/status")
 async def telegram_status(request: Request):
     _require_admin_auth(request)
-    status = telegram_service.snapshot() if telegram_service else {
+    status = _services_module.telegram_service.snapshot() if _services_module.telegram_service else {
         "enabled": bool(settings.telegram_bot_token),
         "running": False,
         "bot_username": "",
@@ -3404,30 +2507,6 @@ async def image_gallery_update_report_status(request: Request, payload: GalleryR
     action_logger.warning("image_gallery_report_status report_id=%s status=%s", payload.report_id, payload.status)
     return {"ok": True}
 
-class BotControlRequest(BaseModel):
-    bot_key: str
-    guild_id: str | int | None = None
-    action: str | None = None
-    command: str | None = None
-    payload: Any | None = None
-
-    @model_validator(mode="after")
-    def _sync_action_aliases(self):
-        self.bot_key = str(self.bot_key or "").strip().lower()
-        if self.bot_key not in BOT_INDEX:
-            raise ValueError("Unknown bot key")
-        normalized_action = (self.action or self.command or "").strip()
-        if not normalized_action:
-            raise ValueError("Missing action")
-        self.action = normalized_action
-        self.command = normalized_action
-        if self.guild_id in (None, ""):
-            if normalized_action.upper() == "RESTART":
-                self.guild_id = "0"
-            else:
-                raise ValueError("guild_id is required for non-RESTART actions")
-        return self
-
 @app.post("/api/bots/control")
 async def api_bot_control(request: Request, req: BotControlRequest):
     auth = _require_api_auth(request)
@@ -3458,8 +2537,6 @@ async def api_bot_control(request: Request, req: BotControlRequest):
 
 
 
-active_connections: list[dict[str, Any]] = []
-recent_feed_events: deque[dict[str, str]] = deque(maxlen=100)
 dashboard_broadcast_task: asyncio.Task[Any] | None = None
 WS_SEND_TIMEOUT_SECONDS = max(2.0, float(os.getenv("SWARM_WS_SEND_TIMEOUT_SECONDS", "6") or "6"))
 WS_DASHBOARD_BUILD_TIMEOUT_SECONDS = max(5.0, float(os.getenv("SWARM_WS_DASHBOARD_BUILD_TIMEOUT_SECONDS", "25") or "25"))
@@ -3621,34 +2698,8 @@ async def _dashboard_broadcast_loop() -> None:
     finally:
         dashboard_broadcast_task = None
 
-async def broadcast(data: dict):
-    dead: list[dict[str, Any]] = []
-    serialized = json.dumps(data, default=_json_default)
-    for connection in list(active_connections):
-        ws = connection.get("websocket")
-        if ws is None:
-            dead.append(connection)
-            continue
-        try:
-            await asyncio.wait_for(ws.send_text(serialized), timeout=WS_SEND_TIMEOUT_SECONDS)
-        except Exception:
-            dead.append(connection)
-    for connection in dead:
-        _remove_connection(connection)
-
-
-async def push_feed_event(
-    level: str,
-    title: str,
-    description: str,
-    *,
-    source: str = "panel",
-    event_type: str = "feed_event",
-) -> dict[str, str]:
-    event = _feed_event(level, title, description, source=source, event_type=event_type)
-    recent_feed_events.append(event)
-    await broadcast(event)
-    return event
+# broadcast()/push_feed_event()/_feed_event() now live in app/services.py
+# (shared cross-domain infrastructure — see that module's docstring).
 
 
 
