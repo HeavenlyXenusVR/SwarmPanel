@@ -17,7 +17,7 @@ from dotenv import dotenv_values
 
 from .bots import MUSIC_BOTS
 from .config import Settings
-from .database import _validate_identifier as _validate_db_identifier
+from .db.identifiers import _validate_identifier as _validate_db_identifier
 from .discord_api import DiscordInventoryService
 
 

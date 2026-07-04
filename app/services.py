@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .config import load_settings
-from .database import PanelDatabase
+from .db import PanelDatabase
 from .diagnostics import RuntimeDiagnosticsService
 from .discord_api import DiscordInventoryService
 from .telegram import TelegramPollingService
