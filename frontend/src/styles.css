@@ -971,6 +971,20 @@ small,
   font-size: 1.1rem;
 }
 
+.section-head-end {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.section-head-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  padding: 4px 10px;
+}
+
 .bot-grid,
 .invite-grid,
 .user-grid,

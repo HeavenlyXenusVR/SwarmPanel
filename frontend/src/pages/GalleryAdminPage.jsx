@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { Image as ImageIcon, KeyRound, Mail, MessageCircle, RefreshCw, ShieldCheck, Siren, Table2, Trash2, Users } from "lucide-react";
-import { apiFetch, query } from "../api.js";
+import { Download, Image as ImageIcon, KeyRound, Mail, MessageCircle, RefreshCw, ShieldCheck, Siren, Table2, Trash2, Users } from "lucide-react";
+import { apiFetch, downloadFile, query } from "../api.js";
 import { useLiveRefresh } from "../hooks/useLiveRefresh.js";
 import { DataTable } from "../components/swarm.jsx";
 import { Metric, MetricGrid, Notice, Page, SectionHead, SkeletonGrid } from "../components/ui.jsx";
@@ -129,8 +129,20 @@ export default function GalleryAdminPage({ ctx }) {
     }
   }
 
+  async function exportCsv(kind) {
+    try {
+      await downloadFile(`/api/image-gallery/admin/${kind}/export.csv?limit=500`, `image_gallery_${kind}.csv`);
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  }
+
   return (
-    <Page title="Image Gallery Admin" eyebrow="Owner Workspace" actions={<button type="button" onClick={() => load({ includeTable: true, selectedTable: table, force: true })}><RefreshCw size={16} />Refresh</button>}>
+    <Page
+      title="Image Gallery Admin"
+      eyebrow="Owner Workspace"
+      actions={<button type="button" onClick={() => load({ includeTable: true, selectedTable: table, force: true })}><RefreshCw size={16} />Refresh</button>}
+    >
       <MetricGrid>
         <Metric icon={Users} label="Users" value={summary?.counts?.users ?? users.length} />
         <Metric icon={ImageIcon} label="Media" value={summary?.counts?.media ?? media.length} />
@@ -139,7 +151,7 @@ export default function GalleryAdminPage({ ctx }) {
       </MetricGrid>
       <section className="dashboard-grid">
         <div className="panel wide">
-          <SectionHead title="Users" count={users.length} />
+          <SectionHead title="Users" count={users.length} actions={<button type="button" onClick={() => exportCsv("users")}><Download size={14} />Export CSV</button>} />
           <DataTable rows={users} actions={(row) => (
             <div className="table-actions">
               <button type="button" onClick={() => mutate("/api/image-gallery/users/email-verified", { user_id: row.id, verified: !row.email_verified_at }, "Email flag updated.")}><Mail size={14} />Email</button>
@@ -155,7 +167,7 @@ export default function GalleryAdminPage({ ctx }) {
           <DataTable rows={reports} actions={(row) => <button type="button" onClick={() => mutate("/api/image-gallery/reports/status", { report_id: row.id, status: "resolved" }, "Report resolved.")}>Resolve</button>} />
         </div>
         <div className="panel wide">
-          <SectionHead title="Media" count={media.length} />
+          <SectionHead title="Media" count={media.length} actions={<button type="button" onClick={() => exportCsv("media")}><Download size={14} />Export CSV</button>} />
           <BulkActionsBar
             count={mediaSelection.selectedIds.size}
             deleting={bulkDeleting === "media"}

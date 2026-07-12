@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { RefreshCw, Table2 } from "lucide-react";
-import { apiFetch, query } from "../api.js";
+import { Download, RefreshCw, Table2 } from "lucide-react";
+import { apiFetch, downloadFile, query } from "../api.js";
 import { DataTable } from "../components/swarm.jsx";
 import { Notice, Page, SkeletonGrid } from "../components/ui.jsx";
 
@@ -65,6 +65,19 @@ export default function DatabasesPage({ ctx }) {
     }
   }
   const tables = schemas.find((schema) => schema.schema === selection.schema)?.tables || [];
+
+  async function exportCsv() {
+    if (!selection.schema || !selection.table) return;
+    try {
+      await downloadFile(
+        `/api/database/data${query({ schema_name: selection.schema, table_name: selection.table, limit: 1000, format: "csv" })}`,
+        `${selection.schema}_${selection.table}.csv`,
+      );
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  }
+
   return (
     <Page title="Database Viewer" eyebrow="Admin Data" actions={<button type="button" onClick={() => load({ includeRows: Boolean(selection.schema && selection.table), selected: selection, force: true })}><RefreshCw size={16} />Refresh Schemas</button>}>
       <div className="panel toolbar">
@@ -74,6 +87,7 @@ export default function DatabasesPage({ ctx }) {
           return <option key={name} value={name}>{name}</option>;
         })}</select>
         <button type="button" onClick={loadRows} disabled={loadingRows || !selection.table}><Table2 size={16} />{loadingRows ? "Loading" : "Load"}</button>
+        <button type="button" onClick={exportCsv} disabled={!selection.table}><Download size={16} />Export CSV</button>
       </div>
       {error ? <Notice tone="error">{error}</Notice> : null}
       {loadingRows ? <SkeletonGrid count={3} /> : <DataTable rows={rows} />}

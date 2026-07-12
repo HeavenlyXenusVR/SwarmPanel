@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from ..auth_deps import _require_image_gallery_owner_auth
+from ..csv_export import rows_to_csv_response
 from ..emailer import send_image_gallery_verification_email
 from ..schemas import (
     GalleryCommentBulkDeleteRequest,
@@ -52,6 +53,33 @@ async def image_gallery_admin(request: Request, limit: int = 50):
     except Exception as exc:
         action_logger.error("Failed to fetch image gallery admin data: %s", exc)
         raise HTTPException(status_code=503, detail=_safe_error_detail("Image Gallery database unavailable", exc))
+
+
+@router.get("/api/image-gallery/admin/media/export.csv")
+async def image_gallery_export_media_csv(request: Request, limit: int = 200):
+    auth = _require_image_gallery_owner_auth(request)
+    limit = _bounded_query_limit(limit, default=200, max_limit=500)
+    try:
+        data = await db.get_image_gallery_admin_data(limit)
+    except Exception as exc:
+        action_logger.error("Failed to export image gallery media CSV: %s", exc)
+        raise HTTPException(status_code=503, detail=_safe_error_detail("Image Gallery database unavailable", exc))
+    await db.record_audit_log(auth.get("username"), "image_gallery_export_media_csv", target_type="gallery_media")
+    return rows_to_csv_response(data.get("media", []), "image_gallery_media")
+
+
+@router.get("/api/image-gallery/admin/users/export.csv")
+async def image_gallery_export_users_csv(request: Request, limit: int = 200):
+    auth = _require_image_gallery_owner_auth(request)
+    limit = _bounded_query_limit(limit, default=200, max_limit=500)
+    try:
+        data = await db.get_image_gallery_admin_data(limit)
+    except Exception as exc:
+        action_logger.error("Failed to export image gallery users CSV: %s", exc)
+        raise HTTPException(status_code=503, detail=_safe_error_detail("Image Gallery database unavailable", exc))
+    await db.record_audit_log(auth.get("username"), "image_gallery_export_users_csv", target_type="gallery_user")
+    users = [{key: value for key, value in row.items() if "password" not in key.lower()} for row in data.get("users", [])]
+    return rows_to_csv_response(users, "image_gallery_users")
 
 
 @router.get("/api/image-gallery/tables")

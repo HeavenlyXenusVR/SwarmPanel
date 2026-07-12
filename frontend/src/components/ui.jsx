@@ -29,8 +29,16 @@ export function Page({ title, eyebrow, lede = "", actions, className = "", child
   );
 }
 
-export function SectionHead({ title, count }) {
-  return <div className="section-head"><h2>{title}</h2>{count !== undefined ? <span>{count}</span> : null}</div>;
+export function SectionHead({ title, count, actions }) {
+  return (
+    <div className="section-head">
+      <h2>{title}</h2>
+      <div className="section-head-end">
+        {count !== undefined ? <span>{count}</span> : null}
+        {actions ? <div className="section-head-actions">{actions}</div> : null}
+      </div>
+    </div>
+  );
 }
 
 export function MetricGrid({ children }) {
