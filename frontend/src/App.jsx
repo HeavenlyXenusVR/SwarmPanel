@@ -31,6 +31,7 @@ import DatabasesPage from "./pages/DatabasesPage.jsx";
 import GalleryAdminPage from "./pages/GalleryAdminPage.jsx";
 import LumisoundAdminPage from "./pages/LumisoundAdminPage.jsx";
 import IntelPage from "./pages/IntelPage.jsx";
+import AuditLogPage from "./pages/AuditLogPage.jsx";
 import AuthPage from "./pages/AuthPage.jsx";
 
 const BOOT_TIPS = [
@@ -537,6 +538,13 @@ function RouteViewport({ ctx, pathname }) {
     return (
       <Protected ctx={ctx} admin>
         <IntelPage ctx={ctx} />
+      </Protected>
+    );
+  }
+  if (currentPath === "/audit-log") {
+    return (
+      <Protected ctx={ctx} admin>
+        <AuditLogPage ctx={ctx} />
       </Protected>
     );
   }

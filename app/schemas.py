@@ -105,6 +105,15 @@ class SwarmAccountPasswordResetRequest(BaseModel):
     new_password: str
 
 
+class SwarmAccountBulkDeleteRequest(BaseModel):
+    ids: list[int]
+
+
+class SwarmAccountBulkVerifyRequest(BaseModel):
+    ids: list[int]
+    verified: bool = True
+
+
 # --- Image Gallery admin ------------------------------------------------------
 
 
@@ -151,6 +160,18 @@ class GalleryMediaUpdateRequest(BaseModel):
 class GalleryReportStatusRequest(BaseModel):
     report_id: int
     status: str
+
+
+class GalleryMediaBulkDeleteRequest(BaseModel):
+    ids: list[int]
+
+
+class GalleryCommentBulkDeleteRequest(BaseModel):
+    ids: list[int]
+
+
+class GalleryUserBulkDeleteRequest(BaseModel):
+    ids: list[int]
 
 
 # --- User profile / panel appearance ------------------------------------------
@@ -211,6 +232,38 @@ class PanelPreferencesUpdateRequest(BaseModel):
     show_bot_uptime: bool | None = None
     show_queue_pressure: bool | None = None
     compact_sidebar: bool | None = None
+
+
+# --- Lumisound admin ------------------------------------------------------------
+
+
+class LumisoundUploadDeleteRequest(BaseModel):
+    upload_id: int
+
+
+class LumisoundUserActiveRequest(BaseModel):
+    user_id: int
+    active: bool
+
+
+class LumisoundBugReportStatusRequest(BaseModel):
+    report_id: int
+    status: str
+
+
+# --- Configurable alerting ----------------------------------------------------
+
+
+class AlertRuleCreateRequest(BaseModel):
+    rule_type: str
+    threshold_minutes: int = 5
+    enabled: bool = True
+
+
+class AlertRuleUpdateRequest(BaseModel):
+    rule_type: str | None = None
+    threshold_minutes: int | None = None
+    enabled: bool | None = None
 
 
 # --- Bot control ---------------------------------------------------------------

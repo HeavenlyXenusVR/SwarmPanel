@@ -139,3 +139,38 @@ class LumisoundMixin:
         self._lumisound_admin_cache[safe_limit] = (time.monotonic() + PANEL_IMAGE_GALLERY_ADMIN_CACHE_TTL_SECONDS, copy.deepcopy(result))
         return result
 
+    async def delete_lumisound_upload(self, upload_id: int) -> None:
+        schema = _validate_identifier(self.settings.db_default_schema, "lumisound schema")
+        await self._execute(
+            f"DELETE FROM `{schema}`.`ios_user_music_metadata` WHERE id = %s",
+            (int(upload_id),),
+        )
+        self._lumisound_admin_cache.clear()
+
+    async def set_lumisound_user_active(self, user_id: int, active: bool) -> dict[str, Any] | None:
+        """Suspend (active=False) or reinstate (active=True) a Lumisound
+        account. ios_users.is_active already gates the app's own login/API
+        checks, so this is a real suspend, not just a cosmetic flag."""
+        schema = _validate_identifier(self.settings.db_default_schema, "lumisound schema")
+        await self._execute(
+            f"UPDATE `{schema}`.`ios_users` SET is_active = %s WHERE id = %s",
+            (1 if active else 0, int(user_id)),
+        )
+        self._lumisound_admin_cache.clear()
+        row = await self._fetchone(
+            f"SELECT id, username, display_name, email, is_active FROM `{schema}`.`ios_users` WHERE id = %s",
+            (int(user_id),),
+        )
+        return self._json_row(row) if row else None
+
+    async def update_lumisound_bug_report_status(self, report_id: int, status: str) -> None:
+        schema = _validate_identifier(self.settings.db_default_schema, "lumisound schema")
+        status = str(status or "").strip().lower()
+        if status not in {"open", "resolved"}:
+            raise ValueError("Bug report status must be open or resolved.")
+        await self._execute(
+            f"UPDATE `{schema}`.`ios_bug_reports` SET status = %s WHERE id = %s",
+            (status, int(report_id)),
+        )
+        self._lumisound_admin_cache.clear()
+

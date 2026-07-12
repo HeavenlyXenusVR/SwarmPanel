@@ -21,7 +21,9 @@ router = APIRouter()
 @router.get("/accounts")
 @router.get("/databases")
 @router.get("/gallery-admin")
+@router.get("/lumisound-admin")
 @router.get("/intel")
+@router.get("/audit-log")
 async def index() -> FileResponse:
     return FileResponse(_app_shell_path())
 

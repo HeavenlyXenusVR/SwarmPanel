@@ -465,6 +465,11 @@ async def api_bot_control(request: Request, req: BotControlRequest):
             source="api",
             event_type="command_ack",
         )
+        await db.record_audit_log(
+            auth.get("username"), f"bot_control_{action.lower()}",
+            target_type="bot", target_id=f"{req.bot_key}:{guild_id}",
+            details=str(payload) if payload else None,
+        )
         return {"ok": True, **result}
     except ValueError as e:
         await push_feed_event("warning", "Invalid Bot Control", str(e), source="api")

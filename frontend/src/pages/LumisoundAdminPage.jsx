@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Activity, Bug, Clock, Disc3, ListMusic, Music, RefreshCw, Radio, Upload, Users } from "lucide-react";
+import { Activity, Bug, CheckCircle2, Clock, Disc3, ListMusic, Music, RefreshCw, Radio, ShieldOff, Trash2, Upload, Users } from "lucide-react";
 import { apiFetch } from "../api.js";
 import { useLiveRefresh } from "../hooks/useLiveRefresh.js";
 import { DataTable } from "../components/swarm.jsx";
@@ -33,6 +33,17 @@ export default function LumisoundAdminPage({ ctx }) {
   }, [showToast]);
   useEffect(() => { load(); }, [load]);
   useLiveRefresh(() => load({ background: true, force: true }), { interval: 15_000 });
+
+  async function mutate(path, payload, message, { confirmText } = {}) {
+    if (confirmText && !window.confirm(confirmText)) return;
+    try {
+      await apiFetch(path, { method: "POST", body: JSON.stringify(payload) });
+      showToast(message, "success");
+      await load({ force: true });
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  }
 
   const summary = data?.summary || {};
   const users = data?.users || [];
@@ -75,15 +86,59 @@ export default function LumisoundAdminPage({ ctx }) {
         </div>
         <div className="panel wide">
           <SectionHead title="Users" count={users.length} />
-          <DataTable rows={users} />
+          <DataTable rows={users} actions={(row) => (
+            <div className="table-actions">
+              {row.is_active === false || row.is_active === 0 ? (
+                <button type="button" onClick={() => mutate("/api/lumisound/users/active", { user_id: row.id, active: true }, "User reinstated.")}>
+                  <CheckCircle2 size={14} />Reinstate
+                </button>
+              ) : (
+                <button
+                  className="danger"
+                  type="button"
+                  onClick={() => mutate(
+                    "/api/lumisound/users/active",
+                    { user_id: row.id, active: false },
+                    "User suspended.",
+                    { confirmText: `Suspend Lumisound user "${row.username || row.id}"? They will be blocked from login/API access.` },
+                  )}
+                >
+                  <ShieldOff size={14} />Suspend
+                </button>
+              )}
+            </div>
+          )} />
         </div>
         <div className="panel wide">
           <SectionHead title="Recent Uploads" count={uploads.length} />
-          <DataTable rows={uploads} />
+          <DataTable rows={uploads} actions={(row) => (
+            <button
+              className="danger"
+              type="button"
+              onClick={() => mutate(
+                "/api/lumisound/uploads/delete",
+                { upload_id: row.id },
+                "Upload deleted.",
+                { confirmText: `Delete upload "${row.title || row.filename || row.id}"? This cannot be undone.` },
+              )}
+            >
+              <Trash2 size={14} />Delete
+            </button>
+          )} />
         </div>
         <div className="panel">
           <SectionHead title="Bug Reports" count={bugReports.length} />
-          <DataTable rows={bugReports} />
+          <DataTable rows={bugReports} actions={(row) => (
+            row.status === "resolved" ? (
+              <button type="button" onClick={() => mutate("/api/lumisound/bug-reports/status", { report_id: row.id, status: "open" }, "Bug report reopened.")}>
+                Reopen
+              </button>
+            ) : (
+              <button type="button" onClick={() => mutate("/api/lumisound/bug-reports/status", { report_id: row.id, status: "resolved" }, "Bug report resolved.")}>
+                <CheckCircle2 size={14} />Resolve
+              </button>
+            )
+          )} />
         </div>
         <div className="panel">
           <SectionHead title="Active Listen Rooms" count={listenRooms.length} />

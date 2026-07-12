@@ -1,15 +1,21 @@
 """Image Gallery admin: user/comment/media/report management, table browsing."""
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, Request
 
 from ..auth_deps import _require_image_gallery_owner_auth
+from ..csv_export import rows_to_csv_response
 from ..emailer import send_image_gallery_verification_email
 from ..schemas import (
+    GalleryCommentBulkDeleteRequest,
     GalleryCommentDeleteRequest,
+    GalleryMediaBulkDeleteRequest,
     GalleryMediaDeleteRequest,
     GalleryMediaUpdateRequest,
     GalleryPasswordResetRequest,
     GalleryReportStatusRequest,
+    GalleryUserBulkDeleteRequest,
     GalleryUserDeleteRequest,
     GalleryUserFlagRequest,
     GalleryUserUpdateRequest,
@@ -19,6 +25,23 @@ from ..services import action_logger, db, settings
 from ..verification import _image_gallery_verification_url, _verification_code
 
 router = APIRouter()
+
+MAX_BULK_IDS = 200
+
+
+async def _run_bulk_delete(ids: list[int], delete_one) -> dict[str, Any]:
+    """Loop the existing single-item delete coroutine over ``ids``, collecting
+    a per-id success/failure summary instead of reimplementing delete logic."""
+    unique_ids = list(dict.fromkeys(int(item) for item in ids))[:MAX_BULK_IDS]
+    succeeded: list[int] = []
+    failed: list[dict[str, Any]] = []
+    for item_id in unique_ids:
+        try:
+            await delete_one(item_id)
+            succeeded.append(item_id)
+        except Exception as exc:
+            failed.append({"id": item_id, "error": str(exc)[:240]})
+    return {"succeeded": succeeded, "failed": failed}
 
 
 @router.get("/api/image-gallery/admin")
@@ -30,6 +53,33 @@ async def image_gallery_admin(request: Request, limit: int = 50):
     except Exception as exc:
         action_logger.error("Failed to fetch image gallery admin data: %s", exc)
         raise HTTPException(status_code=503, detail=_safe_error_detail("Image Gallery database unavailable", exc))
+
+
+@router.get("/api/image-gallery/admin/media/export.csv")
+async def image_gallery_export_media_csv(request: Request, limit: int = 200):
+    auth = _require_image_gallery_owner_auth(request)
+    limit = _bounded_query_limit(limit, default=200, max_limit=500)
+    try:
+        data = await db.get_image_gallery_admin_data(limit)
+    except Exception as exc:
+        action_logger.error("Failed to export image gallery media CSV: %s", exc)
+        raise HTTPException(status_code=503, detail=_safe_error_detail("Image Gallery database unavailable", exc))
+    await db.record_audit_log(auth.get("username"), "image_gallery_export_media_csv", target_type="gallery_media")
+    return rows_to_csv_response(data.get("media", []), "image_gallery_media")
+
+
+@router.get("/api/image-gallery/admin/users/export.csv")
+async def image_gallery_export_users_csv(request: Request, limit: int = 200):
+    auth = _require_image_gallery_owner_auth(request)
+    limit = _bounded_query_limit(limit, default=200, max_limit=500)
+    try:
+        data = await db.get_image_gallery_admin_data(limit)
+    except Exception as exc:
+        action_logger.error("Failed to export image gallery users CSV: %s", exc)
+        raise HTTPException(status_code=503, detail=_safe_error_detail("Image Gallery database unavailable", exc))
+    await db.record_audit_log(auth.get("username"), "image_gallery_export_users_csv", target_type="gallery_user")
+    users = [{key: value for key, value in row.items() if "password" not in key.lower()} for row in data.get("users", [])]
+    return rows_to_csv_response(users, "image_gallery_users")
 
 
 @router.get("/api/image-gallery/tables")
@@ -61,17 +111,19 @@ async def image_gallery_table_data(request: Request, table_name: str, limit: int
 
 @router.post("/api/image-gallery/users/delete")
 async def image_gallery_delete_user(request: Request, payload: GalleryUserDeleteRequest):
-    _require_image_gallery_owner_auth(request)
+    auth = _require_image_gallery_owner_auth(request)
     await db.delete_image_gallery_user(payload.user_id)
     action_logger.warning("image_gallery_delete_user user_id=%s", payload.user_id)
+    await db.record_audit_log(auth.get("username"), "image_gallery_delete_user", target_type="gallery_user", target_id=payload.user_id)
     return {"ok": True}
 
 
 @router.post("/api/image-gallery/comments/delete")
 async def image_gallery_delete_comment(request: Request, payload: GalleryCommentDeleteRequest):
-    _require_image_gallery_owner_auth(request)
+    auth = _require_image_gallery_owner_auth(request)
     await db.delete_image_gallery_comment(payload.comment_id)
     action_logger.warning("image_gallery_delete_comment comment_id=%s", payload.comment_id)
+    await db.record_audit_log(auth.get("username"), "image_gallery_delete_comment", target_type="gallery_comment", target_id=payload.comment_id)
     return {"ok": True}
 
 
@@ -145,10 +197,47 @@ async def image_gallery_update_media(request: Request, payload: GalleryMediaUpda
 
 @router.post("/api/image-gallery/media/delete")
 async def image_gallery_delete_media(request: Request, payload: GalleryMediaDeleteRequest):
-    _require_image_gallery_owner_auth(request)
+    auth = _require_image_gallery_owner_auth(request)
     await db.delete_image_gallery_media(payload.media_id)
     action_logger.warning("image_gallery_delete_media media_id=%s", payload.media_id)
+    await db.record_audit_log(auth.get("username"), "image_gallery_delete_media", target_type="gallery_media", target_id=payload.media_id)
     return {"ok": True}
+
+
+@router.post("/api/image-gallery/admin/media/bulk-delete")
+async def image_gallery_bulk_delete_media(request: Request, payload: GalleryMediaBulkDeleteRequest):
+    auth = _require_image_gallery_owner_auth(request)
+    result = await _run_bulk_delete(payload.ids, db.delete_image_gallery_media)
+    action_logger.warning("image_gallery_bulk_delete_media ids=%s succeeded=%s failed=%s", payload.ids, len(result["succeeded"]), len(result["failed"]))
+    await db.record_audit_log(
+        auth.get("username"), "image_gallery_bulk_delete_media", target_type="gallery_media",
+        details=f"succeeded_ids={result['succeeded']} failed={result['failed']}",
+    )
+    return {"ok": True, **result}
+
+
+@router.post("/api/image-gallery/admin/comments/bulk-delete")
+async def image_gallery_bulk_delete_comments(request: Request, payload: GalleryCommentBulkDeleteRequest):
+    auth = _require_image_gallery_owner_auth(request)
+    result = await _run_bulk_delete(payload.ids, db.delete_image_gallery_comment)
+    action_logger.warning("image_gallery_bulk_delete_comments ids=%s succeeded=%s failed=%s", payload.ids, len(result["succeeded"]), len(result["failed"]))
+    await db.record_audit_log(
+        auth.get("username"), "image_gallery_bulk_delete_comments", target_type="gallery_comment",
+        details=f"succeeded_ids={result['succeeded']} failed={result['failed']}",
+    )
+    return {"ok": True, **result}
+
+
+@router.post("/api/image-gallery/admin/users/bulk-delete")
+async def image_gallery_bulk_delete_users(request: Request, payload: GalleryUserBulkDeleteRequest):
+    auth = _require_image_gallery_owner_auth(request)
+    result = await _run_bulk_delete(payload.ids, db.delete_image_gallery_user)
+    action_logger.warning("image_gallery_bulk_delete_users ids=%s succeeded=%s failed=%s", payload.ids, len(result["succeeded"]), len(result["failed"]))
+    await db.record_audit_log(
+        auth.get("username"), "image_gallery_bulk_delete_users", target_type="gallery_user",
+        details=f"succeeded_ids={result['succeeded']} failed={result['failed']}",
+    )
+    return {"ok": True, **result}
 
 
 @router.post("/api/image-gallery/reports/status")

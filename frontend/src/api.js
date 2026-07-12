@@ -192,6 +192,39 @@ export async function apiFetch(path, options = {}) {
   return payload;
 }
 
+// Fetches a binary/file response (e.g. a CSV export) with the same auth +
+// remote-origin resolution as apiFetch, then triggers a browser download.
+// There is no existing blob-download helper in this file — CSV export is
+// the first feature that needs one.
+export async function downloadFile(path, filename) {
+  const target = await resolveApiUrl(path);
+  const headers = new Headers();
+  const token = readToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const response = await fetchWithTimeout(target, { headers, timeoutMs: 30_000 });
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const payload = await response.json();
+      detail = errorMessage(payload, response.status);
+    } catch (_error) {
+      detail = `Download failed (${response.status})`;
+    }
+    const error = new Error(detail);
+    error.status = response.status;
+    throw error;
+  }
+  const blob = await response.blob();
+  const objectUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename || "export.csv";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 4_000);
+}
+
 function errorMessage(payload, status) {
   const raw = payload?.detail || payload?.message || payload;
   if (typeof raw === "string" && /<html[\s>]/i.test(raw) && /405\s+Not\s+Allowed/i.test(raw)) {

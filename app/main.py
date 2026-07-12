@@ -14,6 +14,8 @@ from . import services as _services_module
 from .auth_deps import _schedule_presence_touch
 from .paths import BASE_DIR
 from .routers import (
+    alerts,
+    audit,
     bots,
     databases,
     gallery,
@@ -34,6 +36,25 @@ from .telegram_bridge import _handle_telegram_command, _send_panel_telegram_aler
 
 background_tasks: list[asyncio.Task] = []
 
+METRICS_HISTORY_CAPTURE_INTERVAL_SECONDS = 300  # 5 minutes
+
+
+async def _metrics_history_capture_loop() -> None:
+    """Periodically samples a handful of key fleet metrics into
+    swarm_metrics_history for the Intel page's trend charts."""
+    await asyncio.sleep(30)
+    while True:
+        try:
+            await db.capture_metrics_snapshot()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logging.getLogger("swarm_panel").exception("Metrics history capture failed.")
+        try:
+            await asyncio.sleep(METRICS_HISTORY_CAPTURE_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            raise
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -47,6 +68,7 @@ async def lifespan(_: FastAPI):
     # Commands execute directly through /api/bots/control. The old command_queue
     # worker is intentionally not started because no endpoint enqueues work.
     background_tasks.append(asyncio.create_task(_telegram_health_watch_loop(), name="panel-telegram-health-watch"))
+    background_tasks.append(asyncio.create_task(_metrics_history_capture_loop(), name="panel-metrics-history-capture"))
     recent_feed_events.append(
         _feed_event(
             "info",
@@ -164,5 +186,7 @@ app.include_router(lumisound.router)
 app.include_router(gallery.router)
 app.include_router(websocket.router)
 app.include_router(monitoring.router)
+app.include_router(audit.router)
+app.include_router(alerts.router)
 # Defensive: keep the catch-all ios-bridge proxy included last.
 app.include_router(ios_bridge.router)

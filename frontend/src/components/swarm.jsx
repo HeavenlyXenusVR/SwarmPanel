@@ -572,22 +572,170 @@ export function ChannelSelect({ value, channels, onChange, optional = false }) {
   );
 }
 
-export function DataTable({ rows = [], actions }) {
+export function DataTable({ rows = [], actions, selectable = false, selectedIds, onToggleRow, onToggleAll, getRowId }) {
   if (!rows?.length) return <EmptyState title="No rows" compact />;
   const columns = unique(rows.flatMap((row) => Object.keys(row))).filter((column) => !String(column).toLowerCase().includes("password_hash")).slice(0, 9);
+  const rowId = getRowId || ((row) => row.id);
+  const allSelected = selectable && rows.length > 0 && rows.every((row) => selectedIds?.has(rowId(row)));
   return (
     <div className="table-wrap">
       <table className="data-table">
-        <thead><tr>{columns.map((column) => <th className={cellClassName(column)} key={column}>{labelForColumn(column)}</th>)}{actions ? <th>Actions</th> : null}</tr></thead>
+        <thead>
+          <tr>
+            {selectable ? (
+              <th className="table-cell-select">
+                <input
+                  type="checkbox"
+                  aria-label="Select all rows"
+                  checked={allSelected}
+                  onChange={(event) => onToggleAll?.(event.target.checked)}
+                />
+              </th>
+            ) : null}
+            {columns.map((column) => <th className={cellClassName(column)} key={column}>{labelForColumn(column)}</th>)}
+            {actions ? <th>Actions</th> : null}
+          </tr>
+        </thead>
         <tbody>
-          {rows.map((row, index) => (
-            <tr key={row.id ?? `${index}-${JSON.stringify(row).slice(0, 20)}`}>
-              {columns.map((column) => <td className={cellClassName(column)} key={column}>{renderTableCell(column, row[column])}</td>)}
-              {actions ? <td>{actions(row)}</td> : null}
-            </tr>
-          ))}
+          {rows.map((row, index) => {
+            const id = rowId(row);
+            const key = id ?? `${index}-${JSON.stringify(row).slice(0, 20)}`;
+            return (
+              <tr key={key} className={selectable && selectedIds?.has(id) ? "is-selected" : ""}>
+                {selectable ? (
+                  <td className="table-cell-select">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select row ${id}`}
+                      checked={Boolean(selectedIds?.has(id))}
+                      onChange={(event) => onToggleRow?.(id, event.target.checked)}
+                    />
+                  </td>
+                ) : null}
+                {columns.map((column) => <td className={cellClassName(column)} key={column}>{renderTableCell(column, row[column])}</td>)}
+                {actions ? <td>{actions(row)}</td> : null}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+const TREND_CHART_WIDTH = 560;
+const TREND_CHART_HEIGHT = 160;
+const TREND_CHART_PAD = { top: 12, right: 14, bottom: 22, left: 14 };
+
+export function TrendChart({ points = [], label = "", color = "var(--accent)", valueKey = "metric_value", timeKey = "captured_at" }) {
+  const [hoverIndex, setHoverIndex] = useState(null);
+  const svgRef = useRef(null);
+  const safePoints = Array.isArray(points) ? points.filter((point) => point && point[timeKey]) : [];
+
+  if (!safePoints.length) {
+    return (
+      <div className="trend-chart trend-chart-empty">
+        <EmptyState title={`No ${label || "metric"} history yet`} compact />
+      </div>
+    );
+  }
+
+  const values = safePoints.map((point) => Number(point[valueKey]) || 0);
+  const times = safePoints.map((point) => new Date(point[timeKey]).getTime());
+  const minValue = Math.min(0, ...values);
+  const maxValue = Math.max(1, ...values);
+  const minTime = Math.min(...times);
+  const maxTime = Math.max(...times);
+  const innerWidth = TREND_CHART_WIDTH - TREND_CHART_PAD.left - TREND_CHART_PAD.right;
+  const innerHeight = TREND_CHART_HEIGHT - TREND_CHART_PAD.top - TREND_CHART_PAD.bottom;
+
+  const xForIndex = (index) => {
+    const span = maxTime - minTime || 1;
+    return TREND_CHART_PAD.left + ((times[index] - minTime) / span) * innerWidth;
+  };
+  const yForValue = (value) => {
+    const span = maxValue - minValue || 1;
+    return TREND_CHART_PAD.top + innerHeight - ((value - minValue) / span) * innerHeight;
+  };
+
+  const linePath = safePoints.map((_point, index) => `${index === 0 ? "M" : "L"}${xForIndex(index).toFixed(2)},${yForValue(values[index]).toFixed(2)}`).join(" ");
+  const areaPath = `${linePath} L${xForIndex(safePoints.length - 1).toFixed(2)},${(TREND_CHART_PAD.top + innerHeight).toFixed(2)} L${xForIndex(0).toFixed(2)},${(TREND_CHART_PAD.top + innerHeight).toFixed(2)} Z`;
+
+  const latest = values[values.length - 1];
+  const gradientId = `trend-gradient-${label.replace(/[^a-z0-9]/gi, "") || "metric"}`;
+
+  function handleMove(event) {
+    const svg = svgRef.current;
+    if (!svg || !safePoints.length) return;
+    const rect = svg.getBoundingClientRect();
+    const relativeX = ((event.clientX - rect.left) / rect.width) * TREND_CHART_WIDTH;
+    let nearest = 0;
+    let nearestDistance = Infinity;
+    for (let index = 0; index < safePoints.length; index += 1) {
+      const distance = Math.abs(xForIndex(index) - relativeX);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearest = index;
+      }
+    }
+    setHoverIndex(nearest);
+  }
+
+  const hovered = hoverIndex !== null ? safePoints[hoverIndex] : null;
+
+  return (
+    <div className="trend-chart">
+      <div className="trend-chart-head">
+        <span>{label}</span>
+        <strong>{number(latest)}</strong>
+      </div>
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${TREND_CHART_WIDTH} ${TREND_CHART_HEIGHT}`}
+        className="trend-chart-svg"
+        role="img"
+        aria-label={`${label} trend over time, latest value ${latest}`}
+        onMouseMove={handleMove}
+        onMouseLeave={() => setHoverIndex(null)}
+      >
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.28" />
+            <stop offset="100%" stopColor={color} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <line
+          x1={TREND_CHART_PAD.left}
+          x2={TREND_CHART_WIDTH - TREND_CHART_PAD.right}
+          y1={TREND_CHART_PAD.top + innerHeight}
+          y2={TREND_CHART_PAD.top + innerHeight}
+          className="trend-chart-axis"
+        />
+        <path d={areaPath} fill={`url(#${gradientId})`} stroke="none" />
+        <path d={linePath} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        {hovered ? (
+          <g>
+            <line
+              x1={xForIndex(hoverIndex)}
+              x2={xForIndex(hoverIndex)}
+              y1={TREND_CHART_PAD.top}
+              y2={TREND_CHART_PAD.top + innerHeight}
+              className="trend-chart-crosshair"
+            />
+            <circle cx={xForIndex(hoverIndex)} cy={yForValue(values[hoverIndex])} r="4" fill={color} stroke="var(--panel)" strokeWidth="1.5" />
+          </g>
+        ) : null}
+      </svg>
+      {hovered ? (
+        <div className="trend-chart-tooltip">
+          <strong>{number(Number(hovered[valueKey]) || 0)}</strong>
+          <span>{formatTime(hovered[timeKey])}</span>
+        </div>
+      ) : (
+        <div className="trend-chart-tooltip trend-chart-tooltip-muted">
+          <span>Hover the chart for a point-in-time reading.</span>
+        </div>
+      )}
     </div>
   );
 }

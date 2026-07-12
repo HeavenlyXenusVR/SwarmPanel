@@ -5,6 +5,7 @@ import {
   HeartPulse,
   Image as ImageIcon,
   LayoutDashboard,
+  ListChecks,
   LogIn,
   LogOut,
   Menu,
@@ -42,6 +43,7 @@ export function Shell({ ctx, children }) {
     if (ctx.canGallery) items.push({ to: "/gallery-admin", icon: ImageIcon, label: "Gallery", mobileLabel: "Gallery" });
     if (ctx.isAdmin) items.push({ to: "/lumisound-admin", icon: Music, label: "Lumisound", mobileLabel: "Music" });
     if (ctx.isAdmin) items.push({ to: "/intel", icon: Siren, label: "Intel", mobileLabel: "Intel" });
+    if (ctx.isAdmin) items.push({ to: "/audit-log", icon: ListChecks, label: "Audit Log", mobileLabel: "Audit" });
     return items;
   }, [ctx.canGallery, ctx.isAdmin]);
   const mobilePrimaryItems = navItems.filter((item) => ["/", "/controls", "/users", "/messages", "/profile"].includes(item.to));
