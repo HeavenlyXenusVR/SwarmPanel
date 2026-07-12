@@ -65,7 +65,7 @@ async def api_swarm_accounts_email_verified(request: Request, payload: SwarmAcco
 
 @router.post("/api/swarm-accounts/reset-password")
 async def api_swarm_accounts_reset_password(request: Request, payload: SwarmAccountPasswordResetRequest):
-    _require_admin_auth(request)
+    auth = _require_admin_auth(request)
     try:
         account = await db.reset_account_password_admin(payload.account_id, payload.new_password)
     except ValueError as exc:
@@ -73,6 +73,7 @@ async def api_swarm_accounts_reset_password(request: Request, payload: SwarmAcco
     if not account:
         raise HTTPException(status_code=404, detail="SwarmPanel account not found")
     action_logger.warning("swarm_account_reset_password account_id=%s", payload.account_id)
+    await db.record_audit_log(auth.get("username"), "swarm_account_reset_password", target_type="account", target_id=payload.account_id)
     return {"ok": True, "account": account}
 
 
@@ -102,10 +103,11 @@ async def api_swarm_accounts_resend_verification(request: Request, payload: Swar
 
 @router.post("/api/swarm-accounts/delete")
 async def api_swarm_accounts_delete(request: Request, payload: SwarmAccountDeleteRequest):
-    _require_admin_auth(request)
+    auth = _require_admin_auth(request)
     try:
         await db.delete_account_admin(payload.account_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     action_logger.warning("swarm_account_delete account_id=%s", payload.account_id)
+    await db.record_audit_log(auth.get("username"), "swarm_account_delete", target_type="account", target_id=payload.account_id)
     return {"ok": True}

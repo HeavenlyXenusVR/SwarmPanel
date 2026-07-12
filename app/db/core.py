@@ -220,6 +220,10 @@ class CoreMixin:
                     await self._ensure_account_social_schema(cur)
                 except Exception as exc:
                     logger.warning("Could not ensure account social tables: %s", exc)
+                try:
+                    await self._ensure_audit_log_schema(cur)
+                except Exception as exc:
+                    logger.warning("Could not ensure swarm_audit_log table: %s", exc)
 
     async def close(self) -> None:
         if self.pool:

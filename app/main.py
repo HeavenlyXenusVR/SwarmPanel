@@ -14,6 +14,7 @@ from . import services as _services_module
 from .auth_deps import _schedule_presence_touch
 from .paths import BASE_DIR
 from .routers import (
+    audit,
     bots,
     databases,
     gallery,
@@ -164,5 +165,6 @@ app.include_router(lumisound.router)
 app.include_router(gallery.router)
 app.include_router(websocket.router)
 app.include_router(monitoring.router)
+app.include_router(audit.router)
 # Defensive: keep the catch-all ios-bridge proxy included last.
 app.include_router(ios_bridge.router)

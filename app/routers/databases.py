@@ -42,7 +42,7 @@ async def tables(request: Request, schema: str):
 
 @router.post("/api/database/truncate-table")
 async def truncate_table(request: Request, payload: TruncateTableRequest):
-    _require_admin_auth(request)
+    auth = _require_admin_auth(request)
     expected_confirmation = f"TRUNCATE {payload.schema_name}.{payload.table_name}"
     if payload.confirm_text.strip() != expected_confirmation:
         raise HTTPException(
@@ -60,12 +60,16 @@ async def truncate_table(request: Request, payload: TruncateTableRequest):
     except Exception as exc:
         raise HTTPException(status_code=503, detail=_safe_error_detail("Database unavailable", exc))
     action_logger.warning("truncate_table schema=%s table=%s", payload.schema_name, payload.table_name)
+    await db.record_audit_log(
+        auth.get("username"), "truncate_table",
+        target_type="table", target_id=f"{payload.schema_name}.{payload.table_name}",
+    )
     return {"ok": True, "message": f"Truncated {payload.schema_name}.{payload.table_name}"}
 
 
 @router.post("/api/database/truncate-schema")
 async def truncate_schema(request: Request, payload: TruncateSchemaRequest):
-    _require_admin_auth(request)
+    auth = _require_admin_auth(request)
     expected_confirmation = f"TRUNCATE ALL {payload.schema_name}"
     if payload.confirm_text.strip() != expected_confirmation:
         raise HTTPException(
@@ -83,6 +87,11 @@ async def truncate_schema(request: Request, payload: TruncateSchemaRequest):
     except Exception as exc:
         raise HTTPException(status_code=503, detail=_safe_error_detail("Database unavailable", exc))
     action_logger.warning("truncate_schema schema=%s tables=%s", payload.schema_name, result["truncated_tables"])
+    await db.record_audit_log(
+        auth.get("username"), "truncate_schema",
+        target_type="schema", target_id=payload.schema_name,
+        details=f"truncated_tables={result['truncated_tables']}",
+    )
     return {"ok": True, **result}
 
 

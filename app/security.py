@@ -28,6 +28,7 @@ APP_SHELL_PATHS = {
     "/databases",
     "/gallery-admin",
     "/intel",
+    "/audit-log",
 }
 
 PERSONAL_API_PREFIXES = (

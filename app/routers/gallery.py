@@ -61,17 +61,19 @@ async def image_gallery_table_data(request: Request, table_name: str, limit: int
 
 @router.post("/api/image-gallery/users/delete")
 async def image_gallery_delete_user(request: Request, payload: GalleryUserDeleteRequest):
-    _require_image_gallery_owner_auth(request)
+    auth = _require_image_gallery_owner_auth(request)
     await db.delete_image_gallery_user(payload.user_id)
     action_logger.warning("image_gallery_delete_user user_id=%s", payload.user_id)
+    await db.record_audit_log(auth.get("username"), "image_gallery_delete_user", target_type="gallery_user", target_id=payload.user_id)
     return {"ok": True}
 
 
 @router.post("/api/image-gallery/comments/delete")
 async def image_gallery_delete_comment(request: Request, payload: GalleryCommentDeleteRequest):
-    _require_image_gallery_owner_auth(request)
+    auth = _require_image_gallery_owner_auth(request)
     await db.delete_image_gallery_comment(payload.comment_id)
     action_logger.warning("image_gallery_delete_comment comment_id=%s", payload.comment_id)
+    await db.record_audit_log(auth.get("username"), "image_gallery_delete_comment", target_type="gallery_comment", target_id=payload.comment_id)
     return {"ok": True}
 
 
@@ -145,9 +147,10 @@ async def image_gallery_update_media(request: Request, payload: GalleryMediaUpda
 
 @router.post("/api/image-gallery/media/delete")
 async def image_gallery_delete_media(request: Request, payload: GalleryMediaDeleteRequest):
-    _require_image_gallery_owner_auth(request)
+    auth = _require_image_gallery_owner_auth(request)
     await db.delete_image_gallery_media(payload.media_id)
     action_logger.warning("image_gallery_delete_media media_id=%s", payload.media_id)
+    await db.record_audit_log(auth.get("username"), "image_gallery_delete_media", target_type="gallery_media", target_id=payload.media_id)
     return {"ok": True}
 
 

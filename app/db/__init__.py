@@ -15,6 +15,7 @@ could not be split per-domain without duplicating state.
 
 from .accounts import AccountsMixin
 from .admin_browser import AdminBrowserMixin
+from .audit import AuditMixin
 from .bots import BotsMixin
 from .core import CoreMixin
 from .gallery import GalleryMixin
@@ -32,6 +33,7 @@ class PanelDatabase(
     LumisoundMixin,
     AdminBrowserMixin,
     MetricsMixin,
+    AuditMixin,
 ):
     pass
 
