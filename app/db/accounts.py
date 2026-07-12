@@ -485,6 +485,27 @@ class AccountsMixin:
                 profile[key] = value.isoformat()
         return profile
 
+    _PRIVATE_ACCOUNT_FIELDS = (
+        "email",
+        "email_verified_at",
+        "email_verification_sent_at",
+        "verification_webhook_url",
+        "verification_webhook_channel_id",
+        "verification_webhook_name",
+        "webhook_verified_at",
+        "webhook_verification_sent_at",
+    )
+
+    def _strip_private_account_fields(self, profile: dict[str, Any]) -> dict[str, Any]:
+        """Remove the account owner's email and Discord verification webhook
+        (which can post into their server) before a profile is shown to anyone
+        other than its owner. Callers already compute the safe derived booleans
+        (email_verified, webhook_verified, verification_*) in
+        _serialize_account_profile before this runs."""
+        for key in self._PRIVATE_ACCOUNT_FIELDS:
+            profile.pop(key, None)
+        return profile
+
     @staticmethod
     def _is_recently_seen(value: Any, *, window_seconds: int = 180) -> bool:
         if not value:
@@ -927,7 +948,7 @@ class AccountsMixin:
             """,
             tuple(params),
         )
-        profiles = [self._serialize_account_profile(row) for row in rows]
+        profiles = [self._strip_private_account_fields(self._serialize_account_profile(row)) for row in rows]
         social_snapshots = await asyncio.gather(
             *(self.get_account_social_snapshot(int(profile["id"]), viewer_id) for profile in profiles)
         ) if profiles else []

@@ -65,7 +65,11 @@ class SocialMixin:
         profile.update(await self.get_account_social_snapshot(int(profile["id"]), viewer_id))
         summaries = await self.get_music_activity_summary_for_guilds([profile["guild_id"]])
         profile["activity"] = summaries.get(profile["guild_id"], self._empty_music_activity_summary())
-        return profile
+        # This profile is shown to any viewer through the public profile/directory
+        # endpoints, not just the owner (who has /api/users/me for full details) —
+        # strip the owner's email and Discord verification webhook (which can post
+        # into their server) before it leaves the database layer.
+        return self._strip_private_account_fields(profile)
 
     async def set_account_follow(self, follower_account_id: int, followed_account_id: int, following: bool) -> dict[str, Any]:
         if int(follower_account_id) == int(followed_account_id):
