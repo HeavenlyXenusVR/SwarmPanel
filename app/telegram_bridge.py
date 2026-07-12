@@ -233,6 +233,15 @@ TELEGRAM_HEALTH_INTERVAL_SECONDS = max(60.0, float(os.getenv("PANEL_TELEGRAM_HEA
 TELEGRAM_ALERT_COOLDOWN_SECONDS = max(300.0, float(os.getenv("PANEL_TELEGRAM_ALERT_COOLDOWN_SECONDS", "900") or "900"))
 _telegram_alert_last: dict[str, float] = {}
 
+# Configurable alert rules (see app/db/alerts.py): evaluated every health-watch
+# tick. A rule must stay breached for its own threshold_minutes before firing
+# (avoids alerting on a single transient blip), and re-alerts at most once/hour
+# per rule while the condition stays breached. State resets as soon as a rule
+# clears so it can re-trigger promptly next time it breaches.
+ALERT_RULE_RE_ALERT_SECONDS = 3600.0
+_alert_rule_breach_since: dict[int, float] = {}
+_alert_rule_last_alert: dict[int, float] = {}
+
 
 async def _send_panel_telegram_alert(key: str, title: str, detail: str) -> None:
     # telegram_service lives in app/services.py and is reassigned during
@@ -261,6 +270,90 @@ async def _send_panel_telegram_alert(key: str, title: str, detail: str) -> None:
             action_logger.exception("SwarmPanel Telegram alert delivery failed for chat %s.", chat_id)
 
 
+async def _alert_rule_breach_detail(rule: dict[str, Any]) -> tuple[bool, str]:
+    """Return (breached, human-readable detail) for one enabled alert rule."""
+    rule_type = str(rule.get("rule_type") or "")
+    try:
+        metrics = await db.get_metrics_snapshot()
+    except Exception as exc:
+        return False, f"metrics unavailable: {exc}"
+    totals = metrics.get("totals") or {}
+    bots = metrics.get("bots") or []
+
+    if rule_type == "bot_offline":
+        offline = [b for b in bots if b.get("status") == "error"]
+        if offline:
+            names = ", ".join(str(b.get("display_name") or b.get("key")) for b in offline[:6])
+            return True, f"{len(offline)} bot(s) offline/unreachable: {names}"
+        return False, ""
+
+    if rule_type == "queue_stuck":
+        queued = int(totals.get("queued_tracks") or 0)
+        playing = int(totals.get("playing") or 0)
+        if queued > 0 and playing == 0:
+            return True, f"{queued} track(s) queued fleet-wide with nothing currently playing"
+        return False, ""
+
+    if rule_type == "stale_metrics":
+        stale = int(totals.get("stale_metrics") or 0)
+        if stale > 0:
+            return True, f"{stale} guild(s) reporting stale playback metrics"
+        return False, ""
+
+    if rule_type == "recovery_pending":
+        recovering = int(totals.get("recovering") or 0)
+        if recovering > 0:
+            return True, f"{recovering} guild(s) stuck in recovery"
+        return False, ""
+
+    return False, ""
+
+
+async def _evaluate_alert_rules() -> None:
+    try:
+        rules = await db.list_enabled_alert_rules()
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        action_logger.warning("Failed to load alert rules for evaluation: %s", exc)
+        return
+
+    active_rule_ids = {int(rule["id"]) for rule in rules}
+    for stale_id in set(_alert_rule_breach_since) - active_rule_ids:
+        _alert_rule_breach_since.pop(stale_id, None)
+
+    now = time.monotonic()
+    for rule in rules:
+        rule_id = int(rule["id"])
+        try:
+            breached, detail = await _alert_rule_breach_detail(rule)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            action_logger.warning("Alert rule %s evaluation failed: %s", rule_id, exc)
+            continue
+
+        if not breached:
+            _alert_rule_breach_since.pop(rule_id, None)
+            continue
+
+        threshold_seconds = max(1, int(rule.get("threshold_minutes") or 5)) * 60
+        breach_started = _alert_rule_breach_since.setdefault(rule_id, now)
+        if now - breach_started < threshold_seconds:
+            continue  # condition hasn't been breached long enough yet
+
+        last_alert = _alert_rule_last_alert.get(rule_id, 0.0)
+        if now - last_alert < ALERT_RULE_RE_ALERT_SECONDS:
+            continue  # re-alert at most once/hour per rule while still breached
+
+        _alert_rule_last_alert[rule_id] = now
+        await _send_panel_telegram_alert(
+            f"alert_rule_{rule_id}",
+            f"SwarmPanel alert rule breached: {rule['rule_type']}",
+            detail or f"{rule['rule_type']} has been breached for over {rule.get('threshold_minutes')} minute(s).",
+        )
+
+
 async def _telegram_health_watch_loop() -> None:
     await asyncio.sleep(20)
     while True:
@@ -279,6 +372,12 @@ async def _telegram_health_watch_loop() -> None:
                 raise
             except Exception:
                 action_logger.exception("SwarmPanel database reconnect failed after health alert.")
+        try:
+            await _evaluate_alert_rules()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            action_logger.exception("SwarmPanel alert rule evaluation failed.")
         try:
             await asyncio.sleep(TELEGRAM_HEALTH_INTERVAL_SECONDS)
         except asyncio.CancelledError:

@@ -213,6 +213,21 @@ class PanelPreferencesUpdateRequest(BaseModel):
     compact_sidebar: bool | None = None
 
 
+# --- Configurable alerting ----------------------------------------------------
+
+
+class AlertRuleCreateRequest(BaseModel):
+    rule_type: str
+    threshold_minutes: int = 5
+    enabled: bool = True
+
+
+class AlertRuleUpdateRequest(BaseModel):
+    rule_type: str | None = None
+    threshold_minutes: int | None = None
+    enabled: bool | None = None
+
+
 # --- Bot control ---------------------------------------------------------------
 
 

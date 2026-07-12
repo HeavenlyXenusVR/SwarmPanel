@@ -15,6 +15,7 @@ could not be split per-domain without duplicating state.
 
 from .accounts import AccountsMixin
 from .admin_browser import AdminBrowserMixin
+from .alerts import AlertsMixin
 from .audit import AuditMixin
 from .bots import BotsMixin
 from .core import CoreMixin
@@ -34,6 +35,7 @@ class PanelDatabase(
     AdminBrowserMixin,
     MetricsMixin,
     AuditMixin,
+    AlertsMixin,
 ):
     pass
 
