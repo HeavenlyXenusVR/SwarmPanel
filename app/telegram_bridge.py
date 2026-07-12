@@ -321,6 +321,8 @@ async def _evaluate_alert_rules() -> None:
     active_rule_ids = {int(rule["id"]) for rule in rules}
     for stale_id in set(_alert_rule_breach_since) - active_rule_ids:
         _alert_rule_breach_since.pop(stale_id, None)
+    for stale_id in set(_alert_rule_last_alert) - active_rule_ids:
+        _alert_rule_last_alert.pop(stale_id, None)
 
     now = time.monotonic()
     for rule in rules:

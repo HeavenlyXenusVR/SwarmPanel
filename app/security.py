@@ -46,6 +46,9 @@ PERSONAL_API_PREFIXES = (
     "/api/stability",
     "/api/system-diagnostics",
     "/api/telegram",
+    "/api/audit-log",
+    "/api/alert-rules",
+    "/api/lumisound",
 )
 
 REQUEST_ID_RE = re.compile(r"[^A-Za-z0-9_.:-]+")

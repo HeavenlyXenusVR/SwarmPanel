@@ -211,7 +211,7 @@ async def image_gallery_bulk_delete_media(request: Request, payload: GalleryMedi
     action_logger.warning("image_gallery_bulk_delete_media ids=%s succeeded=%s failed=%s", payload.ids, len(result["succeeded"]), len(result["failed"]))
     await db.record_audit_log(
         auth.get("username"), "image_gallery_bulk_delete_media", target_type="gallery_media",
-        details=f"succeeded={len(result['succeeded'])} failed={len(result['failed'])}",
+        details=f"succeeded_ids={result['succeeded']} failed={result['failed']}",
     )
     return {"ok": True, **result}
 
@@ -223,7 +223,7 @@ async def image_gallery_bulk_delete_comments(request: Request, payload: GalleryC
     action_logger.warning("image_gallery_bulk_delete_comments ids=%s succeeded=%s failed=%s", payload.ids, len(result["succeeded"]), len(result["failed"]))
     await db.record_audit_log(
         auth.get("username"), "image_gallery_bulk_delete_comments", target_type="gallery_comment",
-        details=f"succeeded={len(result['succeeded'])} failed={len(result['failed'])}",
+        details=f"succeeded_ids={result['succeeded']} failed={result['failed']}",
     )
     return {"ok": True, **result}
 
@@ -235,7 +235,7 @@ async def image_gallery_bulk_delete_users(request: Request, payload: GalleryUser
     action_logger.warning("image_gallery_bulk_delete_users ids=%s succeeded=%s failed=%s", payload.ids, len(result["succeeded"]), len(result["failed"]))
     await db.record_audit_log(
         auth.get("username"), "image_gallery_bulk_delete_users", target_type="gallery_user",
-        details=f"succeeded={len(result['succeeded'])} failed={len(result['failed'])}",
+        details=f"succeeded_ids={result['succeeded']} failed={result['failed']}",
     )
     return {"ok": True, **result}
 

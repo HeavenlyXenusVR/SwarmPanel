@@ -141,7 +141,7 @@ async def api_swarm_accounts_bulk_delete(request: Request, payload: SwarmAccount
     action_logger.warning("swarm_account_bulk_delete ids=%s succeeded=%s failed=%s", payload.ids, len(result["succeeded"]), len(result["failed"]))
     await db.record_audit_log(
         auth.get("username"), "swarm_account_bulk_delete", target_type="account",
-        details=f"succeeded={len(result['succeeded'])} failed={len(result['failed'])}",
+        details=f"succeeded_ids={result['succeeded']} failed={result['failed']}",
     )
     return {"ok": True, **result}
 
@@ -159,6 +159,6 @@ async def api_swarm_accounts_bulk_verify(request: Request, payload: SwarmAccount
     action_logger.warning("swarm_account_bulk_verify ids=%s verified=%s succeeded=%s failed=%s", payload.ids, payload.verified, len(result["succeeded"]), len(result["failed"]))
     await db.record_audit_log(
         auth.get("username"), "swarm_account_bulk_verify", target_type="account",
-        details=f"verified={payload.verified} succeeded={len(result['succeeded'])} failed={len(result['failed'])}",
+        details=f"verified={payload.verified} succeeded_ids={result['succeeded']} failed={result['failed']}",
     )
     return {"ok": True, **result}
