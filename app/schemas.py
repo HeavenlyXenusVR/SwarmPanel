@@ -105,6 +105,15 @@ class SwarmAccountPasswordResetRequest(BaseModel):
     new_password: str
 
 
+class SwarmAccountBulkDeleteRequest(BaseModel):
+    ids: list[int]
+
+
+class SwarmAccountBulkVerifyRequest(BaseModel):
+    ids: list[int]
+    verified: bool = True
+
+
 # --- Image Gallery admin ------------------------------------------------------
 
 
@@ -151,6 +160,18 @@ class GalleryMediaUpdateRequest(BaseModel):
 class GalleryReportStatusRequest(BaseModel):
     report_id: int
     status: str
+
+
+class GalleryMediaBulkDeleteRequest(BaseModel):
+    ids: list[int]
+
+
+class GalleryCommentBulkDeleteRequest(BaseModel):
+    ids: list[int]
+
+
+class GalleryUserBulkDeleteRequest(BaseModel):
+    ids: list[int]
 
 
 # --- User profile / panel appearance ------------------------------------------

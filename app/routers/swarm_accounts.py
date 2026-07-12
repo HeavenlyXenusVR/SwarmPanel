@@ -1,10 +1,14 @@
 """Admin CRUD over registered SwarmPanel accounts (distinct from the
 Image Gallery's own separate user table)."""
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, Request
 
 from ..auth_deps import _require_admin_auth
 from ..schemas import (
+    SwarmAccountBulkDeleteRequest,
+    SwarmAccountBulkVerifyRequest,
     SwarmAccountDeleteRequest,
     SwarmAccountFlagRequest,
     SwarmAccountPasswordResetRequest,
@@ -19,6 +23,23 @@ from ..verification import (
 )
 
 router = APIRouter()
+
+MAX_BULK_IDS = 200
+
+
+async def _run_bulk_op(ids: list[int], run_one) -> dict[str, Any]:
+    """Loop the existing single-item db call over ``ids``, collecting a
+    per-id success/failure summary instead of reimplementing the operation."""
+    unique_ids = list(dict.fromkeys(int(item) for item in ids))[:MAX_BULK_IDS]
+    succeeded: list[int] = []
+    failed: list[dict[str, Any]] = []
+    for item_id in unique_ids:
+        try:
+            await run_one(item_id)
+            succeeded.append(item_id)
+        except Exception as exc:
+            failed.append({"id": item_id, "error": str(exc)[:240]})
+    return {"succeeded": succeeded, "failed": failed}
 
 
 @router.get("/api/swarm-accounts/admin")
@@ -111,3 +132,33 @@ async def api_swarm_accounts_delete(request: Request, payload: SwarmAccountDelet
     action_logger.warning("swarm_account_delete account_id=%s", payload.account_id)
     await db.record_audit_log(auth.get("username"), "swarm_account_delete", target_type="account", target_id=payload.account_id)
     return {"ok": True}
+
+
+@router.post("/api/swarm-accounts/bulk-delete")
+async def api_swarm_accounts_bulk_delete(request: Request, payload: SwarmAccountBulkDeleteRequest):
+    auth = _require_admin_auth(request)
+    result = await _run_bulk_op(payload.ids, db.delete_account_admin)
+    action_logger.warning("swarm_account_bulk_delete ids=%s succeeded=%s failed=%s", payload.ids, len(result["succeeded"]), len(result["failed"]))
+    await db.record_audit_log(
+        auth.get("username"), "swarm_account_bulk_delete", target_type="account",
+        details=f"succeeded={len(result['succeeded'])} failed={len(result['failed'])}",
+    )
+    return {"ok": True, **result}
+
+
+@router.post("/api/swarm-accounts/bulk-verify")
+async def api_swarm_accounts_bulk_verify(request: Request, payload: SwarmAccountBulkVerifyRequest):
+    auth = _require_admin_auth(request)
+
+    async def _verify_one(account_id: int) -> None:
+        account = await db.set_account_webhook_verified_admin(account_id, payload.verified)
+        if not account:
+            raise ValueError("Account not found")
+
+    result = await _run_bulk_op(payload.ids, _verify_one)
+    action_logger.warning("swarm_account_bulk_verify ids=%s verified=%s succeeded=%s failed=%s", payload.ids, payload.verified, len(result["succeeded"]), len(result["failed"]))
+    await db.record_audit_log(
+        auth.get("username"), "swarm_account_bulk_verify", target_type="account",
+        details=f"verified={payload.verified} succeeded={len(result['succeeded'])} failed={len(result['failed'])}",
+    )
+    return {"ok": True, **result}

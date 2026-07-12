@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Image as ImageIcon, KeyRound, Mail, RefreshCw, ShieldCheck, Siren, Table2, Trash2, Users } from "lucide-react";
+import { Image as ImageIcon, KeyRound, Mail, MessageCircle, RefreshCw, ShieldCheck, Siren, Table2, Trash2, Users } from "lucide-react";
 import { apiFetch, query } from "../api.js";
 import { useLiveRefresh } from "../hooks/useLiveRefresh.js";
 import { DataTable } from "../components/swarm.jsx";
@@ -18,6 +18,35 @@ function rowsFromPayload(payload) {
   return [];
 }
 
+function useRowSelection() {
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const onToggleRow = useCallback((id, checked) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(id); else next.delete(id);
+      return next;
+    });
+  }, []);
+  const onToggleAll = useCallback((checked, rows) => {
+    setSelectedIds(checked ? new Set(rows.map((row) => row.id)) : new Set());
+  }, []);
+  const clear = useCallback(() => setSelectedIds(new Set()), []);
+  return { selectedIds, onToggleRow, onToggleAll, clear };
+}
+
+function BulkActionsBar({ count, onDelete, deleting, noun = "item" }) {
+  if (!count) return null;
+  return (
+    <div className="bulk-actions-bar">
+      <strong>{count}</strong>
+      <span>{noun}{count === 1 ? "" : "s"} selected</span>
+      <button className="danger" type="button" disabled={deleting} onClick={onDelete}>
+        <Trash2 size={14} />{deleting ? "Deleting..." : `Delete Selected`}
+      </button>
+    </div>
+  );
+}
+
 export default function GalleryAdminPage({ ctx }) {
   const [summary, setSummary] = useState(null);
   const [tables, setTables] = useState([]);
@@ -26,7 +55,10 @@ export default function GalleryAdminPage({ ctx }) {
   const [tableLoading, setTableLoading] = useState(false);
   const [tableError, setTableError] = useState("");
   const [passwords, setPasswords] = useState({});
+  const [bulkDeleting, setBulkDeleting] = useState("");
   const showToast = ctx.showToast;
+  const mediaSelection = useRowSelection();
+  const commentSelection = useRowSelection();
   const load = useCallback(async ({ background = false, includeTable = false, selectedTable = "", force = false } = {}) => {
     try {
       const [admin, tableData] = await Promise.all([
@@ -75,6 +107,28 @@ export default function GalleryAdminPage({ ctx }) {
   const users = summary?.users || summary?.recent_users || [];
   const reports = summary?.reports || summary?.recent_reports || [];
   const media = summary?.media || summary?.recent_media || [];
+  const comments = summary?.comments || summary?.recent_comments || [];
+
+  async function bulkDelete(kind, path, ids, selection) {
+    if (!ids.length) return;
+    if (!window.confirm(`Delete ${ids.length} selected ${kind}? This cannot be undone.`)) return;
+    setBulkDeleting(kind);
+    try {
+      const result = await apiFetch(path, { method: "POST", body: JSON.stringify({ ids }) });
+      const failedCount = result.failed?.length || 0;
+      showToast(
+        failedCount ? `Deleted ${result.succeeded.length}, ${failedCount} failed.` : `Deleted ${result.succeeded.length} ${kind}.`,
+        failedCount ? "error" : "success",
+      );
+      selection.clear();
+      await load();
+    } catch (error) {
+      showToast(error.message, "error");
+    } finally {
+      setBulkDeleting("");
+    }
+  }
+
   return (
     <Page title="Image Gallery Admin" eyebrow="Owner Workspace" actions={<button type="button" onClick={() => load({ includeTable: true, selectedTable: table, force: true })}><RefreshCw size={16} />Refresh</button>}>
       <MetricGrid>
@@ -99,6 +153,40 @@ export default function GalleryAdminPage({ ctx }) {
         <div className="panel">
           <SectionHead title="Reports" count={reports.length} />
           <DataTable rows={reports} actions={(row) => <button type="button" onClick={() => mutate("/api/image-gallery/reports/status", { report_id: row.id, status: "resolved" }, "Report resolved.")}>Resolve</button>} />
+        </div>
+        <div className="panel wide">
+          <SectionHead title="Media" count={media.length} />
+          <BulkActionsBar
+            count={mediaSelection.selectedIds.size}
+            deleting={bulkDeleting === "media"}
+            noun="media item"
+            onDelete={() => bulkDelete("media", "/api/image-gallery/admin/media/bulk-delete", Array.from(mediaSelection.selectedIds), mediaSelection)}
+          />
+          <DataTable
+            rows={media}
+            selectable
+            selectedIds={mediaSelection.selectedIds}
+            onToggleRow={mediaSelection.onToggleRow}
+            onToggleAll={(checked) => mediaSelection.onToggleAll(checked, media)}
+            actions={(row) => <button className="danger" type="button" onClick={() => mutate("/api/image-gallery/media/delete", { media_id: row.id }, "Media deleted.")}><Trash2 size={14} />Delete</button>}
+          />
+        </div>
+        <div className="panel wide">
+          <SectionHead title="Comments" count={comments.length} />
+          <BulkActionsBar
+            count={commentSelection.selectedIds.size}
+            deleting={bulkDeleting === "comments"}
+            noun="comment"
+            onDelete={() => bulkDelete("comments", "/api/image-gallery/admin/comments/bulk-delete", Array.from(commentSelection.selectedIds), commentSelection)}
+          />
+          <DataTable
+            rows={comments}
+            selectable
+            selectedIds={commentSelection.selectedIds}
+            onToggleRow={commentSelection.onToggleRow}
+            onToggleAll={(checked) => commentSelection.onToggleAll(checked, comments)}
+            actions={(row) => <button className="danger" type="button" onClick={() => mutate("/api/image-gallery/comments/delete", { comment_id: row.id }, "Comment deleted.")}><MessageCircle size={14} />Delete</button>}
+          />
         </div>
         <div className="panel wide">
           <SectionHead title="Table Browser" />

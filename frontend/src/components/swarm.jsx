@@ -572,20 +572,51 @@ export function ChannelSelect({ value, channels, onChange, optional = false }) {
   );
 }
 
-export function DataTable({ rows = [], actions }) {
+export function DataTable({ rows = [], actions, selectable = false, selectedIds, onToggleRow, onToggleAll, getRowId }) {
   if (!rows?.length) return <EmptyState title="No rows" compact />;
   const columns = unique(rows.flatMap((row) => Object.keys(row))).filter((column) => !String(column).toLowerCase().includes("password_hash")).slice(0, 9);
+  const rowId = getRowId || ((row) => row.id);
+  const allSelected = selectable && rows.length > 0 && rows.every((row) => selectedIds?.has(rowId(row)));
   return (
     <div className="table-wrap">
       <table className="data-table">
-        <thead><tr>{columns.map((column) => <th className={cellClassName(column)} key={column}>{labelForColumn(column)}</th>)}{actions ? <th>Actions</th> : null}</tr></thead>
+        <thead>
+          <tr>
+            {selectable ? (
+              <th className="table-cell-select">
+                <input
+                  type="checkbox"
+                  aria-label="Select all rows"
+                  checked={allSelected}
+                  onChange={(event) => onToggleAll?.(event.target.checked)}
+                />
+              </th>
+            ) : null}
+            {columns.map((column) => <th className={cellClassName(column)} key={column}>{labelForColumn(column)}</th>)}
+            {actions ? <th>Actions</th> : null}
+          </tr>
+        </thead>
         <tbody>
-          {rows.map((row, index) => (
-            <tr key={row.id ?? `${index}-${JSON.stringify(row).slice(0, 20)}`}>
-              {columns.map((column) => <td className={cellClassName(column)} key={column}>{renderTableCell(column, row[column])}</td>)}
-              {actions ? <td>{actions(row)}</td> : null}
-            </tr>
-          ))}
+          {rows.map((row, index) => {
+            const id = rowId(row);
+            const key = id ?? `${index}-${JSON.stringify(row).slice(0, 20)}`;
+            return (
+              <tr key={key} className={selectable && selectedIds?.has(id) ? "is-selected" : ""}>
+                {selectable ? (
+                  <td className="table-cell-select">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select row ${id}`}
+                      checked={Boolean(selectedIds?.has(id))}
+                      onChange={(event) => onToggleRow?.(id, event.target.checked)}
+                    />
+                  </td>
+                ) : null}
+                {columns.map((column) => <td className={cellClassName(column)} key={column}>{renderTableCell(column, row[column])}</td>)}
+                {actions ? <td>{actions(row)}</td> : null}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

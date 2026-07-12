@@ -12,6 +12,8 @@ export default function AccountsPage({ ctx }) {
   const [metrics, setMetrics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [passwords, setPasswords] = useState({});
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState("");
   const showToast = ctx.showToast;
   const load = useCallback(async ({ background = false, force = false } = {}) => {
     try {
@@ -41,6 +43,39 @@ export default function AccountsPage({ ctx }) {
       showToast(error.message, "error");
     }
   }
+
+  function onToggleRow(id, checked) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(id); else next.delete(id);
+      return next;
+    });
+  }
+  function onToggleAll(checked) {
+    setSelectedIds(checked ? new Set(rows.map((row) => row.id)) : new Set());
+  }
+
+  async function bulkAction(kind, path, extraPayload, successVerb) {
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
+    if (kind === "delete" && !window.confirm(`Delete ${ids.length} selected account(s)? This cannot be undone.`)) return;
+    setBulkBusy(kind);
+    try {
+      const result = await apiFetch(path, { method: "POST", body: JSON.stringify({ ids, ...extraPayload }) });
+      const failedCount = result.failed?.length || 0;
+      showToast(
+        failedCount ? `${successVerb} ${result.succeeded.length}, ${failedCount} failed.` : `${successVerb} ${result.succeeded.length} account(s).`,
+        failedCount ? "error" : "success",
+      );
+      setSelectedIds(new Set());
+      await load({ force: true });
+    } catch (error) {
+      showToast(error.message, "error");
+    } finally {
+      setBulkBusy("");
+    }
+  }
+
   return (
     <Page title="SwarmPanel Recovery" eyebrow="Accounts" actions={<button type="button" onClick={() => load({ force: true })}><RefreshCw size={16} />Refresh</button>}>
       <MetricGrid>
@@ -74,15 +109,34 @@ export default function AccountsPage({ ctx }) {
         </section>
       )}
       <div className="toolbar"><div className="search-box"><Search size={16} /><input value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search accounts" /></div></div>
-      <DataTable rows={rows} actions={(row) => (
-        <div className="table-actions">
-          <button type="button" onClick={() => mutate("/api/swarm-accounts/email-verified", { account_id: row.id, verified: !row.verification_verified }, "Verification flag updated.")}><ShieldCheck size={14} />Verify</button>
-          <input className="mini-input" type="password" placeholder="new password" value={passwords[row.id] || ""} onChange={(event) => setPasswords((current) => ({ ...current, [row.id]: event.target.value }))} />
-          <button type="button" disabled={!String(passwords[row.id] || "").trim()} onClick={() => mutate("/api/swarm-accounts/reset-password", { account_id: row.id, new_password: passwords[row.id] || "" }, "Password reset.")}><KeyRound size={14} />Reset</button>
-          <button type="button" disabled={!row.verification_webhook_configured} onClick={() => mutate("/api/swarm-accounts/resend-verification", { account_id: row.id }, "Verification code sent.")}><Webhook size={14} />Code</button>
-          <button className="danger" type="button" onClick={() => mutate("/api/swarm-accounts/delete", { account_id: row.id }, "Account deleted.")}><Trash2 size={14} />Delete</button>
+      {selectedIds.size ? (
+        <div className="bulk-actions-bar">
+          <strong>{selectedIds.size}</strong>
+          <span>account{selectedIds.size === 1 ? "" : "s"} selected</span>
+          <button type="button" disabled={Boolean(bulkBusy)} onClick={() => bulkAction("verify", "/api/swarm-accounts/bulk-verify", { verified: true }, "Verified")}>
+            <ShieldCheck size={14} />{bulkBusy === "verify" ? "Verifying..." : "Verify Selected"}
+          </button>
+          <button className="danger" type="button" disabled={Boolean(bulkBusy)} onClick={() => bulkAction("delete", "/api/swarm-accounts/bulk-delete", {}, "Deleted")}>
+            <Trash2 size={14} />{bulkBusy === "delete" ? "Deleting..." : "Delete Selected"}
+          </button>
         </div>
-      )} />
+      ) : null}
+      <DataTable
+        rows={rows}
+        selectable
+        selectedIds={selectedIds}
+        onToggleRow={onToggleRow}
+        onToggleAll={onToggleAll}
+        actions={(row) => (
+          <div className="table-actions">
+            <button type="button" onClick={() => mutate("/api/swarm-accounts/email-verified", { account_id: row.id, verified: !row.verification_verified }, "Verification flag updated.")}><ShieldCheck size={14} />Verify</button>
+            <input className="mini-input" type="password" placeholder="new password" value={passwords[row.id] || ""} onChange={(event) => setPasswords((current) => ({ ...current, [row.id]: event.target.value }))} />
+            <button type="button" disabled={!String(passwords[row.id] || "").trim()} onClick={() => mutate("/api/swarm-accounts/reset-password", { account_id: row.id, new_password: passwords[row.id] || "" }, "Password reset.")}><KeyRound size={14} />Reset</button>
+            <button type="button" disabled={!row.verification_webhook_configured} onClick={() => mutate("/api/swarm-accounts/resend-verification", { account_id: row.id }, "Verification code sent.")}><Webhook size={14} />Code</button>
+            <button className="danger" type="button" onClick={() => mutate("/api/swarm-accounts/delete", { account_id: row.id }, "Account deleted.")}><Trash2 size={14} />Delete</button>
+          </div>
+        )}
+      />
     </Page>
   );
 }
