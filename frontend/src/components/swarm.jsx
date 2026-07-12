@@ -320,17 +320,6 @@ function BotSeekBar({ session, botKey }) {
     return () => clearInterval(t);
   }, [duration, isPlaying, seeking]);
 
-  if (!duration) return null;
-
-  const positionSeconds = Math.max(0, Math.min(Number(session?.position_seconds) || 0, duration));
-  const observedAt = session?.position_observed_at || session?.updated_at;
-  const observedAtMs = observedAt ? (Date.parse(observedAt) || 0) : 0;
-  const livePosition = isPlaying && observedAtMs > 0
-    ? Math.min(positionSeconds + Math.floor((liveMs - observedAtMs) / 1000), duration)
-    : positionSeconds;
-
-  const displayFraction = seeking && seekPos !== null ? seekPos : (duration > 0 ? livePosition / duration : 0);
-
   function getFraction(event) {
     const bar = barRef.current;
     if (!bar) return 0;
@@ -338,16 +327,9 @@ function BotSeekBar({ session, botKey }) {
     return Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
   }
 
-  function onMouseDown(event) {
-    event.preventDefault();
-    setSeeking(true);
-    setSeekPos(getFraction(event));
-  }
-  function onMouseMove(event) {
-    if (!seeking) return;
-    setSeekPos(getFraction(event));
-  }
-
+  // Also declared unconditionally (same reasoning as above, React error #300): this used to sit
+  // after the `if (!duration) return null` bailout below, so a render where duration dropped to 0
+  // called one fewer hook than the previous render.
   useEffect(() => {
     if (!seeking) return;
     function onMove(e) { setSeekPos(getFraction(e)); }
@@ -377,6 +359,27 @@ function BotSeekBar({ session, botKey }) {
       document.removeEventListener("mouseup", onUp);
     };
   }, [seeking, botKey, session?.guild_id, duration]);
+
+  if (!duration) return null;
+
+  const positionSeconds = Math.max(0, Math.min(Number(session?.position_seconds) || 0, duration));
+  const observedAt = session?.position_observed_at || session?.updated_at;
+  const observedAtMs = observedAt ? (Date.parse(observedAt) || 0) : 0;
+  const livePosition = isPlaying && observedAtMs > 0
+    ? Math.min(positionSeconds + Math.floor((liveMs - observedAtMs) / 1000), duration)
+    : positionSeconds;
+
+  const displayFraction = seeking && seekPos !== null ? seekPos : (duration > 0 ? livePosition / duration : 0);
+
+  function onMouseDown(event) {
+    event.preventDefault();
+    setSeeking(true);
+    setSeekPos(getFraction(event));
+  }
+  function onMouseMove(event) {
+    if (!seeking) return;
+    setSeekPos(getFraction(event));
+  }
 
   const pct = Math.round(displayFraction * 100);
   const currentSecs = Math.round(displayFraction * duration);
