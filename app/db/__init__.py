@@ -22,6 +22,7 @@ from .core import CoreMixin
 from .gallery import GalleryMixin
 from .lumisound import LumisoundMixin
 from .metrics import MetricsMixin
+from .metrics_history import MetricsHistoryMixin
 from .social import SocialMixin
 
 
@@ -36,6 +37,7 @@ class PanelDatabase(
     MetricsMixin,
     AuditMixin,
     AlertsMixin,
+    MetricsHistoryMixin,
 ):
     pass
 
