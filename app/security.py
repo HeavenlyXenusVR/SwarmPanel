@@ -27,6 +27,7 @@ APP_SHELL_PATHS = {
     "/accounts",
     "/databases",
     "/gallery-admin",
+    "/lumisound-admin",
     "/intel",
     "/audit-log",
 }

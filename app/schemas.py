@@ -234,6 +234,23 @@ class PanelPreferencesUpdateRequest(BaseModel):
     compact_sidebar: bool | None = None
 
 
+# --- Lumisound admin ------------------------------------------------------------
+
+
+class LumisoundUploadDeleteRequest(BaseModel):
+    upload_id: int
+
+
+class LumisoundUserActiveRequest(BaseModel):
+    user_id: int
+    active: bool
+
+
+class LumisoundBugReportStatusRequest(BaseModel):
+    report_id: int
+    status: str
+
+
 # --- Configurable alerting ----------------------------------------------------
 
 
