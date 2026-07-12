@@ -47,6 +47,12 @@ class CoreMixin:
         self._lumisound_admin_cache: dict[int, tuple[float, dict[str, Any]]] = {}
         self._music_intelligence_cache: dict[tuple[str | None, str | None, int], tuple[float, dict[str, Any]]] = {}
         self._music_activity_cache: dict[tuple[int, ...], tuple[float, dict[str, dict[str, Any]]]] = {}
+        # Per-(schema, prefix) DDL-ensured markers. These track table/column shape,
+        # not data, so they must survive _invalidate_hot_caches() (called on every
+        # control_bot() action) — otherwise every LOOP/FILTER/SMART_RECOMMEND click
+        # would re-run CREATE TABLE + ~14 ALTER TABLE ADD COLUMN attempts.
+        self._guild_settings_schema_ready: set[tuple[str, str]] = set()
+        self._music_intelligence_schema_ready: set[tuple[str, str]] = set()
 
     def _invalidate_hot_caches(self) -> None:
         self._dashboard_cache = None
@@ -268,6 +274,9 @@ class CoreMixin:
     async def _ensure_music_guild_settings_schema(self, cur, schema: str, prefix: str) -> None:
         schema = _validate_identifier(schema, "schema")
         prefix = _validate_identifier(prefix, "table prefix")
+        cache_key = (schema, prefix)
+        if cache_key in self._guild_settings_schema_ready:
+            return
         await asyncio.wait_for(cur.execute(
             f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_guild_settings` "
             "(guild_id BIGINT PRIMARY KEY)"
@@ -282,10 +291,14 @@ class CoreMixin:
                 ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
             except Exception:
                 pass
+        self._guild_settings_schema_ready.add(cache_key)
 
     async def _ensure_music_intelligence_schema(self, cur, schema: str, prefix: str) -> None:
         schema = _validate_identifier(schema, "schema")
         prefix = _validate_identifier(prefix, "table prefix")
+        cache_key = (schema, prefix)
+        if cache_key in self._music_intelligence_schema_ready:
+            return
         await cur.execute(
             f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_track_intelligence` ("
             "guild_id BIGINT NOT NULL, url_key VARCHAR(64) NOT NULL, video_url TEXT, title TEXT, "
@@ -319,6 +332,7 @@ class CoreMixin:
                 await cur.execute(stmt)
             except Exception:
                 pass
+        self._music_intelligence_schema_ready.add(cache_key)
 
     async def _ensure_account_profile_schema(self, cur) -> None:
         for column_name, definition in (*ACCOUNT_AUTH_COLUMNS, *ACCOUNT_PROFILE_COLUMNS):
