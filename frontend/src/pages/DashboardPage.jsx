@@ -4,7 +4,7 @@ import { Activity, Bot, ListMusic, MessageCircle, RefreshCw, Siren } from "lucid
 import { apiFetch, cachedFetch, prefetchFetch, query } from "../api.js";
 import { useLiveRefresh } from "../hooks/useLiveRefresh.js";
 import { useDashboardStream } from "../hooks/useDashboardStream.js";
-import { BotCard, IntelligenceView, PlaybackCounter, SessionTable } from "../components/swarm.jsx";
+import { BotCard, IntelligenceView, PlaybackCounter, QuickControlCard, SessionTable } from "../components/swarm.jsx";
 import { Metric, MetricGrid, Notice, Page, SectionHead, SkeletonGrid } from "../components/ui.jsx";
 import { number } from "../utils/format.js";
 
@@ -160,6 +160,9 @@ export default function DashboardPage({ ctx }) {
   const topQueueLoad = queueLeaders[0] ? Number(queueLeaders[0].queue_count || 0) + Number(queueLeaders[0].backup_queue_count || 0) : 0;
   const topQueueLabel = queueLeaders[0]?.channel_name || queueLeaders[0]?.guild_name || "No lane";
   const recoveryLabel = stale ? `${stale} nodes need attention` : "all nodes answering";
+  const ownGuildId = ctx.session.guild_id || ctx.session.account_guild_id;
+  const ownBot = ownGuildId ? bots.find((bot) => bot.sessions.some((session) => String(session.guild_id) === String(ownGuildId))) : null;
+  const ownSession = ownBot ? ownBot.sessions.find((session) => String(session.guild_id) === String(ownGuildId)) : null;
 
   return (
     <Page
@@ -268,6 +271,9 @@ export default function DashboardPage({ ctx }) {
               </div>
             </div>
           </div>
+          {ownGuildId ? (
+            <QuickControlCard session={ownSession} botKey={ownBot?.key} guildId={ownGuildId} ctx={ctx} />
+          ) : null}
           <div className="panel">
             <SectionHead title="Music Intelligence" />
             <IntelligenceView data={state.intelligence?.data} />

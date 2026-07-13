@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Heart, MessageCircle, Music2, PlugZap, UserPlus } from "lucide-react";
+import { Heart, MessageCircle, Music2, Pause, Play, PlugZap, SkipForward, UserPlus } from "lucide-react";
 import { apiFetch, clearCache } from "../api.js";
 import { EmptyState, Notice } from "./ui.jsx";
 import { formatCell, formatDurationSeconds, formatTime, initials, number, pick, titleCase, unique } from "../utils/format.js";
@@ -246,6 +246,54 @@ export function PlaybackCounter({ session, className = "", compact = false }) {
       </div>
       <div className="bot-playback-bar" aria-hidden="true">
         <span style={{ width: playbackBarWidth }} />
+      </div>
+    </div>
+  );
+}
+
+export function QuickControlCard({ session, botKey, guildId, ctx }) {
+  const [busy, setBusy] = useState("");
+  if (!botKey || !guildId) return null;
+
+  async function sendAction(action) {
+    setBusy(action);
+    try {
+      await apiFetch("/api/bots/control", {
+        method: "POST",
+        body: JSON.stringify({ bot_key: botKey, guild_id: guildId, action, payload: {} }),
+      });
+      clearCache();
+      ctx.showToast(`${action} sent.`, "success");
+    } catch (error) {
+      ctx.showToast(error.message, "error");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  const isPlaying = Boolean(session?.is_playing);
+  const isPaused = Boolean(session?.is_paused);
+
+  return (
+    <div className="panel quick-control-card">
+      <div className="section-head"><h2>Quick Controls</h2></div>
+      <div className="bot-now-copy">
+        <strong>{session?.title || "Nothing playing right now."}</strong>
+        <small>{session?.channel_name || session?.guild_name || "This guild's active lane"}</small>
+      </div>
+      {session ? <PlaybackCounter session={session} compact /> : null}
+      <div className="actions-row">
+        <button
+          type="button"
+          disabled={Boolean(busy)}
+          onClick={() => sendAction(isPlaying && !isPaused ? "PAUSE" : "RESUME")}
+        >
+          {isPlaying && !isPaused ? <Pause size={16} /> : <Play size={16} />}
+          {isPlaying && !isPaused ? "Pause" : "Play"}
+        </button>
+        <button type="button" disabled={Boolean(busy)} onClick={() => sendAction("SKIP")}>
+          <SkipForward size={16} />Skip
+        </button>
       </div>
     </div>
   );
