@@ -15,6 +15,7 @@ from ..auth_deps import (
     _hydrate_site_owner_auth,
     _is_admin_auth,
     _is_image_gallery_owner_auth,
+    _is_moderator_auth,
     _is_site_owner_account,
     _is_site_owner_auth,
     _require_api_auth,
@@ -87,6 +88,7 @@ async def login_submit(
                 auth["guild_id"],
                 admin_mode=bool(auth.get("admin_mode")),
                 site_owner=bool(auth.get("site_owner")),
+                moderator=bool(auth.get("moderator")),
             )
         return RedirectResponse(url="/", status_code=303)
     return RedirectResponse(url="/login?error=invalid-login", status_code=303)
@@ -158,6 +160,7 @@ async def api_session_status(request: Request):
     guild_id = auth.get("guild_id")
     site_owner = _is_site_owner_auth(auth)
     admin_mode = _is_admin_auth(auth)
+    moderator = _is_moderator_auth(auth)
     account_guild_id = await _resolve_account_guild_id(auth, username)
     return {
         "authenticated": True,
@@ -168,6 +171,7 @@ async def api_session_status(request: Request):
         "account_guild_id": account_guild_id,
         "site_owner": site_owner,
         "admin_mode": admin_mode,
+        "moderator": moderator,
         "image_gallery_owner": _is_image_gallery_owner_auth(auth),
         "token": issue_api_token(
             settings.session_secret,
@@ -176,6 +180,7 @@ async def api_session_status(request: Request):
             guild_id=account_guild_id or guild_id,
             admin_mode=admin_mode,
             site_owner=site_owner,
+            moderator=moderator,
         ),
         "pages_public_url": settings.pages_public_url,
         "expires_in": settings.api_token_ttl_seconds,
@@ -206,9 +211,11 @@ async def api_session_login(request: Request, payload: SessionLoginRequest):
             auth["guild_id"],
             admin_mode=bool(auth.get("admin_mode")),
             site_owner=bool(auth.get("site_owner")),
+            moderator=bool(auth.get("moderator")),
         )
     linked_guild_id = auth.get("guild_id") or (await _resolve_account_guild_id(auth, auth["username"]) if auth["role"] == "admin" else None)
     site_owner = bool(auth.get("site_owner"))
+    moderator = bool(auth.get("moderator"))
     token = issue_api_token(
         settings.session_secret,
         auth["username"],
@@ -216,6 +223,7 @@ async def api_session_login(request: Request, payload: SessionLoginRequest):
         guild_id=linked_guild_id,
         admin_mode=_is_admin_auth(auth),
         site_owner=site_owner,
+        moderator=moderator,
     )
     return {
         "ok": True,
@@ -226,6 +234,7 @@ async def api_session_login(request: Request, payload: SessionLoginRequest):
         "account_guild_id": linked_guild_id,
         "site_owner": site_owner,
         "admin_mode": _is_admin_auth(auth),
+        "moderator": moderator,
         "image_gallery_owner": _is_image_gallery_owner_auth(auth),
         "pages_public_url": settings.pages_public_url,
         "expires_in": settings.api_token_ttl_seconds,

@@ -56,6 +56,7 @@ ACCOUNT_PROFILE_COLUMNS = (
     ("profile_header_style", "VARCHAR(30) NULL"),
     ("profile_border_accent", "VARCHAR(30) NULL"),
     ("last_seen_at", "TIMESTAMP NULL DEFAULT NULL"),
+    ("panel_role", "VARCHAR(20) NOT NULL DEFAULT 'member'"),
     ("updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
 )
 ACCOUNT_PROFILE_FIELDS = {name for name, _definition in ACCOUNT_PROFILE_COLUMNS}

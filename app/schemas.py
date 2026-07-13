@@ -114,6 +114,11 @@ class SwarmAccountBulkVerifyRequest(BaseModel):
     verified: bool = True
 
 
+class SwarmAccountModeratorRequest(BaseModel):
+    account_id: int
+    moderator: bool
+
+
 # --- Image Gallery admin ------------------------------------------------------
 
 

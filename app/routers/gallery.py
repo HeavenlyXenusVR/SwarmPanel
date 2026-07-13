@@ -4,7 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
-from ..auth_deps import _require_image_gallery_owner_auth
+from ..auth_deps import _require_gallery_admin_or_moderator_auth, _require_image_gallery_owner_auth
 from ..csv_export import rows_to_csv_response
 from ..emailer import send_image_gallery_verification_email
 from ..schemas import (
@@ -120,7 +120,7 @@ async def image_gallery_delete_user(request: Request, payload: GalleryUserDelete
 
 @router.post("/api/image-gallery/comments/delete")
 async def image_gallery_delete_comment(request: Request, payload: GalleryCommentDeleteRequest):
-    auth = _require_image_gallery_owner_auth(request)
+    auth = _require_gallery_admin_or_moderator_auth(request)
     await db.delete_image_gallery_comment(payload.comment_id)
     action_logger.warning("image_gallery_delete_comment comment_id=%s", payload.comment_id)
     await db.record_audit_log(auth.get("username"), "image_gallery_delete_comment", target_type="gallery_comment", target_id=payload.comment_id)
@@ -242,7 +242,7 @@ async def image_gallery_bulk_delete_users(request: Request, payload: GalleryUser
 
 @router.post("/api/image-gallery/reports/status")
 async def image_gallery_update_report_status(request: Request, payload: GalleryReportStatusRequest):
-    _require_image_gallery_owner_auth(request)
+    _require_gallery_admin_or_moderator_auth(request)
     try:
         await db.update_image_gallery_report_status(payload.report_id, payload.status)
     except ValueError as exc:

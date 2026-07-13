@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Activity, KeyRound, ListMusic, RefreshCw, Search, ShieldAlert, ShieldCheck, Trash2, Webhook } from "lucide-react";
+import { Activity, KeyRound, ListMusic, RefreshCw, Search, Shield, ShieldAlert, ShieldCheck, Trash2, Webhook } from "lucide-react";
 import { apiFetch, query } from "../api.js";
 import { useLiveRefresh } from "../hooks/useLiveRefresh.js";
 import { DataTable } from "../components/swarm.jsx";
@@ -133,6 +133,18 @@ export default function AccountsPage({ ctx }) {
             <input className="mini-input" type="password" placeholder="new password" value={passwords[row.id] || ""} onChange={(event) => setPasswords((current) => ({ ...current, [row.id]: event.target.value }))} />
             <button type="button" disabled={!String(passwords[row.id] || "").trim()} onClick={() => mutate("/api/swarm-accounts/reset-password", { account_id: row.id, new_password: passwords[row.id] || "" }, "Password reset.")}><KeyRound size={14} />Reset</button>
             <button type="button" disabled={!row.verification_webhook_configured} onClick={() => mutate("/api/swarm-accounts/resend-verification", { account_id: row.id }, "Verification code sent.")}><Webhook size={14} />Code</button>
+            {ctx.isOwner ? (
+              <button
+                type="button"
+                onClick={() => mutate(
+                  "/api/swarm-accounts/moderator",
+                  { account_id: row.id, moderator: row.panel_role !== "moderator" },
+                  row.panel_role === "moderator" ? "Moderator access revoked." : "Moderator access granted.",
+                )}
+              >
+                <Shield size={14} />{row.panel_role === "moderator" ? "Revoke Mod" : "Make Mod"}
+              </button>
+            ) : null}
             <button className="danger" type="button" onClick={() => mutate("/api/swarm-accounts/delete", { account_id: row.id }, "Account deleted.")}><Trash2 size={14} />Delete</button>
           </div>
         )}

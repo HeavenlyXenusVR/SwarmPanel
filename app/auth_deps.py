@@ -16,6 +16,7 @@ from .auth import (
     SESSION_ADMIN_MODE_KEY,
     SESSION_AUTH_KEY,
     SESSION_GUILD_ID_KEY,
+    SESSION_MODERATOR_KEY,
     SESSION_ROLE_KEY,
     SESSION_SITE_OWNER_KEY,
     SESSION_USERNAME_KEY,
@@ -88,6 +89,10 @@ def _is_image_gallery_owner_auth(auth: dict[str, Any] | None) -> bool:
     return _is_admin_auth(auth) and _is_site_owner_auth(auth)
 
 
+def _is_moderator_auth(auth: dict[str, Any] | None) -> bool:
+    return bool(auth and auth.get("moderator"))
+
+
 def _scoped_guild_id(auth: dict[str, Any] | None) -> str | None:
     if auth and not _is_site_owner_auth(auth) and not auth.get("guild_id"):
         return OWNER_SCOPE_SENTINEL
@@ -135,10 +140,24 @@ def _require_admin_auth(request: Request) -> dict[str, Any]:
     return auth
 
 
+def _require_admin_or_moderator_auth(request: Request) -> dict[str, Any]:
+    auth = _require_api_auth(request)
+    if not (_is_admin_auth(auth) or _is_moderator_auth(auth)):
+        raise HTTPException(status_code=403, detail="Admin or moderator access required")
+    return auth
+
+
 def _require_image_gallery_owner_auth(request: Request) -> dict[str, Any]:
     auth = _require_api_auth(request)
     if not _is_image_gallery_owner_auth(auth):
         raise HTTPException(status_code=403, detail="Image Gallery owner access required")
+    return auth
+
+
+def _require_gallery_admin_or_moderator_auth(request: Request) -> dict[str, Any]:
+    auth = _require_api_auth(request)
+    if not (_is_image_gallery_owner_auth(auth) or _is_moderator_auth(auth)):
+        raise HTTPException(status_code=403, detail="Image Gallery admin or moderator access required")
     return auth
 
 
@@ -165,6 +184,7 @@ def _set_account_session(
     *,
     admin_mode: bool = False,
     site_owner: bool = False,
+    moderator: bool = False,
 ) -> None:
     request.session.clear()
     request.session[SESSION_AUTH_KEY] = True
@@ -172,6 +192,7 @@ def _set_account_session(
     request.session[SESSION_ROLE_KEY] = "account"
     request.session[SESSION_GUILD_ID_KEY] = str(guild_id)
     request.session[SESSION_SITE_OWNER_KEY] = bool(site_owner)
+    request.session[SESSION_MODERATOR_KEY] = bool(moderator)
     request.session[SESSION_ADMIN_MODE_KEY] = bool(site_owner and admin_mode)
 
 
@@ -188,6 +209,7 @@ def _sync_account_session_owner_state(request: Request, profile: dict[str, Any] 
         str(guild_id),
         admin_mode=bool(request.session.get(SESSION_ADMIN_MODE_KEY)),
         site_owner=_is_site_owner_account(profile),
+        moderator=str(profile.get("panel_role") or "") == "moderator",
     )
 
 
@@ -250,6 +272,7 @@ async def _authenticate_login(username: str, password: str = "", guild_id: str |
         "role": "account",
         "guild_id": account["guild_id"],
         "site_owner": site_owner,
+        "moderator": str(account.get("panel_role") or "") == "moderator",
         "admin_mode": site_owner,
     }
 

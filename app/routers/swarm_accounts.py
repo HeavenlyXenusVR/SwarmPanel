@@ -11,6 +11,7 @@ from ..schemas import (
     SwarmAccountBulkVerifyRequest,
     SwarmAccountDeleteRequest,
     SwarmAccountFlagRequest,
+    SwarmAccountModeratorRequest,
     SwarmAccountPasswordResetRequest,
     SwarmAccountUpdateRequest,
 )
@@ -95,6 +96,22 @@ async def api_swarm_accounts_reset_password(request: Request, payload: SwarmAcco
         raise HTTPException(status_code=404, detail="SwarmPanel account not found")
     action_logger.warning("swarm_account_reset_password account_id=%s", payload.account_id)
     await db.record_audit_log(auth.get("username"), "swarm_account_reset_password", target_type="account", target_id=payload.account_id)
+    return {"ok": True, "account": account}
+
+
+@router.post("/api/swarm-accounts/moderator")
+async def api_swarm_accounts_set_moderator(request: Request, payload: SwarmAccountModeratorRequest):
+    """Grant/revoke the delegated moderator role. Owner-only — moderators
+    cannot escalate their own or anyone else's access through this route."""
+    auth = _require_admin_auth(request)
+    account = await db.set_account_panel_role(payload.account_id, payload.moderator)
+    if not account:
+        raise HTTPException(status_code=404, detail="SwarmPanel account not found")
+    action_logger.warning("swarm_account_set_moderator account_id=%s moderator=%s", payload.account_id, payload.moderator)
+    await db.record_audit_log(
+        auth.get("username"), "swarm_account_set_moderator", target_type="account", target_id=payload.account_id,
+        details=f"moderator={payload.moderator}",
+    )
     return {"ok": True, "account": account}
 
 

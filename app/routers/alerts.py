@@ -3,7 +3,7 @@ Telegram health-watch loop (see app/telegram_bridge.py)."""
 
 from fastapi import APIRouter, HTTPException, Request
 
-from ..auth_deps import _require_admin_auth
+from ..auth_deps import _require_admin_auth, _require_admin_or_moderator_auth
 from ..schemas import AlertRuleCreateRequest, AlertRuleUpdateRequest
 from ..security import _safe_error_detail
 from ..services import action_logger, db
@@ -13,7 +13,7 @@ router = APIRouter()
 
 @router.get("/api/alert-rules")
 async def list_alert_rules(request: Request):
-    _require_admin_auth(request)
+    _require_admin_or_moderator_auth(request)
     try:
         return {"ok": True, "rules": await db.list_alert_rules()}
     except Exception as exc:

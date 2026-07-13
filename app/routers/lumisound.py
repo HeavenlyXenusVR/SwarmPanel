@@ -4,7 +4,7 @@ reports — mirrors the Image Gallery admin router's patterns."""
 
 from fastapi import APIRouter, HTTPException, Request
 
-from ..auth_deps import _require_admin_auth
+from ..auth_deps import _require_admin_or_moderator_auth
 from ..schemas import (
     LumisoundBugReportStatusRequest,
     LumisoundUploadDeleteRequest,
@@ -18,7 +18,7 @@ router = APIRouter()
 
 @router.get("/api/lumisound/admin")
 async def lumisound_admin(request: Request, limit: int = 50):
-    _require_admin_auth(request)
+    _require_admin_or_moderator_auth(request)
     limit = _bounded_query_limit(limit, default=50)
     try:
         return {"ok": True, "data": await db.get_lumisound_admin_data(limit)}
@@ -29,7 +29,7 @@ async def lumisound_admin(request: Request, limit: int = 50):
 
 @router.post("/api/lumisound/uploads/delete")
 async def lumisound_delete_upload(request: Request, payload: LumisoundUploadDeleteRequest):
-    auth = _require_admin_auth(request)
+    auth = _require_admin_or_moderator_auth(request)
     await db.delete_lumisound_upload(payload.upload_id)
     action_logger.warning("lumisound_delete_upload upload_id=%s", payload.upload_id)
     await db.record_audit_log(auth.get("username"), "lumisound_delete_upload", target_type="lumisound_upload", target_id=payload.upload_id)
@@ -38,7 +38,7 @@ async def lumisound_delete_upload(request: Request, payload: LumisoundUploadDele
 
 @router.post("/api/lumisound/users/active")
 async def lumisound_set_user_active(request: Request, payload: LumisoundUserActiveRequest):
-    auth = _require_admin_auth(request)
+    auth = _require_admin_or_moderator_auth(request)
     user = await db.set_lumisound_user_active(payload.user_id, payload.active)
     if not user:
         raise HTTPException(status_code=404, detail="Lumisound user not found")
@@ -52,7 +52,7 @@ async def lumisound_set_user_active(request: Request, payload: LumisoundUserActi
 
 @router.post("/api/lumisound/bug-reports/status")
 async def lumisound_update_bug_report_status(request: Request, payload: LumisoundBugReportStatusRequest):
-    auth = _require_admin_auth(request)
+    auth = _require_admin_or_moderator_auth(request)
     try:
         await db.update_lumisound_bug_report_status(payload.report_id, payload.status)
     except ValueError as exc:

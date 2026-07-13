@@ -68,6 +68,7 @@ function App() {
   const isAdmin = Boolean(session.admin_mode);
   const isOwner = Boolean(session.site_owner);
   const canGallery = Boolean(session.image_gallery_owner);
+  const isModerator = Boolean(session.moderator);
 
   const showToast = useCallback((message, tone = "info") => {
     setToast({ message, tone, id: Date.now() });
@@ -272,7 +273,8 @@ function App() {
     isAdmin,
     isOwner,
     canGallery,
-  }), [canGallery, isAdmin, isOwner, loadPreferences, loadSession, loginWith, logout, preferences, session, showToast, switchAdminMode, token]);
+    isModerator,
+  }), [canGallery, isAdmin, isModerator, isOwner, loadPreferences, loadSession, loginWith, logout, preferences, session, showToast, switchAdminMode, token]);
 
   const notifyPos = preferences?.notification_position || "br";
   const notifyClass = notifyPos === "br" ? "" : `panel-notify-${notifyPos}`;
@@ -422,11 +424,11 @@ class RouteErrorBoundary extends React.Component {
   }
 }
 
-function Protected({ ctx, children, admin = false, gallery = false }) {
+function Protected({ ctx, children, admin = false, gallery = false, moderator = false }) {
   const location = useLocation();
   if (ctx.session.loading) return <Page title="Loading" eyebrow="Session"><SkeletonGrid count={4} /></Page>;
   if (!ctx.session.authenticated) return <Navigate to="/login" replace />;
-  if (admin && !ctx.isAdmin) return <Denied message="Admin mode is required." />;
+  if (admin && !ctx.isAdmin && !(moderator && ctx.isModerator)) return <Denied message="Admin mode is required." />;
   if (gallery && !ctx.canGallery) return <Denied message="Image Gallery owner access is required." />;
   return <RouteErrorBoundary pathname={location.pathname}>{children}</RouteErrorBoundary>;
 }
@@ -537,7 +539,7 @@ function RouteViewport({ ctx, pathname }) {
   }
   if (currentPath === "/lumisound-admin") {
     return (
-      <Protected ctx={ctx} admin>
+      <Protected ctx={ctx} admin moderator>
         <LumisoundAdminPage ctx={ctx} />
       </Protected>
     );
@@ -551,7 +553,7 @@ function RouteViewport({ ctx, pathname }) {
   }
   if (currentPath === "/audit-log") {
     return (
-      <Protected ctx={ctx} admin>
+      <Protected ctx={ctx} admin moderator>
         <AuditLogPage ctx={ctx} />
       </Protected>
     );

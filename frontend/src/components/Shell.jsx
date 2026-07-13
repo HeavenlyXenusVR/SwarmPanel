@@ -47,11 +47,11 @@ export function Shell({ ctx, children }) {
     if (ctx.isAdmin) items.push({ to: "/accounts", icon: Shield, label: "Accounts", mobileLabel: "Accounts" });
     if (ctx.isAdmin) items.push({ to: "/databases", icon: Database, label: "Data", mobileLabel: "Data" });
     if (ctx.canGallery) items.push({ to: "/gallery-admin", icon: ImageIcon, label: "Gallery", mobileLabel: "Gallery" });
-    if (ctx.isAdmin) items.push({ to: "/lumisound-admin", icon: Music, label: "Lumisound", mobileLabel: "Music" });
+    if (ctx.isAdmin || ctx.isModerator) items.push({ to: "/lumisound-admin", icon: Music, label: "Lumisound", mobileLabel: "Music" });
     if (ctx.isAdmin) items.push({ to: "/intel", icon: Siren, label: "Intel", mobileLabel: "Intel" });
-    if (ctx.isAdmin) items.push({ to: "/audit-log", icon: ListChecks, label: "Audit Log", mobileLabel: "Audit" });
+    if (ctx.isAdmin || ctx.isModerator) items.push({ to: "/audit-log", icon: ListChecks, label: "Audit Log", mobileLabel: "Audit" });
     return items;
-  }, [ctx.canGallery, ctx.isAdmin]);
+  }, [ctx.canGallery, ctx.isAdmin, ctx.isModerator]);
   const mobilePrimaryItems = navItems.filter((item) => ["/", "/controls", "/users", "/messages", "/profile"].includes(item.to));
   const mobileSecondaryItems = navItems.filter((item) => !mobilePrimaryItems.some((primary) => primary.to === item.to));
   const isMoreActive = mobileSecondaryItems.some((item) => isActivePath(location.pathname, item.to));

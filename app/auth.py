@@ -10,6 +10,7 @@ SESSION_ROLE_KEY = "swarm_panel_role"
 SESSION_GUILD_ID_KEY = "swarm_panel_guild_id"
 SESSION_ADMIN_MODE_KEY = "swarm_panel_admin_mode"
 SESSION_SITE_OWNER_KEY = "swarm_panel_site_owner"
+SESSION_MODERATOR_KEY = "swarm_panel_moderator"
 API_TOKEN_SALT = "swarm_panel_api_token"
 
 
@@ -46,9 +47,10 @@ def issue_api_token(
     guild_id: str | None = None,
     admin_mode: bool | None = None,
     site_owner: bool = False,
+    moderator: bool = False,
 ) -> str:
     serializer = URLSafeTimedSerializer(secret_key, salt=API_TOKEN_SALT)
-    payload = {"username": username, "role": role, "site_owner": bool(site_owner)}
+    payload = {"username": username, "role": role, "site_owner": bool(site_owner), "moderator": bool(moderator)}
     if guild_id:
         payload["guild_id"] = str(guild_id)
     if admin_mode is None:
@@ -68,9 +70,10 @@ def verify_api_token(token: str | None, secret_key: str, max_age_seconds: int) -
     if isinstance(data, dict):
         data.setdefault("role", "account" if data.get("guild_id") else "admin")
         data.setdefault("site_owner", False)
+        data.setdefault("moderator", False)
         data.setdefault("admin_mode", bool(data.get("site_owner")) and str(data.get("role") or "").lower() == "admin" and not data.get("guild_id"))
         return data
-    return {"username": str(data), "role": "admin", "site_owner": False, "admin_mode": False}
+    return {"username": str(data), "role": "admin", "site_owner": False, "moderator": False, "admin_mode": False}
 
 
 def get_api_auth(
@@ -91,6 +94,7 @@ def get_api_auth(
             "username": session.get(SESSION_USERNAME_KEY),
             "role": role,
             "site_owner": bool(session.get(SESSION_SITE_OWNER_KEY)),
+            "moderator": bool(session.get(SESSION_MODERATOR_KEY)),
             "admin_mode": bool(admin_mode),
         }
         if guild_id:

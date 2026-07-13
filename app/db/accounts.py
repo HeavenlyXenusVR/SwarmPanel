@@ -363,7 +363,7 @@ class AccountsMixin:
             return None
         row = await self._fetchone(
             f"""
-            SELECT username, guild_id, email, email_verified_at, password_hash
+            SELECT username, guild_id, email, email_verified_at, password_hash, panel_role
             FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
             WHERE username = %s
             LIMIT 1
@@ -394,6 +394,7 @@ class AccountsMixin:
             "email_verified": bool(row.get("email_verified_at")),
             "has_password": bool(password_hash),
             "used_legacy_login": legacy_ok,
+            "panel_role": row.get("panel_role") or "member",
         }
 
     async def touch_account_seen(self, username: str, guild_id: str | int, min_interval_seconds: int = 30) -> None:
@@ -513,7 +514,7 @@ class AccountsMixin:
                    favorite_bot, theme_accent,
                    public_profile, server_invite_url, server_name, server_icon_url,
                    panel_preferences, profile_quote, profile_layout_mode, profile_header_style, profile_border_accent,
-                   created_at, last_login_at, last_seen_at, updated_at
+                   panel_role, created_at, last_login_at, last_seen_at, updated_at
             FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
             WHERE username = %s AND guild_id = %s
             LIMIT 1
@@ -571,7 +572,7 @@ class AccountsMixin:
                    profile_card_style, profile_social_mode, favorite_bot, theme_accent, public_profile,
                    server_invite_url, server_name, server_icon_url, panel_preferences,
                    profile_quote, profile_layout_mode, profile_header_style, profile_border_accent,
-                   created_at, last_login_at, last_seen_at, updated_at
+                   panel_role, created_at, last_login_at, last_seen_at, updated_at
             FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
             WHERE id = %s
             LIMIT 1
@@ -602,7 +603,7 @@ class AccountsMixin:
                    verification_webhook_url, verification_webhook_channel_id, verification_webhook_name,
                    webhook_verified_at, webhook_verification_sent_at,
                    password_hash,
-                   display_name, favorite_bot, public_profile, server_name,
+                   display_name, favorite_bot, public_profile, server_name, panel_role,
                    created_at, last_login_at, last_seen_at, updated_at
             FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`
             WHERE (
@@ -756,6 +757,18 @@ class AccountsMixin:
                             raise ValueError("That guild ID is already registered to another account.") from exc
                         raise ValueError("That username is already registered.") from exc
                     raise
+        return await self.get_account_admin(safe_account_id)
+
+    async def set_account_panel_role(self, account_id: int, moderator: bool) -> dict[str, Any] | None:
+        """Grant or revoke the delegated moderator role. Kept separate from
+        update_account_admin's generic field-update path so privilege
+        escalation always goes through this one narrow, auditable method."""
+        safe_account_id = _coerce_int(account_id, "account_id")
+        role = "moderator" if moderator else "member"
+        await self._execute(
+            f"UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}` SET panel_role = %s WHERE id = %s",
+            (role, safe_account_id),
+        )
         return await self.get_account_admin(safe_account_id)
 
     async def delete_account_admin(self, account_id: int) -> None:
