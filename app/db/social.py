@@ -5,7 +5,7 @@ from typing import Any
 
 import aiomysql
 
-from .helpers import ACCOUNT_LOGIN_SCHEMA, ACCOUNT_LOGIN_TABLE, PANEL_DB_QUERY_TIMEOUT_SECONDS, _coerce_int
+from .helpers import ACCOUNT_LOGIN_SCHEMA, ACCOUNT_LOGIN_TABLE, PANEL_DB_QUERY_TIMEOUT_SECONDS, _coerce_int, logger
 
 
 class SocialMixin:
@@ -296,6 +296,80 @@ class SocialMixin:
         rows = list(rows)
         rows.reverse()
         return [self._serialize_social_row(row) for row in rows]
+
+    async def create_notification(
+        self,
+        recipient_account_id: int,
+        kind: str,
+        title: str,
+        body: str | None = None,
+        link_path: str | None = None,
+    ) -> None:
+        """Best-effort notification insert — must never break the action that
+        triggered it (follow/friend-request/message), so failures are logged
+        and swallowed, matching record_audit_log's contract."""
+        try:
+            await self._execute(
+                f"""
+                INSERT INTO `{ACCOUNT_LOGIN_SCHEMA}`.`account_notifications`
+                    (recipient_account_id, kind, title, body, link_path)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    _coerce_int(recipient_account_id, "recipient_account_id"),
+                    str(kind or "")[:40],
+                    str(title or "")[:200],
+                    str(body)[:500] if body else None,
+                    str(link_path)[:200] if link_path else None,
+                ),
+            )
+        except Exception as exc:
+            logger.warning("Failed to create notification kind=%s recipient=%s: %s", kind, recipient_account_id, exc)
+
+    async def list_notifications(self, account_id: int, limit: int = 30) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(int(limit or 30), 100))
+        rows = await self._fetchall(
+            f"""
+            SELECT id, kind, title, body, link_path, read_at, created_at
+            FROM `{ACCOUNT_LOGIN_SCHEMA}`.`account_notifications`
+            WHERE recipient_account_id = %s
+            ORDER BY created_at DESC, id DESC
+            LIMIT %s
+            """,
+            (_coerce_int(account_id, "account_id"), safe_limit),
+        )
+        return [self._serialize_social_row(row) for row in rows]
+
+    async def unread_notification_count(self, account_id: int) -> int:
+        row = await self._fetchone(
+            f"""
+            SELECT COUNT(*) AS unread
+            FROM `{ACCOUNT_LOGIN_SCHEMA}`.`account_notifications`
+            WHERE recipient_account_id = %s AND read_at IS NULL
+            """,
+            (_coerce_int(account_id, "account_id"),),
+        )
+        return int((row or {}).get("unread") or 0)
+
+    async def mark_notification_read(self, notification_id: int, account_id: int) -> None:
+        await self._execute(
+            f"""
+            UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`account_notifications`
+            SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
+            WHERE id = %s AND recipient_account_id = %s
+            """,
+            (_coerce_int(notification_id, "notification_id"), _coerce_int(account_id, "account_id")),
+        )
+
+    async def mark_all_notifications_read(self, account_id: int) -> None:
+        await self._execute(
+            f"""
+            UPDATE `{ACCOUNT_LOGIN_SCHEMA}`.`account_notifications`
+            SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
+            WHERE recipient_account_id = %s AND read_at IS NULL
+            """,
+            (_coerce_int(account_id, "account_id"),),
+        )
 
     def _serialize_social_row(self, row: dict[str, Any]) -> dict[str, Any]:
         item = dict(row or {})

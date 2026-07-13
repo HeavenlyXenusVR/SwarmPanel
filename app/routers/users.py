@@ -470,9 +470,14 @@ async def api_follow_account(account_id: int, request: Request, payload: SocialF
     if payload.following and not _social_permissions(target_profile)["can_follow"]:
         raise HTTPException(status_code=403, detail="This profile is not accepting follows.")
     try:
-        return {"ok": True, **await db.set_account_follow(actor_id, account_id, payload.following)}
+        result = await db.set_account_follow(actor_id, account_id, payload.following)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
+    if payload.following:
+        await db.create_notification(
+            account_id, "follow", f"{auth.get('username')} started following you", link_path=f"/users/{actor_id}",
+        )
+    return {"ok": True, **result}
 
 
 @router.post("/api/users/{account_id}/friend-request")
@@ -483,9 +488,18 @@ async def api_send_account_friend_request(account_id: int, request: Request):
     if not _social_permissions(target_profile)["can_friend"]:
         raise HTTPException(status_code=403, detail="This profile is not accepting friend requests.")
     try:
-        return {"ok": True, **await db.send_account_friend_request(actor_id, account_id)}
+        result = await db.send_account_friend_request(actor_id, account_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
+    if result.get("status") == "pending_out":
+        await db.create_notification(
+            account_id, "friend_request", f"{auth.get('username')} sent you a friend request", link_path="/friends",
+        )
+    elif result.get("status") == "friends":
+        await db.create_notification(
+            account_id, "friend_accept", f"You and {auth.get('username')} are now friends", link_path="/friends",
+        )
+    return {"ok": True, **result}
 
 
 @router.get("/api/friends/requests")
@@ -509,6 +523,12 @@ async def api_account_friend_request_action(request_id: int, request: Request, p
         raise HTTPException(status_code=400, detail=str(exc)) from None
     if not result:
         raise HTTPException(status_code=404, detail="Friend request not found")
+    if result.get("status") == "accepted":
+        requester_id = result.get("requester_account_id")
+        if requester_id and int(requester_id) != actor_id:
+            await db.create_notification(
+                int(requester_id), "friend_accept", f"{auth.get('username')} accepted your friend request", link_path="/friends",
+            )
     return {"ok": True, "request": result}
 
 
@@ -551,4 +571,38 @@ async def api_send_account_message(account_id: int, request: Request, payload: S
         message = await db.send_account_message(actor_id, account_id, payload.body)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
+    await db.create_notification(
+        account_id, "message", f"New message from {auth.get('username')}", body=payload.body[:200], link_path=f"/messages/{actor_id}",
+    )
     return {"ok": True, "message": message}
+
+
+@router.get("/api/notifications")
+async def api_list_notifications(request: Request, limit: int = 30):
+    auth = await _hydrate_site_owner_auth(request, _require_api_auth(request))
+    actor_id = await _account_id_for_auth(auth)
+    limit = _bounded_query_limit(limit, default=30, max_limit=100)
+    return {"ok": True, "notifications": await db.list_notifications(actor_id, limit)}
+
+
+@router.get("/api/notifications/unread-count")
+async def api_notifications_unread_count(request: Request):
+    auth = await _hydrate_site_owner_auth(request, _require_api_auth(request))
+    actor_id = await _account_id_for_auth(auth)
+    return {"ok": True, "unread_count": await db.unread_notification_count(actor_id)}
+
+
+@router.post("/api/notifications/{notification_id}/read")
+async def api_mark_notification_read(notification_id: int, request: Request):
+    auth = await _hydrate_site_owner_auth(request, _require_api_auth(request))
+    actor_id = await _account_id_for_auth(auth)
+    await db.mark_notification_read(notification_id, actor_id)
+    return {"ok": True}
+
+
+@router.post("/api/notifications/read-all")
+async def api_mark_all_notifications_read(request: Request):
+    auth = await _hydrate_site_owner_auth(request, _require_api_auth(request))
+    actor_id = await _account_id_for_auth(auth)
+    await db.mark_all_notifications_read(actor_id)
+    return {"ok": True}

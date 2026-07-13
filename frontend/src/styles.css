@@ -691,6 +691,125 @@ a {
   min-height: 18px;
 }
 
+.notifications-bell {
+  position: relative;
+  display: inline-flex;
+}
+
+.icon-button.has-unread {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--line));
+  color: var(--accent);
+}
+
+.notifications-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #071018;
+  font-size: 0.62rem;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+}
+
+.notifications-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: transparent;
+}
+
+.notifications-dropdown {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 61;
+  width: 320px;
+  max-width: 86vw;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 10px;
+}
+
+.notifications-dropdown-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px 8px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 6px;
+}
+
+.notifications-dropdown-head button {
+  min-height: 26px;
+  padding: 3px 10px;
+  font-size: 0.78rem;
+}
+
+.notifications-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.notifications-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+}
+
+.notifications-item:hover {
+  background: var(--panel-2);
+}
+
+.notifications-item.unread {
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--line));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.notifications-item-title {
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.notifications-item-body {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.notifications-item-time {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.notifications-empty {
+  padding: 16px 8px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
 .icon-button {
   width: 38px;
   padding: 0;

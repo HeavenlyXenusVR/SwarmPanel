@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link, NavLink, useLocation } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
+  Bell,
   Database,
   HeartPulse,
   Image as ImageIcon,
@@ -21,6 +22,9 @@ import {
   UserRound,
   Users,
 } from "lucide-react";
+import { apiFetch } from "../api.js";
+import { useLiveRefresh } from "../hooks/useLiveRefresh.js";
+import { formatRelativeTime } from "../utils/format.js";
 
 export function Shell({ ctx, children }) {
   const location = useLocation();
@@ -99,6 +103,7 @@ export function Shell({ ctx, children }) {
                   {ctx.isAdmin ? "Admin On" : "Admin Off"}
                 </button>
               ) : null}
+              <NotificationsBell />
               <Link className="profile-link" to="/profile">
                 <span className="profile-link-badge">{username.slice(0, 1).toUpperCase()}</span>
                 <span>{username}</span>
@@ -157,6 +162,108 @@ export function Shell({ ctx, children }) {
         <a href="https://discord.com/users/1304564041863266347" target="_blank" rel="noreferrer">Discord</a>
       </footer>
     </>
+  );
+}
+
+function NotificationsBell() {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifications, setNotifications] = useState([]);
+
+  const loadUnread = useCallback(async () => {
+    try {
+      const result = await apiFetch("/api/notifications/unread-count", { force: true });
+      setUnreadCount(result.unread_count || 0);
+    } catch {
+      // Notifications are non-critical — a failed poll should not surface an error toast.
+    }
+  }, []);
+
+  const loadNotifications = useCallback(async () => {
+    try {
+      const result = await apiFetch("/api/notifications", { force: true });
+      setNotifications(result.notifications || []);
+    } catch {
+      // Same as above: fail silently, the bell just stays empty until the next poll.
+    }
+  }, []);
+
+  useEffect(() => { loadUnread(); }, [loadUnread]);
+  useLiveRefresh(loadUnread, { interval: 20_000 });
+
+  useEffect(() => {
+    if (!open) return;
+    loadNotifications();
+  }, [open, loadNotifications]);
+
+  async function openPanel() {
+    setOpen((current) => !current);
+  }
+
+  async function markAllRead() {
+    try {
+      await apiFetch("/api/notifications/read-all", { method: "POST" });
+      setUnreadCount(0);
+      setNotifications((current) => current.map((item) => ({ ...item, read_at: item.read_at || new Date().toISOString() })));
+    } catch {
+      // Best-effort — leave state as-is on failure, next poll will reconcile.
+    }
+  }
+
+  function openNotification(notification) {
+    setOpen(false);
+    if (!notification.read_at) {
+      apiFetch(`/api/notifications/${notification.id}/read`, { method: "POST" }).catch(() => {});
+      setUnreadCount((current) => Math.max(0, current - 1));
+    }
+    if (notification.link_path) navigate(notification.link_path);
+  }
+
+  return (
+    <div className="notifications-bell">
+      <button
+        aria-label="Notifications"
+        aria-expanded={open}
+        className={`icon-button ${unreadCount ? "has-unread" : ""}`}
+        type="button"
+        onClick={openPanel}
+        title="Notifications"
+      >
+        <Bell size={18} />
+        {unreadCount ? <span className="notifications-badge">{unreadCount > 9 ? "9+" : unreadCount}</span> : null}
+      </button>
+      {open ? (
+        <>
+          <div className="notifications-backdrop" onClick={() => setOpen(false)} />
+          <div className="notifications-dropdown">
+            <div className="notifications-dropdown-head">
+              <strong>Notifications</strong>
+              {unreadCount ? <button type="button" onClick={markAllRead}>Mark all read</button> : null}
+            </div>
+            {notifications.length ? (
+              <ul className="notifications-list">
+                {notifications.map((notification) => (
+                  <li key={notification.id}>
+                    <button
+                      type="button"
+                      className={`notifications-item ${notification.read_at ? "" : "unread"}`}
+                      onClick={() => openNotification(notification)}
+                    >
+                      <span className="notifications-item-title">{notification.title}</span>
+                      {notification.body ? <span className="notifications-item-body">{notification.body}</span> : null}
+                      <span className="notifications-item-time">{formatRelativeTime(notification.created_at)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="notifications-empty">You're all caught up.</p>
+            )}
+          </div>
+        </>
+      ) : null}
+    </div>
   );
 }
 

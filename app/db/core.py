@@ -416,3 +416,19 @@ class CoreMixin:
             )
             """
         ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
+        await asyncio.wait_for(cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS `{ACCOUNT_LOGIN_SCHEMA}`.`account_notifications` (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                recipient_account_id INT NOT NULL,
+                kind VARCHAR(40) NOT NULL,
+                title VARCHAR(200) NOT NULL,
+                body VARCHAR(500) NULL,
+                link_path VARCHAR(200) NULL,
+                read_at TIMESTAMP NULL DEFAULT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_account_notifications_recipient (recipient_account_id, read_at, created_at),
+                CONSTRAINT fk_account_notifications_recipient FOREIGN KEY (recipient_account_id) REFERENCES `{ACCOUNT_LOGIN_SCHEMA}`.`{ACCOUNT_LOGIN_TABLE}`(id) ON DELETE CASCADE
+            )
+            """
+        ), timeout=PANEL_DB_QUERY_TIMEOUT_SECONDS)
