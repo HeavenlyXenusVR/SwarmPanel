@@ -68,6 +68,21 @@ struct SocialView: View {
                                     .buttonStyle(.borderless)
                                     .tint(SwarmTheme.danger)
                             }
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    Task { await viewModel.respondToRequest(request, action: "decline") }
+                                } label: {
+                                    Label("Decline", systemImage: "xmark")
+                                }
+                            }
+                            .swipeActions(edge: .leading) {
+                                Button {
+                                    Task { await viewModel.respondToRequest(request, action: "accept") }
+                                } label: {
+                                    Label("Accept", systemImage: "checkmark")
+                                }
+                                .tint(SwarmTheme.ok)
+                            }
                         }
                     } header: {
                         SectionLabel(title: "Friend Requests", count: viewModel.incomingRequests.count)
@@ -86,6 +101,13 @@ struct SocialView: View {
                                     .buttonStyle(.borderless)
                                     .tint(SwarmTheme.danger)
                                     .font(.caption)
+                            }
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    Task { await viewModel.respondToRequest(request, action: "cancel") }
+                                } label: {
+                                    Label("Cancel", systemImage: "xmark")
+                                }
                             }
                         }
                     } header: {

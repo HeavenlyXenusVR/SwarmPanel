@@ -124,10 +124,12 @@ struct ControlsView: View {
                                     Image(systemName: "play.circle.fill").foregroundStyle(SwarmTheme.accent)
                                 }
                                 .disabled(viewModel.isSending)
+                            }
+                            .swipeActions(edge: .trailing) {
                                 Button(role: .destructive) {
                                     Task { await viewModel.deleteSavedQueue(queue) }
                                 } label: {
-                                    Image(systemName: "trash").foregroundStyle(SwarmTheme.danger)
+                                    Label("Delete", systemImage: "trash")
                                 }
                             }
                         }

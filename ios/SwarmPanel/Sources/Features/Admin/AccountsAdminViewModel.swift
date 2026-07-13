@@ -66,10 +66,12 @@ final class AccountsAdminViewModel: ObservableObject {
     func delete(_ account: SwarmAccountSummary) async {
         do {
             let _: OKResponse = try await api.post("/api/swarm-accounts/delete", body: SwarmAccountDeleteBody(accountId: account.id))
+            Haptics.warning()
             await load()
         } catch {
             guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to delete account."
+            Haptics.error()
         }
     }
 }

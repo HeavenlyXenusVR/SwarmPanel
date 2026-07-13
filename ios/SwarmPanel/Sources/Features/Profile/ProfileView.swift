@@ -6,6 +6,7 @@ struct ProfileView: View {
     @EnvironmentObject private var appearance: AppearanceSettings
     @EnvironmentObject private var notificationsViewModel: NotificationsViewModel
     @StateObject private var viewModel = ProfileViewModel()
+    @State private var selectedIcon = AppIconOption.current
 
     var body: some View {
         NavigationStack {
@@ -20,7 +21,7 @@ struct ProfileView: View {
                             if let guildId = appState.guildId {
                                 Button {
                                     UIPasteboard.general.string = guildId
-                                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                                    Haptics.success()
                                 } label: {
                                     HStack(spacing: 4) {
                                         Text("Guild \(guildId)")
@@ -77,6 +78,21 @@ struct ProfileView: View {
                             }
                         )
                     )
+                    if UIApplication.shared.supportsAlternateIcons {
+                        Picker("App Icon", selection: $selectedIcon) {
+                            ForEach(AppIconOption.allCases) { option in
+                                Text(option.label).tag(option)
+                            }
+                        }
+                        .onChange(of: selectedIcon) { newValue in
+                            UIApplication.shared.setAlternateIconName(newValue.alternateIconName) { error in
+                                if error != nil {
+                                    Task { @MainActor in selectedIcon = AppIconOption.current }
+                                }
+                            }
+                            Haptics.selection()
+                        }
+                    }
                 } header: {
                     SectionLabel(title: "Appearance")
                 } footer: {

@@ -6,6 +6,7 @@ final class DashboardViewModel: ObservableObject {
     @Published var response: DashboardResponse?
     @Published var isLoading = true
     @Published var errorMessage: String?
+    @Published var topTrack: LeaderboardTrack?
 
     let socket = DashboardSocket()
     private let api = APIClient.shared
@@ -47,6 +48,25 @@ final class DashboardViewModel: ObservableObject {
 
     func refresh() async {
         await loadOnce()
+    }
+
+    /// Reuses the same leaderboard endpoint the Leaderboard tab calls —
+    /// there's no separate "music intelligence" endpoint, so the Dashboard
+    /// teaser just asks for the account's own guild's #1 track.
+    func loadTopTrack(botKey: String, guildId: String) async {
+        guard !botKey.isEmpty, !guildId.isEmpty else {
+            topTrack = nil
+            return
+        }
+        do {
+            let envelope: LeaderboardEnvelope = try await api.get(
+                "/api/guilds/\(guildId)/leaderboard",
+                query: ["bot_key": botKey]
+            )
+            topTrack = envelope.data.topTracks?.first
+        } catch {
+            if !error.isCancellation { topTrack = nil }
+        }
     }
 
     private func loadOnce(silent: Bool = false) async {

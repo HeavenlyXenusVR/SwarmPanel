@@ -1,4 +1,5 @@
 import Foundation
+import UserNotifications
 
 /// Owned once by RootTabView so the unread badge stays live regardless of
 /// which tab is currently selected — mirrors the web bell's always-polling
@@ -6,7 +7,9 @@ import Foundation
 @MainActor
 final class NotificationsViewModel: ObservableObject {
     @Published var notifications: [PanelNotification] = []
-    @Published var unreadCount = 0
+    @Published var unreadCount = 0 {
+        didSet { updateAppIconBadge() }
+    }
     @Published var isLoading = false
     @Published var errorMessage: String?
 
@@ -78,6 +81,16 @@ final class NotificationsViewModel: ObservableObject {
         } catch {
             guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to mark all read."
+        }
+    }
+
+    /// Best-effort — if badge authorization was never granted (or the user
+    /// declined it), this just silently doesn't update the home screen badge;
+    /// it never affects in-app behavior either way.
+    private func updateAppIconBadge() {
+        let count = unreadCount
+        Task {
+            try? await UNUserNotificationCenter.current().setBadgeCount(count)
         }
     }
 }

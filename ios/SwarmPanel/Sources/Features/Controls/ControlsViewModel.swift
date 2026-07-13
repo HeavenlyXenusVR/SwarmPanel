@@ -102,10 +102,12 @@ final class ControlsViewModel: ObservableObject {
                 body: BotControlRequest(botKey: selectedBotKey, guildId: guildId, action: action.rawValue, payload: payload)
             )
             statusMessage = "\(action.label) sent."
+            Haptics.success()
             await loadControlStateAndQueues()
         } catch {
             guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Control action failed."
+            Haptics.error()
         }
     }
 
@@ -120,10 +122,12 @@ final class ControlsViewModel: ObservableObject {
                 body: SavedQueueCreateBody(guildId: guildId, botKey: selectedBotKey, name: name.isEmpty ? "Saved Queue" : name, items: items)
             )
             statusMessage = "Queue saved."
+            Haptics.success()
             await loadControlStateAndQueues()
         } catch {
             guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to save queue."
+            Haptics.error()
         }
     }
 
@@ -150,6 +154,7 @@ final class ControlsViewModel: ObservableObject {
             }
         }
         statusMessage = "Queued \(queue.itemCount) track(s) from \"\(queue.name)\"."
+        Haptics.success()
     }
 
     func deleteSavedQueue(_ queue: SavedQueue) async {

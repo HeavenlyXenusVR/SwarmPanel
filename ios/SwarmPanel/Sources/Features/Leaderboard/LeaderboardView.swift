@@ -38,7 +38,9 @@ struct LeaderboardView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         SectionLabel(title: "Top Tracks")
                         let tracks = viewModel.data?.topTracks ?? []
-                        if tracks.isEmpty {
+                        if viewModel.isLoading && viewModel.data == nil {
+                            SkeletonList(rowCount: 3)
+                        } else if tracks.isEmpty {
                             PanelCard { EmptyStateView(icon: "music.note.list", title: "No track history yet.") }
                         } else {
                             PanelCard(padding: 0) {
@@ -60,7 +62,9 @@ struct LeaderboardView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         SectionLabel(title: "Top Listeners")
                         let listeners = viewModel.data?.topListeners ?? []
-                        if listeners.isEmpty {
+                        if viewModel.isLoading && viewModel.data == nil {
+                            SkeletonList(rowCount: 3)
+                        } else if listeners.isEmpty {
                             PanelCard { EmptyStateView(icon: "person.3", title: "No listener history yet.") }
                         } else {
                             PanelCard(padding: 0) {
@@ -82,11 +86,6 @@ struct LeaderboardView: View {
                 .padding(.vertical)
             }
             .background(SwarmTheme.background)
-            .overlay {
-                if viewModel.isLoading && viewModel.data == nil {
-                    ProgressView("Loading leaderboard...")
-                }
-            }
             .navigationTitle("Leaderboard")
             .task {
                 if viewModel.guildId.isEmpty { viewModel.guildId = appState.guildId ?? "" }

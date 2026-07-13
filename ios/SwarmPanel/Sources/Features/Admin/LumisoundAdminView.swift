@@ -4,92 +4,81 @@ struct LumisoundAdminView: View {
     @StateObject private var viewModel = LumisoundAdminViewModel()
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                if let error = viewModel.errorMessage {
-                    Text(error).foregroundStyle(SwarmTheme.danger).padding(.horizontal)
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    SectionLabel(title: "Bug Reports", count: viewModel.bugReports.count)
-                    if viewModel.bugReports.isEmpty {
-                        PanelCard { EmptyStateView(icon: "ladybug", title: "No bug reports.") }
-                    } else {
-                        PanelCard(padding: 0) {
-                            VStack(spacing: 0) {
-                                ForEach(Array(viewModel.bugReports.enumerated()), id: \.element.id) { index, report in
-                                    if index > 0 { Divider().overlay(SwarmTheme.line) }
-                                    BugReportRow(report: report, viewModel: viewModel)
-                                }
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal)
-
-                VStack(alignment: .leading, spacing: 10) {
-                    SectionLabel(title: "Uploads", count: viewModel.uploads.count)
-                    if viewModel.uploads.isEmpty {
-                        PanelCard { EmptyStateView(icon: "waveform", title: "No uploads.") }
-                    } else {
-                        PanelCard(padding: 0) {
-                            VStack(spacing: 0) {
-                                ForEach(Array(viewModel.uploads.enumerated()), id: \.element.id) { index, upload in
-                                    if index > 0 { Divider().overlay(SwarmTheme.line) }
-                                    HStack {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(upload.title?.isEmpty == false ? upload.title! : (upload.filename ?? "Untitled"))
-                                                .font(.subheadline.bold())
-                                                .foregroundStyle(SwarmTheme.textPrimary)
-                                            Text(upload.username ?? "unknown")
-                                                .font(.caption)
-                                                .foregroundStyle(SwarmTheme.textMuted)
-                                        }
-                                        Spacer()
-                                        Button(role: .destructive) {
-                                            Task { await viewModel.deleteUpload(upload) }
-                                        } label: {
-                                            Image(systemName: "trash")
-                                        }
-                                        .tint(SwarmTheme.danger)
-                                    }
-                                    .padding(14)
-                                }
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal)
-
-                VStack(alignment: .leading, spacing: 10) {
-                    SectionLabel(title: "Users", count: viewModel.users.count)
-                    if viewModel.users.isEmpty {
-                        PanelCard { EmptyStateView(icon: "person.3", title: "No users.") }
-                    } else {
-                        PanelCard(padding: 0) {
-                            VStack(spacing: 0) {
-                                ForEach(Array(viewModel.users.enumerated()), id: \.element.id) { index, user in
-                                    if index > 0 { Divider().overlay(SwarmTheme.line) }
-                                    HStack {
-                                        Text(user.username ?? "unknown").foregroundStyle(SwarmTheme.textPrimary)
-                                        Spacer()
-                                        StatusPill(text: user.isActive == true ? "Active" : "Suspended", tone: user.isActive == true ? .live : .danger)
-                                        Button(user.isActive == true ? "Suspend" : "Reinstate") {
-                                            Task { await viewModel.setUserActive(user, active: !(user.isActive ?? true)) }
-                                        }
-                                        .buttonStyle(.borderless)
-                                        .tint(SwarmTheme.accent)
-                                    }
-                                    .padding(14)
-                                }
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal)
+        List {
+            if let error = viewModel.errorMessage {
+                Section { Text(error).foregroundStyle(SwarmTheme.danger) }
+                    .listRowBackground(SwarmTheme.panel)
             }
-            .padding(.vertical)
+
+            Section {
+                if viewModel.bugReports.isEmpty {
+                    EmptyStateView(icon: "ladybug", title: "No bug reports.")
+                } else {
+                    ForEach(viewModel.bugReports) { report in
+                        BugReportRow(report: report, viewModel: viewModel)
+                    }
+                }
+            } header: {
+                SectionLabel(title: "Bug Reports", count: viewModel.bugReports.count)
+            }
+            .listRowBackground(SwarmTheme.panel)
+
+            Section {
+                if viewModel.uploads.isEmpty {
+                    EmptyStateView(icon: "waveform", title: "No uploads.")
+                } else {
+                    ForEach(viewModel.uploads) { upload in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(upload.title?.isEmpty == false ? upload.title! : (upload.filename ?? "Untitled"))
+                                    .font(.subheadline.bold())
+                                    .foregroundStyle(SwarmTheme.textPrimary)
+                                Text(upload.username ?? "unknown")
+                                    .font(.caption)
+                                    .foregroundStyle(SwarmTheme.textMuted)
+                            }
+                            Spacer()
+                        }
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) {
+                                Task { await viewModel.deleteUpload(upload) }
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
+                    }
+                }
+            } header: {
+                SectionLabel(title: "Uploads", count: viewModel.uploads.count)
+            }
+            .listRowBackground(SwarmTheme.panel)
+
+            Section {
+                if viewModel.users.isEmpty {
+                    EmptyStateView(icon: "person.3", title: "No users.")
+                } else {
+                    ForEach(viewModel.users) { user in
+                        HStack {
+                            Text(user.username ?? "unknown").foregroundStyle(SwarmTheme.textPrimary)
+                            Spacer()
+                            StatusPill(text: user.isActive == true ? "Active" : "Suspended", tone: user.isActive == true ? .live : .danger)
+                        }
+                        .swipeActions(edge: .trailing) {
+                            Button {
+                                Task { await viewModel.setUserActive(user, active: !(user.isActive ?? true)) }
+                            } label: {
+                                Label(user.isActive == true ? "Suspend" : "Reinstate", systemImage: user.isActive == true ? "pause.circle" : "checkmark.circle")
+                            }
+                            .tint(user.isActive == true ? SwarmTheme.danger : SwarmTheme.accent)
+                        }
+                    }
+                }
+            } header: {
+                SectionLabel(title: "Users", count: viewModel.users.count)
+            }
+            .listRowBackground(SwarmTheme.panel)
         }
+        .scrollContentBackground(.hidden)
         .background(SwarmTheme.background)
         .navigationTitle("Lumisound")
         .task { await viewModel.load() }

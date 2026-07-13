@@ -18,9 +18,12 @@ struct DiagnosticsView: View {
                 .padding(.horizontal)
 
                 if viewModel.isLoading && viewModel.diagnosticsText.isEmpty {
-                    ProgressView("Loading diagnostics...")
-                        .frame(maxWidth: .infinity)
-                        .padding()
+                    VStack(spacing: 14) {
+                        SkeletonCard(lines: 3)
+                        SkeletonCard(lines: 3)
+                        SkeletonCard(lines: 3)
+                    }
+                    .padding(.horizontal)
                 } else {
                     JSONSection(title: "System Diagnostics", text: viewModel.diagnosticsText)
                     JSONSection(title: "Metrics", text: viewModel.metricsText)

@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UserNotifications
 
 @main
 struct SwarmPanelApp: App {
@@ -39,6 +40,12 @@ struct SwarmPanelApp: App {
                 .tint(appearance.accentColor)
                 .preferredColorScheme(appearance.colorScheme)
                 .task { await appState.bootstrap() }
+                .task {
+                    // Badge-only authorization (no alerts/sounds) so the app
+                    // icon can reflect unread notification count — declining
+                    // this just means the badge silently never appears.
+                    try? await UNUserNotificationCenter.current().requestAuthorization(options: [.badge])
+                }
         }
     }
 }

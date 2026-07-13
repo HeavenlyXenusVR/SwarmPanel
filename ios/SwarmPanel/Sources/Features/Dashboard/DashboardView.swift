@@ -9,6 +9,15 @@ struct DashboardView: View {
     private var allSessions: [DashboardSession] {
         allBots.flatMap { $0.sessions ?? [] }
     }
+    private var botBySessionId: [String: DashboardBot] {
+        var map: [String: DashboardBot] = [:]
+        for bot in allBots {
+            for session in bot.sessions ?? [] {
+                map[session.id] = bot
+            }
+        }
+        return map
+    }
     private var ownBotKey: String? {
         guard let guildId = appState.guildId else { return nil }
         return allBots.first { bot in (bot.sessions ?? []).contains { $0.guildId == guildId } }?.key
@@ -22,9 +31,22 @@ struct DashboardView: View {
         NavigationStack {
             Group {
                 if viewModel.isLoading && viewModel.response == nil {
-                    ProgressView("Loading fleet status...")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(SwarmTheme.background)
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 18) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                SectionLabel(title: "Fleet")
+                                SkeletonCard(lines: 1)
+                            }
+                            .padding(.horizontal)
+                            VStack(alignment: .leading, spacing: 10) {
+                                SectionLabel(title: "Live Sessions")
+                                SkeletonList(rowCount: 3)
+                            }
+                            .padding(.horizontal)
+                        }
+                        .padding(.vertical)
+                    }
+                    .background(SwarmTheme.background)
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 18) {
@@ -50,8 +72,14 @@ struct DashboardView: View {
                                 VStack(alignment: .leading, spacing: 10) {
                                     SectionLabel(title: "Your Guild")
                                     QuickControlCard(session: ownSession, botKey: ownBotKey)
+                                    if let topTrack = viewModel.topTrack {
+                                        TopTrackTeaser(track: topTrack)
+                                    }
                                 }
                                 .padding(.horizontal)
+                                .task(id: "\(ownBotKey):\(ownSession.guildId ?? "")") {
+                                    await viewModel.loadTopTrack(botKey: ownBotKey, guildId: ownSession.guildId ?? "")
+                                }
                             }
 
                             VStack(alignment: .leading, spacing: 10) {
@@ -67,7 +95,20 @@ struct DashboardView: View {
                                                 if index > 0 {
                                                     Divider().overlay(SwarmTheme.line)
                                                 }
-                                                SessionRow(session: session)
+                                                if let bot = botBySessionId[session.id] {
+                                                    NavigationLink {
+                                                        BotDetailView(
+                                                            botKey: bot.key,
+                                                            botDisplayName: bot.displayName?.isEmpty == false ? bot.displayName! : bot.key,
+                                                            guildId: session.guildId ?? ""
+                                                        )
+                                                    } label: {
+                                                        SessionRow(session: session)
+                                                    }
+                                                    .buttonStyle(.plain)
+                                                } else {
+                                                    SessionRow(session: session)
+                                                }
                                             }
                                         }
                                     }
@@ -172,6 +213,7 @@ private struct QuickControlCard: View {
     private func send(_ action: String) async {
         guard let guildId = session.guildId else { return }
         isBusy = true
+        Haptics.light()
         defer { isBusy = false }
         do {
             let _: OKResponse = try await APIClient.shared.post(
@@ -181,7 +223,44 @@ private struct QuickControlCard: View {
         } catch {
             // Best-effort — the Controls screen surfaces errors properly;
             // a failed quick-action here just leaves the button re-enabled.
+            if !error.isCancellation { Haptics.error() }
         }
+    }
+}
+
+private struct TopTrackTeaser: View {
+    let track: LeaderboardTrack
+
+    var body: some View {
+        NavigationLink {
+            LeaderboardView()
+        } label: {
+            PanelCard {
+                HStack(spacing: 12) {
+                    Image(systemName: "trophy.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(SwarmTheme.accent)
+                        .frame(width: 28, height: 28)
+                        .background(SwarmTheme.accent.opacity(0.15), in: Circle())
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Top Track")
+                            .font(.caption)
+                            .foregroundStyle(SwarmTheme.textMuted)
+                        Text(track.title?.isEmpty == false ? track.title! : "Unknown title")
+                            .font(.subheadline.bold())
+                            .foregroundStyle(SwarmTheme.textPrimary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer()
+                    Label("\(track.playCount ?? 0)", systemImage: "play.fill")
+                        .font(.caption2)
+                        .foregroundStyle(SwarmTheme.textMuted)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 

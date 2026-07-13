@@ -43,6 +43,33 @@ final class AppearanceSettings: ObservableObject {
     }
 }
 
+/// Alternate app icons declared as extra .appiconset entries in
+/// Assets.xcassets (each name here must match its appiconset folder name
+/// exactly, since that's also the string UIApplication expects). `nil`
+/// (the `.system` case) restores the primary AppIcon.
+enum AppIconOption: String, CaseIterable, Identifiable {
+    case system = "AppIcon"
+    case light = "AppIcon-Light"
+    case neon = "AppIcon-Neon"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .system: return "Default"
+        case .light: return "Light"
+        case .neon: return "Neon"
+        }
+    }
+
+    /// `nil` means "primary icon" to UIApplication's alternate-icon API.
+    var alternateIconName: String? { self == .system ? nil : rawValue }
+
+    static var current: AppIconOption {
+        AppIconOption.allCases.first { $0.alternateIconName == UIApplication.shared.alternateIconName } ?? .system
+    }
+}
+
 extension Color {
     init?(hex: String) {
         let sanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "#", with: "")

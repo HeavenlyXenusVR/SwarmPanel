@@ -4,63 +4,54 @@ struct GalleryModerationView: View {
     @StateObject private var viewModel = GalleryModerationViewModel()
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                if let error = viewModel.errorMessage {
-                    Text(error).foregroundStyle(SwarmTheme.danger).padding(.horizontal)
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    SectionLabel(title: "Reports", count: viewModel.reports.count)
-                    if viewModel.reports.isEmpty {
-                        PanelCard { EmptyStateView(icon: "flag", title: "No reports.") }
-                    } else {
-                        PanelCard(padding: 0) {
-                            VStack(spacing: 0) {
-                                ForEach(Array(viewModel.reports.enumerated()), id: \.element.id) { index, report in
-                                    if index > 0 { Divider().overlay(SwarmTheme.line) }
-                                    ReportRow(report: report, viewModel: viewModel)
-                                }
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal)
-
-                VStack(alignment: .leading, spacing: 10) {
-                    SectionLabel(title: "Comments", count: viewModel.comments.count)
-                    if viewModel.comments.isEmpty {
-                        PanelCard { EmptyStateView(icon: "bubble.left", title: "No comments.") }
-                    } else {
-                        PanelCard(padding: 0) {
-                            VStack(spacing: 0) {
-                                ForEach(Array(viewModel.comments.enumerated()), id: \.element.id) { index, comment in
-                                    if index > 0 { Divider().overlay(SwarmTheme.line) }
-                                    HStack(alignment: .top) {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(comment.body ?? "").font(.caption).foregroundStyle(SwarmTheme.textPrimary).lineLimit(2)
-                                            Text("\(comment.username ?? "unknown") on \(comment.mediaTitle ?? "media")")
-                                                .font(.caption2)
-                                                .foregroundStyle(SwarmTheme.textMuted)
-                                        }
-                                        Spacer()
-                                        Button(role: .destructive) {
-                                            Task { await viewModel.deleteComment(comment) }
-                                        } label: {
-                                            Image(systemName: "trash")
-                                        }
-                                        .tint(SwarmTheme.danger)
-                                    }
-                                    .padding(14)
-                                }
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal)
+        List {
+            if let error = viewModel.errorMessage {
+                Section { Text(error).foregroundStyle(SwarmTheme.danger) }
+                    .listRowBackground(SwarmTheme.panel)
             }
-            .padding(.vertical)
+
+            Section {
+                if viewModel.reports.isEmpty {
+                    EmptyStateView(icon: "flag", title: "No reports.")
+                } else {
+                    ForEach(viewModel.reports) { report in
+                        ReportRow(report: report, viewModel: viewModel)
+                    }
+                }
+            } header: {
+                SectionLabel(title: "Reports", count: viewModel.reports.count)
+            }
+            .listRowBackground(SwarmTheme.panel)
+
+            Section {
+                if viewModel.comments.isEmpty {
+                    EmptyStateView(icon: "bubble.left", title: "No comments.")
+                } else {
+                    ForEach(viewModel.comments) { comment in
+                        HStack(alignment: .top) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(comment.body ?? "").font(.caption).foregroundStyle(SwarmTheme.textPrimary).lineLimit(2)
+                                Text("\(comment.username ?? "unknown") on \(comment.mediaTitle ?? "media")")
+                                    .font(.caption2)
+                                    .foregroundStyle(SwarmTheme.textMuted)
+                            }
+                            Spacer()
+                        }
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) {
+                                Task { await viewModel.deleteComment(comment) }
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
+                    }
+                }
+            } header: {
+                SectionLabel(title: "Comments", count: viewModel.comments.count)
+            }
+            .listRowBackground(SwarmTheme.panel)
         }
+        .scrollContentBackground(.hidden)
         .background(SwarmTheme.background)
         .navigationTitle("Gallery Moderation")
         .task { await viewModel.load() }

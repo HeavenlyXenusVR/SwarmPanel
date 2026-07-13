@@ -28,7 +28,9 @@ struct AuditLogView: View {
                 if let error = viewModel.errorMessage {
                     Text(error).foregroundStyle(SwarmTheme.danger).padding(.horizontal)
                 }
-                if viewModel.entries.isEmpty && !viewModel.isLoading {
+                if viewModel.entries.isEmpty && viewModel.isLoading {
+                    SkeletonList(rowCount: 5).padding(.horizontal)
+                } else if viewModel.entries.isEmpty {
                     PanelCard { EmptyStateView(icon: "list.bullet.clipboard", title: "No audit log entries yet.") }
                         .padding(.horizontal)
                 } else {

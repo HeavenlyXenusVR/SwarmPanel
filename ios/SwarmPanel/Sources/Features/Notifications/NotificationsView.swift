@@ -6,35 +6,45 @@ struct NotificationsView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    if let error = viewModel.errorMessage {
-                        Text(error).foregroundStyle(SwarmTheme.danger).padding(.horizontal)
+            List {
+                if let error = viewModel.errorMessage {
+                    Section { Text(error).foregroundStyle(SwarmTheme.danger) }
+                        .listRowBackground(SwarmTheme.panel)
+                }
+                if viewModel.notifications.isEmpty && viewModel.isLoading {
+                    Section { SkeletonList(rowCount: 4) }
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets())
+                } else if viewModel.notifications.isEmpty {
+                    Section {
+                        EmptyStateView(icon: "checkmark.circle", title: "You're all caught up.")
                     }
-                    if viewModel.notifications.isEmpty && !viewModel.isLoading {
-                        PanelCard {
-                            EmptyStateView(icon: "checkmark.circle", title: "You're all caught up.")
-                        }
-                        .padding(.horizontal)
-                    } else {
-                        PanelCard(padding: 0) {
-                            VStack(spacing: 0) {
-                                ForEach(Array(viewModel.notifications.enumerated()), id: \.element.id) { index, notification in
-                                    if index > 0 { Divider().overlay(SwarmTheme.line) }
+                    .listRowBackground(SwarmTheme.panel)
+                } else {
+                    Section {
+                        ForEach(viewModel.notifications) { notification in
+                            Button {
+                                Task { await viewModel.markRead(notification) }
+                            } label: {
+                                NotificationRow(notification: notification)
+                            }
+                            .buttonStyle(.plain)
+                            .swipeActions(edge: .trailing) {
+                                if notification.isUnread {
                                     Button {
                                         Task { await viewModel.markRead(notification) }
                                     } label: {
-                                        NotificationRow(notification: notification)
+                                        Label("Mark Read", systemImage: "checkmark")
                                     }
-                                    .buttonStyle(.plain)
+                                    .tint(SwarmTheme.accent)
                                 }
                             }
                         }
-                        .padding(.horizontal)
                     }
+                    .listRowBackground(SwarmTheme.panel)
                 }
-                .padding(.vertical)
             }
+            .scrollContentBackground(.hidden)
             .background(SwarmTheme.background)
             .navigationTitle("Notifications")
             .toolbar {

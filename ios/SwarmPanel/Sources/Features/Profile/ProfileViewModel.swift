@@ -34,9 +34,11 @@ final class ProfileViewModel: ObservableObject {
             )
             statusMessage = "Profile saved."
             errorMessage = nil
+            Haptics.success()
         } catch {
             guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to save profile."
+            Haptics.error()
         }
     }
 }
