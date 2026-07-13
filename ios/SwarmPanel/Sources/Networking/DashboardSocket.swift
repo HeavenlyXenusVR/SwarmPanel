@@ -27,7 +27,8 @@ final class DashboardSocket: ObservableObject {
         guard task == nil, let token = APIClient.shared.token else { return }
 
         var components = URLComponents(url: APIClient.shared.baseURL, resolvingAgainstBaseURL: false)
-        components?.scheme = (components?.scheme == "https") ? "wss" : "ws"
+        let isHTTPS = components?.scheme == "https"
+        components?.scheme = isHTTPS ? "wss" : "ws"
         components?.path = "/ws"
         guard let url = components?.url else { return }
 
