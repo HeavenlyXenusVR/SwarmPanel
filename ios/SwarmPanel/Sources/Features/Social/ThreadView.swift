@@ -11,7 +11,7 @@ struct ThreadView: View {
     var body: some View {
         VStack {
             if let error = viewModel.errorMessage {
-                Text(error).foregroundStyle(.red).padding(.horizontal)
+                Text(error).foregroundStyle(SwarmTheme.danger).padding(.horizontal)
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
@@ -34,9 +34,11 @@ struct ThreadView: View {
                     .textFieldStyle(.roundedBorder)
                 Button("Send") { Task { await viewModel.send() } }
                     .disabled(viewModel.isSending || viewModel.draft.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .tint(SwarmTheme.accent)
             }
             .padding()
         }
+        .background(SwarmTheme.background)
         .navigationTitle(viewModel.peerName)
         .navigationBarTitleDisplayMode(.inline)
         .task { await viewModel.load() }
@@ -44,8 +46,8 @@ struct ThreadView: View {
 
     private func bubble(_ message: ChatMessage, mine: Bool) -> some View {
         Text(message.body)
+            .foregroundStyle(mine ? .white : SwarmTheme.textPrimary)
             .padding(10)
-            .background(mine ? Color.accentColor.opacity(0.25) : Color(.secondarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .background(mine ? SwarmTheme.accent : SwarmTheme.panel2, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
