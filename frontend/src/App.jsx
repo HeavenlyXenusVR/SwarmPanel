@@ -31,6 +31,7 @@ import DatabasesPage from "./pages/DatabasesPage.jsx";
 import GalleryAdminPage from "./pages/GalleryAdminPage.jsx";
 import LumisoundAdminPage from "./pages/LumisoundAdminPage.jsx";
 import IntelPage from "./pages/IntelPage.jsx";
+import LeaderboardPage from "./pages/LeaderboardPage.jsx";
 import AuditLogPage from "./pages/AuditLogPage.jsx";
 import AuthPage from "./pages/AuthPage.jsx";
 
@@ -489,6 +490,13 @@ function RouteViewport({ ctx, pathname }) {
     return (
       <Protected ctx={ctx}>
         <ProfilePage ctx={ctx} />
+      </Protected>
+    );
+  }
+  if (currentPath === "/leaderboard") {
+    return (
+      <Protected ctx={ctx}>
+        <LeaderboardPage ctx={ctx} />
       </Protected>
     );
   }

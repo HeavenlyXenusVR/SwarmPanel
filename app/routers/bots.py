@@ -418,6 +418,21 @@ async def guild_control_matrix(request: Request, guild_id: str):
     }
 
 
+@router.get("/api/guilds/{guild_id}/leaderboard")
+async def guild_leaderboard(request: Request, guild_id: str, bot_key: str, limit: int = 10):
+    auth = _require_api_auth(request)
+    _require_guild_scope(auth, guild_id)
+    await _require_bot_guild_access(auth, bot_key, guild_id)
+    limit = _bounded_query_limit(limit, default=10, max_limit=50)
+    try:
+        return {"ok": True, "data": await db.get_guild_leaderboard(bot_key, guild_id, limit)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        action_logger.exception("Failed building leaderboard bot=%s guild=%s: %s", bot_key, guild_id, exc)
+        raise HTTPException(status_code=503, detail=_safe_error_detail("Leaderboard unavailable", exc))
+
+
 @router.get("/api/music-intelligence")
 async def music_intelligence(request: Request, guild_id: str | None = None, bot_key: str | None = None, limit: int = 8):
     auth = _require_api_auth(request)

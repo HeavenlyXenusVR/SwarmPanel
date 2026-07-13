@@ -783,6 +783,57 @@ class BotsMixin:
             },
         }
 
+    async def get_guild_leaderboard(self, bot_key: str, guild_id: str | int, limit: int = 10) -> dict[str, Any]:
+        """Read-only leaderboard built from the existing music-intelligence
+        tables (track_intelligence, user_track_affinity) — no new tables."""
+        bot = BOT_INDEX.get(bot_key)
+        if not bot or bot.kind != "music" or not bot.db_schema or not bot.table_prefix:
+            raise ValueError("This action is only supported for music bots")
+
+        gid = _coerce_int(guild_id, "guild_id")
+        schema = _validate_identifier(bot.db_schema, "schema")
+        prefix = _validate_identifier(bot.table_prefix, "table prefix")
+        intelligence_table = f"{prefix}_track_intelligence"
+        affinity_table = f"{prefix}_user_track_affinity"
+        safe_limit = max(1, min(int(limit or 10), 50))
+
+        top_tracks: list[dict[str, Any]] = []
+        top_listeners: list[dict[str, Any]] = []
+
+        if await self._table_exists(schema, intelligence_table):
+            top_tracks = await self._fetchall(
+                f"""
+                SELECT title, video_url, play_count, finish_count, skip_count, like_count, dislike_count,
+                       ((finish_count * 3) + (like_count * 5) + play_count - (skip_count * 2) - (dislike_count * 5)) AS smart_score
+                FROM `{schema}`.`{intelligence_table}`
+                WHERE guild_id = %s
+                ORDER BY smart_score DESC, play_count DESC
+                LIMIT %s
+                """,
+                (gid, safe_limit),
+            )
+
+        if await self._table_exists(schema, affinity_table):
+            top_listeners = await self._fetchall(
+                f"""
+                SELECT user_id, COUNT(*) AS track_count, COALESCE(SUM(play_count), 0) AS play_count,
+                       COALESCE(SUM(score), 0) AS taste_score
+                FROM `{schema}`.`{affinity_table}`
+                WHERE guild_id = %s
+                GROUP BY user_id
+                ORDER BY taste_score DESC, play_count DESC
+                LIMIT %s
+                """,
+                (gid, safe_limit),
+            )
+
+        return {
+            "guild_id": str(gid),
+            "bot_key": bot.key,
+            "top_tracks": [self._json_row(row) for row in top_tracks],
+            "top_listeners": [self._json_row(row) for row in top_listeners],
+        }
+
     async def _batch_table_exists(self, schema: str, table_names: list[str]) -> dict[str, bool]:
         """Check existence of multiple tables in one information_schema query.
 

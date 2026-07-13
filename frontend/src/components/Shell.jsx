@@ -17,6 +17,7 @@ import {
   Shield,
   Siren,
   Sparkles,
+  Trophy,
   UserRound,
   Users,
 } from "lucide-react";
@@ -30,6 +31,7 @@ export function Shell({ ctx, children }) {
     const items = [
       { to: "/", icon: LayoutDashboard, label: "Dashboard", mobileLabel: "Deck" },
       { to: "/controls", icon: Play, label: "Controls", mobileLabel: "Play" },
+      { to: "/leaderboard", icon: Trophy, label: "Leaderboard", mobileLabel: "Top" },
       { to: "/invites", icon: PlugZap, label: "Invites", mobileLabel: "Invites" },
       { to: "/users", icon: Users, label: "Users", mobileLabel: "Users" },
       { to: "/friends", icon: UserRound, label: "Friends", mobileLabel: "Friends" },
