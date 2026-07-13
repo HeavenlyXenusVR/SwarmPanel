@@ -675,7 +675,7 @@ const TREND_CHART_WIDTH = 560;
 const TREND_CHART_HEIGHT = 160;
 const TREND_CHART_PAD = { top: 12, right: 14, bottom: 22, left: 14 };
 
-export function TrendChart({ points = [], label = "", color = "var(--accent)", valueKey = "metric_value", timeKey = "captured_at" }) {
+export function TrendChart({ points = [], label = "", color = "var(--accent)", valueKey = "metric_value", timeKey = "captured_at", anomalies = [] }) {
   const [hoverIndex, setHoverIndex] = useState(null);
   const svgRef = useRef(null);
   const safePoints = Array.isArray(points) ? points.filter((point) => point && point[timeKey]) : [];
@@ -730,6 +730,11 @@ export function TrendChart({ points = [], label = "", color = "var(--accent)", v
   }
 
   const hovered = hoverIndex !== null ? safePoints[hoverIndex] : null;
+  const anomalyTimes = new Set((Array.isArray(anomalies) ? anomalies : []).map((point) => point?.[timeKey]));
+  const anomalyIndexes = safePoints.reduce((acc, point, index) => {
+    if (anomalyTimes.has(point[timeKey])) acc.push(index);
+    return acc;
+  }, []);
 
   return (
     <div className="trend-chart">
@@ -761,6 +766,19 @@ export function TrendChart({ points = [], label = "", color = "var(--accent)", v
         />
         <path d={areaPath} fill={`url(#${gradientId})`} stroke="none" />
         <path d={linePath} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        {anomalyIndexes.map((index) => (
+          <circle
+            key={`anomaly-${index}`}
+            cx={xForIndex(index)}
+            cy={yForValue(values[index])}
+            r="4.5"
+            fill="var(--danger)"
+            stroke="var(--panel)"
+            strokeWidth="1.5"
+          >
+            <title>Anomaly: {number(values[index])} at {formatTime(safePoints[index][timeKey])}</title>
+          </circle>
+        ))}
         {hovered ? (
           <g>
             <line

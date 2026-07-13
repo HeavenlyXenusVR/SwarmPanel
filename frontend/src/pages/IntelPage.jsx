@@ -13,6 +13,7 @@ const TREND_METRICS = [
 export default function IntelPage({ ctx }) {
   const [state, setState] = useState({ events: [], metrics: null, stability: null, loading: true, error: "" });
   const [trends, setTrends] = useState({});
+  const [anomalies, setAnomalies] = useState({});
   const load = useCallback(async ({ force = false, background = false } = {}) => {
     if (!background) setState((current) => ({ ...current, loading: true, error: "" }));
     const [events, metrics, stability] = await Promise.allSettled([
@@ -38,18 +39,35 @@ export default function IntelPage({ ctx }) {
     });
     setTrends(next);
   }, []);
-  useEffect(() => { load(); loadTrends(); }, [load, loadTrends]);
+  const loadAnomalies = useCallback(async ({ force = false } = {}) => {
+    const results = await Promise.allSettled(
+      TREND_METRICS.map((metric) => apiFetch(`/api/metrics/anomalies${query({ metric: metric.key, hours: 24 })}`, { force }))
+    );
+    const next = {};
+    results.forEach((result, index) => {
+      next[TREND_METRICS[index].key] = result.status === "fulfilled" ? result.value.anomalies || [] : [];
+    });
+    setAnomalies(next);
+  }, []);
+  useEffect(() => { load(); loadTrends(); loadAnomalies(); }, [load, loadTrends, loadAnomalies]);
   useLiveRefresh(() => load({ force: true, background: true }), { interval: 5_000 });
   useLiveRefresh(() => loadTrends({ force: true }), { interval: 60_000 });
+  useLiveRefresh(() => loadAnomalies({ force: true }), { interval: 60_000 });
+  const anomalyCount = Object.values(anomalies).reduce((sum, list) => sum + list.length, 0);
   return (
-    <Page title="Errors And Metrics" eyebrow="Intel" actions={<button type="button" onClick={() => { load({ force: true }); loadTrends({ force: true }); }}><RefreshCw size={16} />Refresh</button>}>
+    <Page title="Errors And Metrics" eyebrow="Intel" actions={<button type="button" onClick={() => { load({ force: true }); loadTrends({ force: true }); loadAnomalies({ force: true }); }}><RefreshCw size={16} />Refresh</button>}>
       {state.error ? <Notice tone="error">{state.error}</Notice> : null}
+      {anomalyCount ? (
+        <Notice tone="error">
+          {anomalyCount} anomal{anomalyCount === 1 ? "y" : "ies"} flagged in the last 24h — points marked on the trend charts below deviate sharply from the window average.
+        </Notice>
+      ) : null}
       <section className="dashboard-grid">
         <div className="panel wide">
           <SectionHead title="24h Trends" />
           <div className="trend-chart-grid">
             {TREND_METRICS.map((metric) => (
-              <TrendChart key={metric.key} points={trends[metric.key] || []} label={metric.label} color={metric.color} />
+              <TrendChart key={metric.key} points={trends[metric.key] || []} label={metric.label} color={metric.color} anomalies={anomalies[metric.key] || []} />
             ))}
           </div>
         </div>

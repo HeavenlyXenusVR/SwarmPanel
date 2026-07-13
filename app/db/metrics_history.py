@@ -72,3 +72,27 @@ class MetricsHistoryMixin:
             (str(metric)[:60], safe_hours),
         )
         return [self._json_row(row) for row in rows]
+
+    async def get_metric_anomalies(self, metric: str, hours: int = 24, z_threshold: float = 2.5) -> list[dict[str, Any]]:
+        """Flag points in the same window get_metrics_history() returns whose
+        value deviates from the window's mean by more than z_threshold
+        standard deviations. Pure Python over the already-small result set —
+        no new SQL aggregate needed, and no ML: this is a simple statistical
+        outlier check, good enough to flag "this looks abnormal" for a human
+        to look at, not a forecasting model."""
+        points = await self.get_metrics_history(metric, hours)
+        values = [float(point["metric_value"]) for point in points]
+        if len(values) < 5:
+            return []
+        mean = sum(values) / len(values)
+        variance = sum((value - mean) ** 2 for value in values) / len(values)
+        stddev = variance ** 0.5
+        if stddev == 0:
+            return []
+        anomalies = []
+        for point in points:
+            value = float(point["metric_value"])
+            z_score = abs(value - mean) / stddev
+            if z_score > z_threshold:
+                anomalies.append({**point, "mean": round(mean, 2), "z_score": round(z_score, 2)})
+        return anomalies

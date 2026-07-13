@@ -52,6 +52,17 @@ async def metrics_history(request: Request, metric: str = "queued_tracks", hours
         raise HTTPException(status_code=503, detail=_safe_error_detail("Metrics history unavailable", exc))
 
 
+@router.get("/api/metrics/anomalies")
+async def metrics_anomalies(request: Request, metric: str = "queued_tracks", hours: int = 24):
+    _require_admin_auth(request)
+    safe_hours = max(1, min(int(hours or 24), 24 * 30))
+    try:
+        return {"ok": True, "metric": metric, "hours": safe_hours, "anomalies": await db.get_metric_anomalies(metric, safe_hours)}
+    except Exception as exc:
+        action_logger.error("Failed to fetch metric anomalies metric=%s: %s", metric, exc)
+        raise HTTPException(status_code=503, detail=_safe_error_detail("Metric anomalies unavailable", exc))
+
+
 @router.get("/api/events")
 async def list_events(request: Request, limit: int = 50):
     _require_admin_auth(request)
