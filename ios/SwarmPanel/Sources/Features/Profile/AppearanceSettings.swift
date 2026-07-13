@@ -17,9 +17,13 @@ final class AppearanceSettings: ObservableObject {
     }
 
     private static let colorSchemeKey = "swarmpanel.colorSchemeOption"
-    private static let accentColorKey = "swarmpanel.accentColorHex"
+    /// Not private: DesignSystem/Theme.swift reads the same UserDefaults key
+    /// directly so static, non-view design-system helpers (StatusPill colors,
+    /// etc.) can reflect the user's chosen accent without needing environment
+    /// object plumbing into every leaf view.
+    static let accentColorKey = "swarmpanel.accentColorHex"
     /// Matches the web panel's default --accent (frontend/src/styles.css).
-    private static let defaultAccentHex = "89B4FA"
+    static let defaultAccentHex = "89B4FA"
 
     init() {
         colorSchemeOption = UserDefaults.standard.string(forKey: Self.colorSchemeKey) ?? "system"
