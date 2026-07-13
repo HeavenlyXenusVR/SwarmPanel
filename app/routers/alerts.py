@@ -26,7 +26,10 @@ async def list_alert_rules(request: Request):
 async def create_alert_rule(request: Request, payload: AlertRuleCreateRequest):
     auth = _require_admin_auth(request)
     try:
-        rule = await db.create_alert_rule(payload.rule_type, payload.threshold_minutes, payload.enabled)
+        rule = await db.create_alert_rule(
+            payload.rule_type, payload.threshold_minutes, payload.enabled,
+            escalation_minutes=payload.escalation_minutes, escalate_email=payload.escalate_email,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     action_logger.warning("alert_rule_create rule_type=%s threshold=%s", payload.rule_type, payload.threshold_minutes)

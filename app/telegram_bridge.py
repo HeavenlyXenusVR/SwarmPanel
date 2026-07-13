@@ -13,6 +13,7 @@ from typing import Any
 from . import services as _services_module
 from .bots import BOT_INDEX
 from .dashboard import _load_dashboard_base_snapshot
+from .emailer import send_email
 from .services import action_logger, db, diagnostics_service, settings
 
 
@@ -238,9 +239,17 @@ _telegram_alert_last: dict[str, float] = {}
 # (avoids alerting on a single transient blip), and re-alerts at most once/hour
 # per rule while the condition stays breached. State resets as soon as a rule
 # clears so it can re-trigger promptly next time it breaches.
+#
+# Escalation is a second, louder tier: if a rule has escalation_minutes set and
+# stays breached that long *after* the first alert fired, send one distinct
+# "critical" Telegram alert (own cooldown key, so it can't collide with or be
+# suppressed by the normal per-rule cooldown) and optionally an email to the
+# site owner. _alert_rule_escalated tracks which rules already escalated for
+# the current breach so it only fires once per breach, not once per tick.
 ALERT_RULE_RE_ALERT_SECONDS = 3600.0
 _alert_rule_breach_since: dict[int, float] = {}
 _alert_rule_last_alert: dict[int, float] = {}
+_alert_rule_escalated: set[int] = set()
 
 
 async def _send_panel_telegram_alert(key: str, title: str, detail: str) -> None:
@@ -323,6 +332,7 @@ async def _evaluate_alert_rules() -> None:
         _alert_rule_breach_since.pop(stale_id, None)
     for stale_id in set(_alert_rule_last_alert) - active_rule_ids:
         _alert_rule_last_alert.pop(stale_id, None)
+    _alert_rule_escalated.intersection_update(active_rule_ids)
 
     now = time.monotonic()
     for rule in rules:
@@ -337,6 +347,7 @@ async def _evaluate_alert_rules() -> None:
 
         if not breached:
             _alert_rule_breach_since.pop(rule_id, None)
+            _alert_rule_escalated.discard(rule_id)
             continue
 
         threshold_seconds = max(1, int(rule.get("threshold_minutes") or 5)) * 60
@@ -344,16 +355,39 @@ async def _evaluate_alert_rules() -> None:
         if now - breach_started < threshold_seconds:
             continue  # condition hasn't been breached long enough yet
 
+        breach_detail = detail or f"{rule['rule_type']} has been breached for over {rule.get('threshold_minutes')} minute(s)."
         last_alert = _alert_rule_last_alert.get(rule_id, 0.0)
-        if now - last_alert < ALERT_RULE_RE_ALERT_SECONDS:
-            continue  # re-alert at most once/hour per rule while still breached
+        if now - last_alert >= ALERT_RULE_RE_ALERT_SECONDS:
+            _alert_rule_last_alert[rule_id] = now
+            await _send_panel_telegram_alert(
+                f"alert_rule_{rule_id}",
+                f"SwarmPanel alert rule breached: {rule['rule_type']}",
+                breach_detail,
+            )
 
-        _alert_rule_last_alert[rule_id] = now
+        escalation_minutes = rule.get("escalation_minutes")
+        if not escalation_minutes or rule_id in _alert_rule_escalated:
+            continue
+        if now - breach_started < int(escalation_minutes) * 60:
+            continue
+
+        _alert_rule_escalated.add(rule_id)
+        escalation_detail = f"{breach_detail} (still breached after {escalation_minutes} minute(s) — escalating.)"
         await _send_panel_telegram_alert(
-            f"alert_rule_{rule_id}",
-            f"SwarmPanel alert rule breached: {rule['rule_type']}",
-            detail or f"{rule['rule_type']} has been breached for over {rule.get('threshold_minutes')} minute(s).",
+            f"alert_rule_{rule_id}_escalated",
+            f"[CRITICAL] SwarmPanel alert rule still breached: {rule['rule_type']}",
+            escalation_detail,
         )
+        if rule.get("escalate_email") and settings.site_owner_email:
+            try:
+                await send_email(
+                    settings,
+                    settings.site_owner_email,
+                    f"[CRITICAL] SwarmPanel alert: {rule['rule_type']}",
+                    escalation_detail,
+                )
+            except Exception:
+                action_logger.exception("Failed to send escalation email for alert rule %s.", rule_id)
 
 
 async def _telegram_health_watch_loop() -> None:

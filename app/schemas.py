@@ -263,12 +263,16 @@ class AlertRuleCreateRequest(BaseModel):
     rule_type: str
     threshold_minutes: int = 5
     enabled: bool = True
+    escalation_minutes: int | None = None
+    escalate_email: bool = False
 
 
 class AlertRuleUpdateRequest(BaseModel):
     rule_type: str | None = None
     threshold_minutes: int | None = None
     enabled: bool | None = None
+    escalation_minutes: int | None = None
+    escalate_email: bool | None = None
 
 
 # --- Saved queues / playlists --------------------------------------------------

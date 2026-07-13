@@ -18,6 +18,8 @@ function AlertRulesPanel({ ctx }) {
   const [loading, setLoading] = useState(true);
   const [ruleType, setRuleType] = useState(ALERT_RULE_TYPES[0].value);
   const [thresholdMinutes, setThresholdMinutes] = useState(5);
+  const [escalationMinutes, setEscalationMinutes] = useState("");
+  const [escalateEmail, setEscalateEmail] = useState(false);
   const [saving, setSaving] = useState(false);
   const showToast = ctx.showToast;
 
@@ -41,9 +43,17 @@ function AlertRulesPanel({ ctx }) {
     try {
       await apiFetch("/api/alert-rules", {
         method: "POST",
-        body: JSON.stringify({ rule_type: ruleType, threshold_minutes: Number(thresholdMinutes) || 5, enabled: true }),
+        body: JSON.stringify({
+          rule_type: ruleType,
+          threshold_minutes: Number(thresholdMinutes) || 5,
+          enabled: true,
+          escalation_minutes: escalationMinutes ? Number(escalationMinutes) : null,
+          escalate_email: escalateEmail,
+        }),
       });
       showToast("Alert rule created.", "success");
+      setEscalationMinutes("");
+      setEscalateEmail(false);
       await load({ force: true });
     } catch (error) {
       showToast(error.message, "error");
@@ -57,6 +67,34 @@ function AlertRulesPanel({ ctx }) {
       await apiFetch(`/api/alert-rules/${rule.id}/update`, {
         method: "POST",
         body: JSON.stringify({ enabled: !rule.enabled }),
+      });
+      await load({ force: true });
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  }
+
+  async function editEscalation(rule) {
+    const input = window.prompt("Escalate after how many minutes still breached? (blank to clear escalation)", rule.escalation_minutes || "");
+    if (input === null) return;
+    const minutes = input.trim() ? Number(input.trim()) : null;
+    try {
+      await apiFetch(`/api/alert-rules/${rule.id}/update`, {
+        method: "POST",
+        body: JSON.stringify({ escalation_minutes: minutes }),
+      });
+      showToast("Escalation updated.", "success");
+      await load({ force: true });
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  }
+
+  async function toggleEscalateEmail(rule) {
+    try {
+      await apiFetch(`/api/alert-rules/${rule.id}/update`, {
+        method: "POST",
+        body: JSON.stringify({ escalate_email: !rule.escalate_email }),
       });
       await load({ force: true });
     } catch (error) {
@@ -91,20 +129,42 @@ function AlertRulesPanel({ ctx }) {
           aria-label="Threshold minutes"
         />
         <span className="muted">min before firing</span>
+        <input
+          type="number"
+          min="1"
+          max="10080"
+          value={escalationMinutes}
+          onChange={(event) => setEscalationMinutes(event.target.value)}
+          style={{ width: 90 }}
+          placeholder="none"
+          aria-label="Escalation minutes"
+        />
+        <span className="muted">min to escalate</span>
+        <label className="switch">
+          <input type="checkbox" checked={escalateEmail} onChange={(event) => setEscalateEmail(event.target.checked)} />
+          <span>Email on escalation</span>
+        </label>
         <button type="submit" disabled={saving}><Plus size={14} />Add Rule</button>
       </form>
       {loading ? null : rules.length ? (
         <div className="table-wrap">
           <table className="data-table">
-            <thead><tr><th>Type</th><th>Threshold</th><th>Status</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Type</th><th>Threshold</th><th>Status</th><th>Escalation</th><th>Actions</th></tr></thead>
             <tbody>
               {rules.map((rule) => (
                 <tr key={rule.id}>
                   <td>{titleCase(rule.rule_type)}</td>
                   <td>{rule.threshold_minutes} min</td>
                   <td><span className={`data-pill data-pill-${rule.enabled ? "live" : "off"}`}>{rule.enabled ? "Enabled" : "Disabled"}</span></td>
+                  <td>
+                    {rule.escalation_minutes ? `${rule.escalation_minutes} min${rule.escalate_email ? " + email" : ""}` : <span className="muted">none</span>}
+                  </td>
                   <td className="table-actions">
                     <button type="button" onClick={() => toggleRule(rule)}>{rule.enabled ? "Disable" : "Enable"}</button>
+                    <button type="button" onClick={() => editEscalation(rule)}>Set Escalation</button>
+                    {rule.escalation_minutes ? (
+                      <button type="button" onClick={() => toggleEscalateEmail(rule)}>{rule.escalate_email ? "Email Off" : "Email On"}</button>
+                    ) : null}
                     <button className="danger" type="button" onClick={() => deleteRule(rule)}><Trash2 size={14} />Delete</button>
                   </td>
                 </tr>

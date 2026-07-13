@@ -19,7 +19,7 @@ router = APIRouter()
 # match its update method's own allowed-fields set (alerts.py/accounts.py)
 # so a diff that also captured a derived column (e.g. email_verified_at
 # resetting when email changes) doesn't get rejected on revert.
-_ALERT_RULE_REVERT_FIELDS = {"rule_type", "threshold_minutes", "enabled"}
+_ALERT_RULE_REVERT_FIELDS = {"rule_type", "threshold_minutes", "enabled", "escalation_minutes", "escalate_email"}
 _SWARM_ACCOUNT_REVERT_FIELDS = {"username", "guild_id", "email", "display_name", "public_profile", "server_name"}
 
 
