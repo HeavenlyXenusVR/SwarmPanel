@@ -89,6 +89,24 @@ struct ProfileView: View {
                 }
                 .listRowBackground(SwarmTheme.panel)
 
+                if appState.isAdmin || appState.isModerator || appState.canGallery {
+                    Section {
+                        if appState.isAdmin || appState.isModerator {
+                            NavigationLink("Audit Log") { AuditLogView() }
+                            NavigationLink("Alert Rules") { AlertRulesView() }
+                            NavigationLink("Lumisound Moderation") { LumisoundAdminView() }
+                        }
+                        if appState.canGallery {
+                            NavigationLink("Gallery Moderation") { GalleryModerationView() }
+                        }
+                    } header: {
+                        SectionLabel(title: "Admin Tools")
+                    } footer: {
+                        Text("Visible because your account has owner or moderator access on this guild.")
+                    }
+                    .listRowBackground(SwarmTheme.panel)
+                }
+
                 Section {
                     Button("Log Out", role: .destructive) { appState.logout() }
                 }
