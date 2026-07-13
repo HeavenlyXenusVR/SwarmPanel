@@ -1,23 +1,55 @@
 import SwiftUI
 
-/// Placeholder root view for the scaffolding milestone. Replaced by a real
-/// auth-gated root (Login/Register -> tab bar) in the next build phase.
+/// Auth-gated root: shows a launch spinner while the stored token (if any) is
+/// being validated, Login when signed out, and the authenticated shell once
+/// signed in. The authenticated shell is a placeholder here — Phase 3 replaces
+/// it with the real tab bar (Dashboard/Controls/Leaderboard/Social/Profile).
 struct ContentView: View {
+    @EnvironmentObject private var appState: AppState
+
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "antenna.radiowaves.left.and.right")
-                .font(.system(size: 48))
-                .foregroundStyle(.tint)
-            Text("SwarmPanel")
-                .font(.title.bold())
-            Text("iOS companion — scaffolding milestone")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+        Group {
+            if appState.isBootstrapping {
+                ProgressView("Loading SwarmPanel...")
+            } else if appState.isAuthenticated {
+                SignedInPlaceholderView()
+            } else {
+                LoginView()
+            }
         }
-        .padding()
+    }
+}
+
+private struct SignedInPlaceholderView: View {
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 48))
+                    .foregroundStyle(.green)
+                Text("Signed in as \(appState.username)")
+                    .font(.title2.bold())
+                if let guildId = appState.guildId {
+                    Text("Guild \(guildId)")
+                        .foregroundStyle(.secondary)
+                }
+                Text("Dashboard, Controls, and the rest of the app arrive in the next build phases.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                Button("Log Out", role: .destructive) { appState.logout() }
+                    .padding(.top)
+            }
+            .padding()
+            .navigationTitle("SwarmPanel")
+        }
     }
 }
 
 #Preview {
     ContentView()
+        .environmentObject(AppState())
 }
