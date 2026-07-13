@@ -9,13 +9,15 @@ struct ControlsView: View {
         NavigationStack {
             Form {
                 if let error = viewModel.errorMessage {
-                    Section { Text(error).foregroundStyle(.red) }
+                    Section { Text(error).foregroundStyle(SwarmTheme.danger) }
+                        .listRowBackground(SwarmTheme.panel)
                 }
                 if let status = viewModel.statusMessage {
-                    Section { Text(status).foregroundStyle(.green) }
+                    Section { Text(status).foregroundStyle(SwarmTheme.ok) }
+                        .listRowBackground(SwarmTheme.panel)
                 }
 
-                Section("Bot & Guild") {
+                Section {
                     Picker("Bot", selection: $viewModel.selectedBotKey) {
                         ForEach(viewModel.bots) { bot in
                             Text(bot.label).tag(bot.id)
@@ -23,9 +25,12 @@ struct ControlsView: View {
                     }
                     TextField("Guild ID", text: $viewModel.guildId)
                         .keyboardType(.numberPad)
+                } header: {
+                    SectionLabel(title: "Bot & Guild")
                 }
+                .listRowBackground(SwarmTheme.panel)
 
-                Section("Action") {
+                Section {
                     Picker("Action", selection: $viewModel.action) {
                         ForEach(ControlAction.allCases) { action in
                             Text(action.label).tag(action)
@@ -64,24 +69,37 @@ struct ControlsView: View {
                         }
                     }
                     .disabled(viewModel.isSending || viewModel.selectedBotKey.isEmpty || viewModel.guildId.isEmpty)
+                } header: {
+                    SectionLabel(title: "Action")
                 }
+                .listRowBackground(SwarmTheme.panel)
 
                 if let session = viewModel.controlState {
-                    Section("Current Session") {
-                        Text(session.title?.isEmpty == false ? session.title! : "Nothing playing")
-                            .font(.subheadline)
-                        Text(session.sessionStateLabel ?? "Unknown")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    Section {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(session.title?.isEmpty == false ? session.title! : "Nothing playing")
+                                    .font(.subheadline.bold())
+                                    .foregroundStyle(SwarmTheme.textPrimary)
+                            }
+                            Spacer()
+                            StatusPill(
+                                text: session.sessionStateLabel ?? "Unknown",
+                                tone: session.isPlaying == true && session.isPaused != true ? .live : .off
+                            )
+                        }
                         LabeledContent("Queue", value: "\(session.queueCount ?? 0)")
                         LabeledContent("Backup", value: "\(session.backupQueueCount ?? 0)")
+                    } header: {
+                        SectionLabel(title: "Current Session")
                     }
+                    .listRowBackground(SwarmTheme.panel)
                 }
 
                 Section {
                     HStack {
                         TextField("Name this queue", text: $newQueueName)
-                        Button("Save Current Queue") {
+                        Button("Save") {
                             Task {
                                 await viewModel.saveCurrentQueue(name: newQueueName)
                                 newQueueName = ""
@@ -90,29 +108,36 @@ struct ControlsView: View {
                         .disabled(viewModel.controlState?.queuePreview?.isEmpty ?? true)
                     }
                     if viewModel.savedQueues.isEmpty {
-                        Text("No saved queues yet.").foregroundStyle(.secondary)
+                        Text("No saved queues yet.").foregroundStyle(SwarmTheme.textMuted)
                     } else {
                         ForEach(viewModel.savedQueues) { queue in
                             HStack {
-                                VStack(alignment: .leading) {
+                                VStack(alignment: .leading, spacing: 2) {
                                     Text(queue.name).font(.subheadline.bold())
-                                    Text("\(queue.itemCount) tracks").font(.caption).foregroundStyle(.secondary)
+                                    Text("\(queue.itemCount) tracks").font(.caption).foregroundStyle(SwarmTheme.textMuted)
                                 }
                                 Spacer()
-                                Button("Load") { Task { await viewModel.loadSavedQueue(queue) } }
-                                    .disabled(viewModel.isSending)
+                                Button {
+                                    Task { await viewModel.loadSavedQueue(queue) }
+                                } label: {
+                                    Image(systemName: "play.circle.fill").foregroundStyle(SwarmTheme.accent)
+                                }
+                                .disabled(viewModel.isSending)
                                 Button(role: .destructive) {
                                     Task { await viewModel.deleteSavedQueue(queue) }
                                 } label: {
-                                    Image(systemName: "trash")
+                                    Image(systemName: "trash").foregroundStyle(SwarmTheme.danger)
                                 }
                             }
                         }
                     }
                 } header: {
-                    Text("Saved Queues")
+                    SectionLabel(title: "Saved Queues", count: viewModel.savedQueues.count)
                 }
+                .listRowBackground(SwarmTheme.panel)
             }
+            .scrollContentBackground(.hidden)
+            .background(SwarmTheme.background)
             .navigationTitle("Controls")
             .task {
                 await viewModel.loadBots(defaultGuildId: appState.guildId)
