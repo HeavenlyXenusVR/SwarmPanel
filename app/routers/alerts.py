@@ -4,6 +4,7 @@ Telegram health-watch loop (see app/telegram_bridge.py)."""
 from fastapi import APIRouter, HTTPException, Request
 
 from ..auth_deps import _require_admin_auth, _require_admin_or_moderator_auth
+from ..db.audit import _diff_details
 from ..schemas import AlertRuleCreateRequest, AlertRuleUpdateRequest
 from ..security import _safe_error_detail
 from ..services import action_logger, db
@@ -37,6 +38,7 @@ async def create_alert_rule(request: Request, payload: AlertRuleCreateRequest):
 async def update_alert_rule(request: Request, rule_id: int, payload: AlertRuleUpdateRequest):
     auth = _require_admin_auth(request)
     updates = payload.model_dump(exclude_unset=True)
+    before = await db.get_alert_rule(rule_id)
     try:
         rule = await db.update_alert_rule(rule_id, updates)
     except ValueError as exc:
@@ -44,7 +46,8 @@ async def update_alert_rule(request: Request, rule_id: int, payload: AlertRuleUp
     if not rule:
         raise HTTPException(status_code=404, detail="Alert rule not found")
     action_logger.warning("alert_rule_update rule_id=%s fields=%s", rule_id, sorted(updates))
-    await db.record_audit_log(auth.get("username"), "alert_rule_update", target_type="alert_rule", target_id=rule_id, details=str(sorted(updates)))
+    details = _diff_details(before or {}, rule) if before else str(sorted(updates))
+    await db.record_audit_log(auth.get("username"), "alert_rule_update", target_type="alert_rule", target_id=rule_id, details=details or None)
     return {"ok": True, "rule": rule}
 
 

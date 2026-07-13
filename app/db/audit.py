@@ -2,11 +2,36 @@
 action, when, and against which target. Backs the /audit-log admin page."""
 
 import asyncio
+import json
 from typing import Any
 
 from .helpers import ACCOUNT_LOGIN_SCHEMA, PANEL_DB_QUERY_TIMEOUT_SECONDS, logger
 
 AUDIT_LOG_TABLE = "swarm_audit_log"
+
+
+_DIFF_IGNORED_KEYS = {"updated_at", "is_online", "last_seen_at"}
+
+
+def _diff_details(before: dict[str, Any], after: dict[str, Any]) -> str:
+    """Structured before/after JSON for update-type audit entries, limited
+    to keys that actually changed. Falsy/missing diffs return an empty
+    string — the caller can then omit ``details`` entirely. Volatile
+    computed fields (updated_at, is_online) are ignored so they don't add
+    noise to every diff."""
+    changed_before: dict[str, Any] = {}
+    changed_after: dict[str, Any] = {}
+    for key, new_value in after.items():
+        if key in _DIFF_IGNORED_KEYS:
+            continue
+        old_value = before.get(key)
+        if old_value == new_value:
+            continue
+        changed_before[key] = old_value
+        changed_after[key] = new_value
+    if not changed_after:
+        return ""
+    return json.dumps({"before": changed_before, "after": changed_after}, default=str)
 
 
 class AuditMixin:
@@ -90,3 +115,13 @@ class AuditMixin:
             "entries": [self._json_row(row) for row in rows],
             "total": int((total_row or {}).get("count") or 0),
         }
+
+    async def get_audit_log_entry(self, entry_id: int) -> dict[str, Any] | None:
+        row = await self._fetchone(
+            f"""
+            SELECT id, actor_username, actor_user_id, action, target_type, target_id, details, created_at
+            FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{AUDIT_LOG_TABLE}` WHERE id = %s LIMIT 1
+            """,
+            (int(entry_id),),
+        )
+        return self._json_row(row) if row else None

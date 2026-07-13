@@ -36,6 +36,13 @@ class AlertsMixin:
         )
         return [self._json_row(row) for row in rows]
 
+    async def get_alert_rule(self, rule_id: int) -> dict[str, Any] | None:
+        row = await self._fetchone(
+            f"SELECT id, rule_type, threshold_minutes, enabled, created_at FROM `{ACCOUNT_LOGIN_SCHEMA}`.`{ALERT_RULES_TABLE}` WHERE id = %s",
+            (int(rule_id),),
+        )
+        return self._json_row(row) if row else None
+
     async def create_alert_rule(self, rule_type: str, threshold_minutes: int, enabled: bool = True) -> dict[str, Any]:
         rule_type = str(rule_type or "").strip().lower()
         if rule_type not in VALID_ALERT_RULE_TYPES:

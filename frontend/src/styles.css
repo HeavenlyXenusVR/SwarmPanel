@@ -810,6 +810,39 @@ a {
   font-size: 0.84rem;
 }
 
+.audit-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.audit-diff-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+}
+
+.audit-diff-row code {
+  color: var(--muted);
+}
+
+.audit-diff-before {
+  color: var(--danger);
+  text-decoration: line-through;
+  opacity: 0.8;
+}
+
+.audit-diff-arrow {
+  color: var(--muted);
+}
+
+.audit-diff-after {
+  color: var(--ok);
+  font-weight: 600;
+}
+
 .icon-button {
   width: 38px;
   padding: 0;

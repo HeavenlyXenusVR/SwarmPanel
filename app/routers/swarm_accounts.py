@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from ..auth_deps import _require_admin_auth
+from ..db.audit import _diff_details
 from ..schemas import (
     SwarmAccountBulkDeleteRequest,
     SwarmAccountBulkVerifyRequest,
@@ -63,8 +64,9 @@ async def api_swarm_accounts_admin(request: Request, query: str = "", limit: int
 
 @router.post("/api/swarm-accounts/update")
 async def api_swarm_accounts_update(request: Request, payload: SwarmAccountUpdateRequest):
-    _require_admin_auth(request)
+    auth = _require_admin_auth(request)
     updates = payload.model_dump(exclude={"account_id"}, exclude_unset=True)
+    before = await db.get_account_admin(payload.account_id)
     try:
         account = await db.update_account_admin(payload.account_id, updates)
     except ValueError as exc:
@@ -72,6 +74,11 @@ async def api_swarm_accounts_update(request: Request, payload: SwarmAccountUpdat
     if not account:
         raise HTTPException(status_code=404, detail="SwarmPanel account not found")
     action_logger.warning("swarm_account_update account_id=%s fields=%s", payload.account_id, sorted(updates))
+    details = _diff_details(before or {}, account) if before else str(sorted(updates))
+    await db.record_audit_log(
+        auth.get("username"), "swarm_account_update", target_type="account", target_id=payload.account_id,
+        details=details or None,
+    )
     return {"ok": True, "account": account}
 
 
