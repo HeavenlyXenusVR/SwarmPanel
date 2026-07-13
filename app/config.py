@@ -87,6 +87,8 @@ class Settings:
     register_form_rate_limit_per_hour: int
     email_verification_ttl_seconds: int
     live_mode: bool
+    scheduled_exports_enabled: bool
+    scheduled_exports_dir: str
 
 
 def load_settings() -> Settings:
@@ -135,6 +137,8 @@ def load_settings() -> Settings:
         register_form_rate_limit_per_hour=max(1, int(_env("PANEL_REGISTER_FORM_RATE_LIMIT_PER_HOUR", "8"))),
         email_verification_ttl_seconds=max(300, int(_env("PANEL_EMAIL_VERIFICATION_TTL_SECONDS", "86400"))),
         live_mode=_env_bool("PANEL_LIVE_MODE", False) or _env_bool("SWARM_PANEL_LIVE_MODE", False),
+        scheduled_exports_enabled=_env_bool("PANEL_SCHEDULED_EXPORTS_ENABLED", False),
+        scheduled_exports_dir=_env("PANEL_SCHEDULED_EXPORTS_DIR", str(Path(__file__).resolve().parent.parent / ".runtime" / "exports")),
     )
     validate_settings(settings)
     return settings

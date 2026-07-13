@@ -2,6 +2,8 @@ import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,12 +14,14 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import services as _services_module
 from .auth_deps import _schedule_presence_touch
+from .csv_export import rows_to_csv_text
 from .paths import BASE_DIR
 from .routers import (
     alerts,
     audit,
     bots,
     databases,
+    exports,
     gallery,
     health,
     ios_bridge,
@@ -57,6 +61,83 @@ async def _metrics_history_capture_loop() -> None:
             raise
 
 
+SCHEDULED_EXPORT_INTERVAL_SECONDS = 24 * 60 * 60  # once/day
+SCHEDULED_EXPORT_RETENTION_DAYS = 14
+# Each entry reuses an existing admin-data DB method (already cached per-limit)
+# rather than adding new queries — two entries share get_image_gallery_admin_data
+# and two share get_lumisound_admin_data, so this fetches each underlying
+# snapshot at most once per run.
+_SCHEDULED_EXPORT_JOBS = (
+    ("swarm_accounts", lambda: db.get_account_admin_data(limit=500), "users"),
+    ("gallery_media", lambda: db.get_image_gallery_admin_data(500), "media"),
+    ("gallery_users", lambda: db.get_image_gallery_admin_data(500), "users"),
+    ("lumisound_users", lambda: db.get_lumisound_admin_data(500), "users"),
+    ("lumisound_uploads", lambda: db.get_lumisound_admin_data(500), "uploads"),
+    ("audit_log", lambda: db.list_audit_log(limit=500), "entries"),
+)
+
+
+async def _run_scheduled_export() -> int:
+    """Snapshot key admin tables to CSV under scheduled_exports_dir/<date>/.
+    Best-effort per job — one failing table must not block the others."""
+    export_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    export_dir = Path(settings.scheduled_exports_dir) / export_date
+    export_dir.mkdir(parents=True, exist_ok=True)
+    written = 0
+    for name, fetch, rows_key in _SCHEDULED_EXPORT_JOBS:
+        try:
+            data = await fetch()
+            rows = data.get(rows_key) or []
+            csv_text = rows_to_csv_text(rows)
+            (export_dir / f"{name}.csv").write_text(csv_text, encoding="utf-8")
+            written += 1
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logging.getLogger("swarm_panel").exception("Scheduled export failed for %s.", name)
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=SCHEDULED_EXPORT_RETENTION_DAYS)
+    try:
+        for entry in Path(settings.scheduled_exports_dir).iterdir():
+            if not entry.is_dir():
+                continue
+            try:
+                entry_date = datetime.strptime(entry.name, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+            if entry_date < cutoff:
+                for file in entry.iterdir():
+                    file.unlink(missing_ok=True)
+                entry.rmdir()
+    except FileNotFoundError:
+        pass
+    except Exception:
+        logging.getLogger("swarm_panel").exception("Scheduled export retention cleanup failed.")
+    return written
+
+
+async def _scheduled_export_loop() -> None:
+    """Started only when PANEL_SCHEDULED_EXPORTS_ENABLED is set — opt-in,
+    off by default, so existing deployments are unaffected."""
+    await asyncio.sleep(60)
+    while True:
+        try:
+            written = await _run_scheduled_export()
+            await _send_panel_telegram_alert(
+                "scheduled_export",
+                "SwarmPanel nightly export complete",
+                f"{written} file(s) written for {datetime.now(timezone.utc).strftime('%Y-%m-%d')}.",
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logging.getLogger("swarm_panel").exception("Scheduled export loop failed.")
+        try:
+            await asyncio.sleep(SCHEDULED_EXPORT_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            raise
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     try:
@@ -70,6 +151,8 @@ async def lifespan(_: FastAPI):
     # worker is intentionally not started because no endpoint enqueues work.
     background_tasks.append(asyncio.create_task(_telegram_health_watch_loop(), name="panel-telegram-health-watch"))
     background_tasks.append(asyncio.create_task(_metrics_history_capture_loop(), name="panel-metrics-history-capture"))
+    if settings.scheduled_exports_enabled:
+        background_tasks.append(asyncio.create_task(_scheduled_export_loop(), name="panel-scheduled-export"))
     recent_feed_events.append(
         _feed_event(
             "info",
@@ -190,5 +273,6 @@ app.include_router(monitoring.router)
 app.include_router(audit.router)
 app.include_router(alerts.router)
 app.include_router(queues.router)
+app.include_router(exports.router)
 # Defensive: keep the catch-all ios-bridge proxy included last.
 app.include_router(ios_bridge.router)

@@ -38,7 +38,11 @@ def _csv_cell(value: Any) -> str:
     return text
 
 
-def rows_to_csv_response(rows: list[dict[str, Any]], filename: str) -> StreamingResponse:
+def rows_to_csv_text(rows: list[dict[str, Any]]) -> str:
+    """Shared core of the CSV export: column-filtering and formula-injection
+    escaping. Used by both the download-response path below and the
+    scheduled-export file-writing path (app/main.py's export loop) so the
+    sensitive-column rules can't drift between the two."""
     buffer = io.StringIO()
     fieldnames: list[str] = []
     for row in rows:
@@ -49,10 +53,14 @@ def rows_to_csv_response(rows: list[dict[str, Any]], filename: str) -> Streaming
     writer.writeheader()
     for row in rows:
         writer.writerow({key: _csv_cell(value) for key, value in row.items() if not _is_sensitive_column(key)})
-    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def rows_to_csv_response(rows: list[dict[str, Any]], filename: str) -> StreamingResponse:
+    csv_text = rows_to_csv_text(rows)
     safe_name = _safe_filename(filename)
     return StreamingResponse(
-        iter([buffer.getvalue()]),
+        iter([csv_text]),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{safe_name}.csv"'},
     )

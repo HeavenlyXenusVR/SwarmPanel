@@ -1,10 +1,77 @@
 import { useCallback, useEffect, useState } from "react";
-import { Plus, RefreshCw, Trash2 } from "lucide-react";
-import { apiFetch, query } from "../api.js";
+import { Download, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { apiFetch, downloadFile, query } from "../api.js";
 import { useLiveRefresh } from "../hooks/useLiveRefresh.js";
 import { JsonPanel } from "../components/swarm.jsx";
 import { EmptyState, LoadingSection, Notice, Page, SectionHead } from "../components/ui.jsx";
 import { titleCase } from "../utils/format.js";
+
+function ExportsPanel({ ctx }) {
+  const [snapshots, setSnapshots] = useState([]);
+  const [enabled, setEnabled] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const showToast = ctx.showToast;
+
+  const load = useCallback(async ({ background = false, force = false } = {}) => {
+    try {
+      if (!background) setLoading(true);
+      const result = await apiFetch("/api/exports", { force });
+      setSnapshots(result.snapshots || []);
+      setEnabled(Boolean(result.enabled));
+    } catch (error) {
+      if (!background) showToast(error.message, "error");
+    } finally {
+      if (!background) setLoading(false);
+    }
+  }, [showToast]);
+  useEffect(() => { load(); }, [load]);
+  useLiveRefresh(() => load({ background: true, force: true }), { interval: 60_000 });
+
+  if (loading) return null;
+  if (!enabled) {
+    return (
+      <div className="panel wide">
+        <SectionHead title="Scheduled Exports" />
+        <p className="muted">Set PANEL_SCHEDULED_EXPORTS_ENABLED=true to enable nightly CSV snapshots of key admin tables.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="panel wide">
+      <SectionHead title="Scheduled Exports" count={snapshots.length} />
+      {snapshots.length ? (
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead><tr><th>Date</th><th>Files</th></tr></thead>
+            <tbody>
+              {snapshots.map((snapshot) => (
+                <tr key={snapshot.date}>
+                  <td className="table-mono">{snapshot.date}</td>
+                  <td>
+                    <div className="chip-row">
+                      {snapshot.files.map((file) => (
+                        <button
+                          key={file.name}
+                          type="button"
+                          onClick={() => downloadFile(`/api/exports/${snapshot.date}/${file.name}`, `${snapshot.date}_${file.name}`)}
+                        >
+                          <Download size={14} />{file.name} ({Math.max(1, Math.round(file.size_bytes / 1024))} KB)
+                        </button>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <EmptyState title="No scheduled exports yet" compact />
+      )}
+    </div>
+  );
+}
 
 const ALERT_RULE_TYPES = [
   { value: "bot_offline", label: "Bot Offline" },
@@ -201,6 +268,7 @@ export default function DiagnosticsPage({ ctx }) {
       {error ? <Notice tone="error">{error}</Notice> : null}
       <section className="dashboard-grid">
         <AlertRulesPanel ctx={ctx} />
+        <ExportsPanel ctx={ctx} />
       </section>
       <LoadingSection
         loading={loading}
