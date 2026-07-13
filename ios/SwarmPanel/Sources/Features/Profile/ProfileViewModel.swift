@@ -18,6 +18,7 @@ final class ProfileViewModel: ObservableObject {
             bio = response.profile.bio ?? ""
             isPublic = response.profile.publicProfile ?? true
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to load profile."
         }
     }
@@ -34,6 +35,7 @@ final class ProfileViewModel: ObservableObject {
             statusMessage = "Profile saved."
             errorMessage = nil
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to save profile."
         }
     }

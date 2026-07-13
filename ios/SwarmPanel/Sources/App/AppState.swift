@@ -44,6 +44,7 @@ final class AppState: ObservableObject {
             )
             apply(payload)
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Login failed."
         }
     }
@@ -63,6 +64,7 @@ final class AppState: ObservableObject {
             )
             apply(payload)
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Registration failed."
         }
     }

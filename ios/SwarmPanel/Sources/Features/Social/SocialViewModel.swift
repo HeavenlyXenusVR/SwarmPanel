@@ -27,6 +27,7 @@ final class SocialViewModel: ObservableObject {
             let response: UserSearchResponse = try await api.get("/api/users/directory", query: ["q": searchQuery])
             searchResults = response.users ?? []
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Search failed."
         }
     }
@@ -37,6 +38,7 @@ final class SocialViewModel: ObservableObject {
             incomingRequests = response.incoming ?? []
             outgoingRequests = response.outgoing ?? []
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to load friend requests."
         }
     }
@@ -46,6 +48,7 @@ final class SocialViewModel: ObservableObject {
             let response: FriendsResponse = try await api.get("/api/me/friends")
             friends = response.friends ?? []
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to load friends."
         }
     }
@@ -55,6 +58,7 @@ final class SocialViewModel: ObservableObject {
             let response: MessageThreadsResponse = try await api.get("/api/messages/threads")
             threads = response.threads ?? []
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to load messages."
         }
     }
@@ -63,6 +67,7 @@ final class SocialViewModel: ObservableObject {
         do {
             let _: OKResponse = try await api.post("/api/users/\(accountId)/follow", body: FollowBody(following: following))
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Follow failed."
         }
     }
@@ -72,6 +77,7 @@ final class SocialViewModel: ObservableObject {
             let _: OKResponse = try await api.post("/api/users/\(accountId)/friend-request")
             await loadFriendRequests()
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Friend request failed."
         }
     }
@@ -82,6 +88,7 @@ final class SocialViewModel: ObservableObject {
             await loadFriendRequests()
             await loadFriends()
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Action failed."
         }
     }

@@ -37,6 +37,7 @@ final class ControlsViewModel: ObservableObject {
                 guildId = defaultGuildId
             }
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to load bots."
         }
     }
@@ -103,6 +104,7 @@ final class ControlsViewModel: ObservableObject {
             statusMessage = "\(action.label) sent."
             await loadControlStateAndQueues()
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Control action failed."
         }
     }
@@ -120,6 +122,7 @@ final class ControlsViewModel: ObservableObject {
             statusMessage = "Queue saved."
             await loadControlStateAndQueues()
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to save queue."
         }
     }
@@ -141,6 +144,7 @@ final class ControlsViewModel: ObservableObject {
                     )
                 )
             } catch {
+                guard !error.isCancellation else { return }
                 errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to load queue."
                 return
             }
@@ -153,6 +157,7 @@ final class ControlsViewModel: ObservableObject {
             let _: OKResponse = try await api.post("/api/queues/\(queue.id)/delete", body: SavedQueueDeleteBody(guildId: guildId))
             await loadControlStateAndQueues()
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to delete queue."
         }
     }

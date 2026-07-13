@@ -17,6 +17,7 @@ final class LeaderboardViewModel: ObservableObject {
             bots = (response.bots ?? []).filter { $0.kind == "music" }
             if selectedBotKey.isEmpty { selectedBotKey = bots.first?.id ?? "" }
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to load bots."
         }
     }
@@ -33,6 +34,7 @@ final class LeaderboardViewModel: ObservableObject {
             data = envelope.data
             errorMessage = nil
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to load leaderboard."
         }
     }

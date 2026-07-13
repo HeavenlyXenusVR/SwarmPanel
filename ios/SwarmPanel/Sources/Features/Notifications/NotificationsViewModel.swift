@@ -48,6 +48,7 @@ final class NotificationsViewModel: ObservableObject {
             notifications = response.notifications ?? []
             errorMessage = nil
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to load notifications."
         }
     }
@@ -75,6 +76,7 @@ final class NotificationsViewModel: ObservableObject {
             unreadCount = 0
             await loadNotifications()
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to mark all read."
         }
     }

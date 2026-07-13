@@ -21,6 +21,7 @@ final class ThreadViewModel: ObservableObject {
             let response: MessagesResponse = try await api.get("/api/messages/\(accountId)")
             messages = response.messages ?? []
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to load messages."
         }
     }
@@ -35,6 +36,7 @@ final class ThreadViewModel: ObservableObject {
             draft = ""
             await load()
         } catch {
+            guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to send message."
         }
     }

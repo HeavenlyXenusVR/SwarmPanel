@@ -55,7 +55,7 @@ final class DashboardViewModel: ObservableObject {
             response = try await api.get("/api/dashboard")
             errorMessage = nil
         } catch {
-            if !silent {
+            if !silent, !error.isCancellation {
                 errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to load dashboard."
             }
         }
