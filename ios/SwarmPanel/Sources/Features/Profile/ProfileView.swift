@@ -8,24 +8,45 @@ struct ProfileView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Account") {
-                    LabeledContent("Username", value: appState.username)
-                    if let guildId = appState.guildId {
-                        LabeledContent("Guild", value: guildId)
+                Section {
+                    HStack(spacing: 14) {
+                        InitialsAvatar(name: appState.username.isEmpty ? "?" : appState.username, diameter: 56)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(appState.username)
+                                .font(.title3.bold())
+                                .foregroundStyle(SwarmTheme.textPrimary)
+                            if let guildId = appState.guildId {
+                                Text("Guild \(guildId)")
+                                    .font(.caption)
+                                    .foregroundStyle(SwarmTheme.textMuted)
+                            }
+                        }
+                        Spacer()
                     }
+                    .padding(.vertical, 6)
+                }
+                .listRowBackground(SwarmTheme.panel)
+
+                Section {
                     TextField("Display Name", text: $viewModel.displayName)
                     TextField("Bio", text: $viewModel.bio, axis: .vertical)
                     Toggle("Public Profile", isOn: $viewModel.isPublic)
+                        .tint(SwarmTheme.accent)
+                } header: {
+                    SectionLabel(title: "Account")
                 }
+                .listRowBackground(SwarmTheme.panel)
 
                 if let error = viewModel.errorMessage {
-                    Section { Text(error).foregroundStyle(.red) }
+                    Section { Text(error).foregroundStyle(SwarmTheme.danger) }
+                        .listRowBackground(SwarmTheme.panel)
                 }
                 if let status = viewModel.statusMessage {
-                    Section { Text(status).foregroundStyle(.green) }
+                    Section { Text(status).foregroundStyle(SwarmTheme.ok) }
+                        .listRowBackground(SwarmTheme.panel)
                 }
 
-                Section("Appearance") {
+                Section {
                     Picker("Theme", selection: $appearance.colorSchemeOption) {
                         Text("System").tag("system")
                         Text("Light").tag("light")
@@ -45,7 +66,12 @@ struct ProfileView: View {
                             }
                         )
                     )
+                } header: {
+                    SectionLabel(title: "Appearance")
+                } footer: {
+                    Text("Theme and accent apply instantly on this device. Accent also syncs to your account when you tap Save Profile, so it's consistent on the web panel too.")
                 }
+                .listRowBackground(SwarmTheme.panel)
 
                 Section {
                     Button {
@@ -58,12 +84,17 @@ struct ProfileView: View {
                         }
                     }
                     .disabled(viewModel.isSaving)
+                    .tint(SwarmTheme.accent)
                 }
+                .listRowBackground(SwarmTheme.panel)
 
                 Section {
                     Button("Log Out", role: .destructive) { appState.logout() }
                 }
+                .listRowBackground(SwarmTheme.panel)
             }
+            .scrollContentBackground(.hidden)
+            .background(SwarmTheme.background)
             .navigationTitle("Profile")
             .task { await viewModel.load() }
         }
