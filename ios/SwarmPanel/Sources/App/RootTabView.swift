@@ -1,10 +1,15 @@
 import SwiftUI
 
-/// Authenticated shell. Dashboard, Controls, and Leaderboard are real; the
-/// remaining tabs are filled in by later build phases (Social, Profile) —
-/// kept as simple placeholders here so the tab bar structure exists end-to-end.
+/// Authenticated shell. Dashboard, Controls, Leaderboard, and Notifications
+/// are real; the remaining tabs are filled in by later build phases (Social,
+/// Profile) — kept as simple placeholders here so the tab bar structure
+/// exists end-to-end. NotificationsViewModel is owned here (not inside
+/// NotificationsView) so its unread-count poll — mirroring the web bell's
+/// always-on polling in Shell.jsx — keeps running no matter which tab is
+/// selected, and can drive the tab badge.
 struct RootTabView: View {
     @EnvironmentObject private var appState: AppState
+    @StateObject private var notificationsViewModel = NotificationsViewModel()
 
     var body: some View {
         TabView {
@@ -17,12 +22,18 @@ struct RootTabView: View {
             LeaderboardView()
                 .tabItem { Label("Leaderboard", systemImage: "trophy") }
 
+            NotificationsView(viewModel: notificationsViewModel)
+                .tabItem { Label("Notifications", systemImage: "bell") }
+                .badge(notificationsViewModel.unreadCount)
+
             ComingSoonView(title: "Social", systemImage: "person.2")
                 .tabItem { Label("Social", systemImage: "person.2") }
 
             ProfileTabPlaceholder()
                 .tabItem { Label("Profile", systemImage: "person.crop.circle") }
         }
+        .onAppear { notificationsViewModel.startPolling() }
+        .onDisappear { notificationsViewModel.stopPolling() }
     }
 }
 
