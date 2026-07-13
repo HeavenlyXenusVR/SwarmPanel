@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SocialView: View {
+    @EnvironmentObject private var notificationsViewModel: NotificationsViewModel
     @StateObject private var viewModel = SocialViewModel()
 
     var body: some View {
@@ -91,7 +92,7 @@ struct SocialView: View {
 
                 Section {
                     if viewModel.friends.isEmpty {
-                        Text("No friends yet.").foregroundStyle(SwarmTheme.textMuted)
+                        EmptyStateView(icon: "person.2.slash", title: "No friends yet.")
                     } else {
                         ForEach(viewModel.friends) { friend in
                             NavigationLink {
@@ -111,7 +112,7 @@ struct SocialView: View {
 
                 Section {
                     if viewModel.threads.isEmpty {
-                        Text("No conversations yet.").foregroundStyle(SwarmTheme.textMuted)
+                        EmptyStateView(icon: "message", title: "No conversations yet.")
                     } else {
                         ForEach(viewModel.threads) { thread in
                             NavigationLink {
@@ -147,10 +148,12 @@ struct SocialView: View {
             .navigationTitle("Social")
             .task { await viewModel.loadAll() }
             .refreshable { await viewModel.loadAll() }
+            .notificationsBell(notificationsViewModel)
         }
     }
 }
 
 #Preview {
     SocialView()
+        .environmentObject(NotificationsViewModel())
 }

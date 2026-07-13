@@ -3,6 +3,7 @@ import SwiftUI
 struct ProfileView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var appearance: AppearanceSettings
+    @EnvironmentObject private var notificationsViewModel: NotificationsViewModel
     @StateObject private var viewModel = ProfileViewModel()
 
     var body: some View {
@@ -97,6 +98,8 @@ struct ProfileView: View {
             .background(SwarmTheme.background)
             .navigationTitle("Profile")
             .task { await viewModel.load() }
+            .refreshable { await viewModel.load() }
+            .notificationsBell(notificationsViewModel)
         }
     }
 }
@@ -105,4 +108,5 @@ struct ProfileView: View {
     ProfileView()
         .environmentObject(AppState())
         .environmentObject(AppearanceSettings())
+        .environmentObject(NotificationsViewModel())
 }

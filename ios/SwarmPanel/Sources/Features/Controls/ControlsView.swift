@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ControlsView: View {
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var notificationsViewModel: NotificationsViewModel
     @StateObject private var viewModel = ControlsViewModel()
     @State private var newQueueName = ""
 
@@ -108,7 +109,7 @@ struct ControlsView: View {
                         .disabled(viewModel.controlState?.queuePreview?.isEmpty ?? true)
                     }
                     if viewModel.savedQueues.isEmpty {
-                        Text("No saved queues yet.").foregroundStyle(SwarmTheme.textMuted)
+                        EmptyStateView(icon: "list.bullet.rectangle", title: "No saved queues yet.")
                     } else {
                         ForEach(viewModel.savedQueues) { queue in
                             HStack {
@@ -157,6 +158,8 @@ struct ControlsView: View {
             .onChange(of: viewModel.guildId) { _ in
                 Task { await viewModel.loadControlStateAndQueues() }
             }
+            .refreshable { await viewModel.loadControlStateAndQueues() }
+            .notificationsBell(notificationsViewModel)
         }
     }
 }
@@ -164,4 +167,5 @@ struct ControlsView: View {
 #Preview {
     ControlsView()
         .environmentObject(AppState())
+        .environmentObject(NotificationsViewModel())
 }

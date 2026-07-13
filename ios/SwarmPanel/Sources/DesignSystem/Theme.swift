@@ -151,6 +151,28 @@ struct PanelCard<Content: View>: View {
     }
 }
 
+/// Themed "nothing here yet" placeholder — replaces plain gray Text used for
+/// empty lists (no sessions, no saved queues, no friends, etc.) with an icon
+/// + message, matching the web's EmptyState component (components/ui.jsx).
+struct EmptyStateView: View {
+    var icon: String = "tray"
+    let title: String
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 30))
+                .foregroundStyle(SwarmTheme.textMuted)
+            Text(title)
+                .font(.subheadline)
+                .foregroundStyle(SwarmTheme.textMuted)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 22)
+    }
+}
+
 struct SectionLabel: View {
     let title: String
     var count: Int?

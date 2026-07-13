@@ -1,10 +1,12 @@
 import SwiftUI
 
-/// Authenticated shell — every tab is now a real screen (Dashboard, Controls,
-/// Leaderboard, Notifications, Social, Profile). NotificationsViewModel is
-/// owned here (not inside NotificationsView) so its unread-count poll —
-/// mirroring the web bell's always-on polling in Shell.jsx — keeps running no
-/// matter which tab is selected, and can drive the tab badge.
+/// Authenticated shell — 5 tabs (Dashboard, Controls, Leaderboard, Social,
+/// Profile). Notifications is deliberately NOT a 6th tab: iOS auto-folds
+/// TabView overflow beyond 5 items into a plain unstyled "More" list, which
+/// silently buried two tabs behind an extra tap. Instead, NotificationsViewModel
+/// is owned here and injected via environment so every screen can show a
+/// bell + badge in its own toolbar (see DesignSystem/NotificationsBell.swift)
+/// — the poll keeps running no matter which tab is selected.
 struct RootTabView: View {
     @StateObject private var notificationsViewModel = NotificationsViewModel()
 
@@ -19,16 +21,13 @@ struct RootTabView: View {
             LeaderboardView()
                 .tabItem { Label("Leaderboard", systemImage: "trophy") }
 
-            NotificationsView(viewModel: notificationsViewModel)
-                .tabItem { Label("Notifications", systemImage: "bell") }
-                .badge(notificationsViewModel.unreadCount)
-
             SocialView()
                 .tabItem { Label("Social", systemImage: "person.2") }
 
             ProfileView()
                 .tabItem { Label("Profile", systemImage: "person.crop.circle") }
         }
+        .environmentObject(notificationsViewModel)
         .onAppear { notificationsViewModel.startPolling() }
         .onDisappear { notificationsViewModel.stopPolling() }
     }

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct NotificationsView: View {
     @ObservedObject var viewModel: NotificationsViewModel
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
@@ -12,7 +13,7 @@ struct NotificationsView: View {
                     }
                     if viewModel.notifications.isEmpty && !viewModel.isLoading {
                         PanelCard {
-                            Text("You're all caught up.").foregroundStyle(SwarmTheme.textMuted)
+                            EmptyStateView(icon: "checkmark.circle", title: "You're all caught up.")
                         }
                         .padding(.horizontal)
                     } else {
@@ -37,6 +38,9 @@ struct NotificationsView: View {
             .background(SwarmTheme.background)
             .navigationTitle("Notifications")
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Done") { dismiss() }
+                }
                 if viewModel.unreadCount > 0 {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button("Mark All Read") { Task { await viewModel.markAllRead() } }

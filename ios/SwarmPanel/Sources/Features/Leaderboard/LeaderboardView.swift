@@ -2,6 +2,7 @@ import SwiftUI
 
 struct LeaderboardView: View {
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var notificationsViewModel: NotificationsViewModel
     @StateObject private var viewModel = LeaderboardViewModel()
 
     var body: some View {
@@ -38,7 +39,7 @@ struct LeaderboardView: View {
                         SectionLabel(title: "Top Tracks")
                         let tracks = viewModel.data?.topTracks ?? []
                         if tracks.isEmpty {
-                            PanelCard { Text("No track history yet.").foregroundStyle(SwarmTheme.textMuted) }
+                            PanelCard { EmptyStateView(icon: "music.note.list", title: "No track history yet.") }
                         } else {
                             PanelCard(padding: 0) {
                                 VStack(spacing: 0) {
@@ -60,7 +61,7 @@ struct LeaderboardView: View {
                         SectionLabel(title: "Top Listeners")
                         let listeners = viewModel.data?.topListeners ?? []
                         if listeners.isEmpty {
-                            PanelCard { Text("No listener history yet.").foregroundStyle(SwarmTheme.textMuted) }
+                            PanelCard { EmptyStateView(icon: "person.3", title: "No listener history yet.") }
                         } else {
                             PanelCard(padding: 0) {
                                 VStack(spacing: 0) {
@@ -99,6 +100,7 @@ struct LeaderboardView: View {
                 Task { await viewModel.loadLeaderboard() }
             }
             .refreshable { await viewModel.loadLeaderboard() }
+            .notificationsBell(notificationsViewModel)
         }
     }
 }
@@ -143,4 +145,5 @@ private struct RankRow: View {
 #Preview {
     LeaderboardView()
         .environmentObject(AppState())
+        .environmentObject(NotificationsViewModel())
 }

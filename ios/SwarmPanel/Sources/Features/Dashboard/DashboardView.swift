@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DashboardView: View {
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var notificationsViewModel: NotificationsViewModel
     @StateObject private var viewModel = DashboardViewModel()
 
     private var allBots: [DashboardBot] { viewModel.response?.bots ?? [] }
@@ -57,8 +58,7 @@ struct DashboardView: View {
                                 SectionLabel(title: "Live Sessions", count: allSessions.count)
                                 if allSessions.isEmpty {
                                     PanelCard {
-                                        Text("No active sessions right now.")
-                                            .foregroundStyle(SwarmTheme.textMuted)
+                                        EmptyStateView(icon: "waveform.slash", title: "No active sessions right now.")
                                     }
                                 } else {
                                     PanelCard(padding: 0) {
@@ -82,6 +82,7 @@ struct DashboardView: View {
                 }
             }
             .navigationTitle("Dashboard")
+            .notificationsBell(notificationsViewModel)
         }
         .onAppear { viewModel.start() }
         .onDisappear { viewModel.stop() }
@@ -187,4 +188,5 @@ private struct QuickControlCard: View {
 #Preview {
     DashboardView()
         .environmentObject(AppState())
+        .environmentObject(NotificationsViewModel())
 }
