@@ -1,0 +1,23 @@
+{
+  "name": "SwarmPanel",
+  "identifier": "com.swarmpanel.altstore-source",
+  "sourceURL": "https://raw.githubusercontent.com/HeavenlyXenusVR/SwarmPanel/main/ios/altstore-source.json",
+  "news": [],
+  "apps": [
+    {
+      "name": "SwarmPanel",
+      "bundleIdentifier": "com.swarmpanel.ios",
+      "developerName": "HeavenlyXenusVR",
+      "subtitle": "Fleet command companion for the Discord music bot swarm",
+      "localizedDescription": "SwarmPanel is the iOS companion to the SwarmPanel web admin panel: live fleet dashboard, direct playback controls, guild leaderboards, notifications, and social features for the Discord music bot fleet.",
+      "iconURL": "",
+      "tintColor": "89B4FA",
+      "screenshotURLs": [],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {}
+      },
+      "versions": []
+    }
+  ]
+}

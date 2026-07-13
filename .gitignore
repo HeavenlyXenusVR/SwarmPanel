@@ -25,3 +25,10 @@ live-config.json
 *.backup.*
 scripts.bak*/
 backups/
+
+# iOS app (Xcode project is XcodeGen-generated, not committed — see ios/project.yml)
+ios/*.xcodeproj/
+ios/build/
+ios/ExportOptions.plist
+ios/.build/
+ios/DerivedData/
