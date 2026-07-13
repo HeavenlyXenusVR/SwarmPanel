@@ -2,10 +2,21 @@ import SwiftUI
 
 struct DiagnosticsView: View {
     @StateObject private var viewModel = DiagnosticsViewModel()
+    @StateObject private var chartViewModel = MetricsChartViewModel()
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 14) {
+                    SectionLabel(title: "24h Trends")
+                    PanelCard {
+                        MetricTrendChart(label: "Queued Tracks", points: chartViewModel.queuedPoints, anomalies: chartViewModel.queuedAnomalies)
+                        Divider().overlay(SwarmTheme.line)
+                        MetricTrendChart(label: "Active Bots", points: chartViewModel.activeBotsPoints, anomalies: chartViewModel.activeBotsAnomalies)
+                    }
+                }
+                .padding(.horizontal)
+
                 if viewModel.isLoading && viewModel.diagnosticsText.isEmpty {
                     ProgressView("Loading diagnostics...")
                         .frame(maxWidth: .infinity)
@@ -20,8 +31,14 @@ struct DiagnosticsView: View {
         }
         .background(SwarmTheme.background)
         .navigationTitle("Fleet Health")
-        .task { await viewModel.load() }
-        .refreshable { await viewModel.load() }
+        .task {
+            await viewModel.load()
+            await chartViewModel.load()
+        }
+        .refreshable {
+            await viewModel.load()
+            await chartViewModel.load()
+        }
     }
 }
 

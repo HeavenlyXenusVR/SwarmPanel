@@ -6,6 +6,25 @@ struct AuditLogView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
+                PanelCard {
+                    HStack {
+                        Image(systemName: "line.3.horizontal.decrease.circle").foregroundStyle(SwarmTheme.textMuted)
+                        TextField("Filter by exact action (e.g. truncate_table)", text: $viewModel.actionFilter)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .onSubmit { Task { await viewModel.load() } }
+                        if !viewModel.actionFilter.isEmpty {
+                            Button("Clear") {
+                                viewModel.actionFilter = ""
+                                Task { await viewModel.load() }
+                            }
+                            .font(.caption)
+                            .tint(SwarmTheme.accent)
+                        }
+                    }
+                }
+                .padding(.horizontal)
+
                 if let error = viewModel.errorMessage {
                     Text(error).foregroundStyle(SwarmTheme.danger).padding(.horizontal)
                 }

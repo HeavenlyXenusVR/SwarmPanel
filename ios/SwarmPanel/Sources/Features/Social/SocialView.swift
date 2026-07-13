@@ -82,6 +82,10 @@ struct SocialView: View {
                                 Text(request.name).foregroundStyle(SwarmTheme.textPrimary)
                                 Spacer()
                                 StatusPill(text: request.status?.capitalized ?? "Pending", tone: .soft)
+                                Button("Cancel") { Task { await viewModel.respondToRequest(request, action: "cancel") } }
+                                    .buttonStyle(.borderless)
+                                    .tint(SwarmTheme.danger)
+                                    .font(.caption)
                             }
                         }
                     } header: {
