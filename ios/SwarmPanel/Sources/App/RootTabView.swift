@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Authenticated shell. Dashboard is real; the remaining tabs are filled in
-/// by later build phases (Controls, Leaderboard, Social, Profile) — kept as
-/// simple placeholders here so the tab bar structure exists end-to-end now.
+/// Authenticated shell. Dashboard and Controls are real; the remaining tabs
+/// are filled in by later build phases (Leaderboard, Social, Profile) — kept
+/// as simple placeholders here so the tab bar structure exists end-to-end now.
 struct RootTabView: View {
     @EnvironmentObject private var appState: AppState
 
@@ -11,7 +11,7 @@ struct RootTabView: View {
             DashboardView()
                 .tabItem { Label("Dashboard", systemImage: "square.grid.2x2") }
 
-            ComingSoonView(title: "Controls", systemImage: "play.circle")
+            ControlsView()
                 .tabItem { Label("Controls", systemImage: "play.circle") }
 
             ComingSoonView(title: "Leaderboard", systemImage: "trophy")

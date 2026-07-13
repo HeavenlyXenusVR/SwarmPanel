@@ -1,0 +1,142 @@
+import SwiftUI
+
+struct ControlsView: View {
+    @EnvironmentObject private var appState: AppState
+    @StateObject private var viewModel = ControlsViewModel()
+    @State private var newQueueName = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let error = viewModel.errorMessage {
+                    Section { Text(error).foregroundStyle(.red) }
+                }
+                if let status = viewModel.statusMessage {
+                    Section { Text(status).foregroundStyle(.green) }
+                }
+
+                Section("Bot & Guild") {
+                    Picker("Bot", selection: $viewModel.selectedBotKey) {
+                        ForEach(viewModel.bots) { bot in
+                            Text(bot.label).tag(bot.id)
+                        }
+                    }
+                    TextField("Guild ID", text: $viewModel.guildId)
+                        .keyboardType(.numberPad)
+                }
+
+                Section("Action") {
+                    Picker("Action", selection: $viewModel.action) {
+                        ForEach(ControlAction.allCases) { action in
+                            Text(action.label).tag(action)
+                        }
+                    }
+                    if viewModel.action.needsSourceURL {
+                        TextField("Source URL or search", text: $viewModel.sourceURL)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                    }
+                    if viewModel.action.needsVoiceChannel {
+                        Picker("Voice Channel", selection: $viewModel.voiceChannelId) {
+                            Text("Select a channel").tag("")
+                            ForEach(viewModel.voiceChannels) { channel in
+                                Text(channel.name ?? channel.id).tag(channel.id)
+                            }
+                        }
+                    }
+                    if viewModel.action.needsLoopMode {
+                        Picker("Loop", selection: $viewModel.loopMode) {
+                            ForEach(loopModes, id: \.self) { mode in Text(mode.capitalized).tag(mode) }
+                        }
+                    }
+                    if viewModel.action.needsFilterMode {
+                        Picker("Filter", selection: $viewModel.filterMode) {
+                            ForEach(filterModes, id: \.self) { mode in Text(mode.capitalized).tag(mode) }
+                        }
+                    }
+                    Button {
+                        Task { await viewModel.sendAction() }
+                    } label: {
+                        HStack {
+                            Spacer()
+                            if viewModel.isSending { ProgressView() } else { Text("Send Control").bold() }
+                            Spacer()
+                        }
+                    }
+                    .disabled(viewModel.isSending || viewModel.selectedBotKey.isEmpty || viewModel.guildId.isEmpty)
+                }
+
+                if let session = viewModel.controlState {
+                    Section("Current Session") {
+                        Text(session.title?.isEmpty == false ? session.title! : "Nothing playing")
+                            .font(.subheadline)
+                        Text(session.sessionStateLabel ?? "Unknown")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        LabeledContent("Queue", value: "\(session.queueCount ?? 0)")
+                        LabeledContent("Backup", value: "\(session.backupQueueCount ?? 0)")
+                    }
+                }
+
+                Section {
+                    HStack {
+                        TextField("Name this queue", text: $newQueueName)
+                        Button("Save Current Queue") {
+                            Task {
+                                await viewModel.saveCurrentQueue(name: newQueueName)
+                                newQueueName = ""
+                            }
+                        }
+                        .disabled(viewModel.controlState?.queuePreview?.isEmpty ?? true)
+                    }
+                    if viewModel.savedQueues.isEmpty {
+                        Text("No saved queues yet.").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(viewModel.savedQueues) { queue in
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    Text(queue.name).font(.subheadline.bold())
+                                    Text("\(queue.itemCount) tracks").font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button("Load") { Task { await viewModel.loadSavedQueue(queue) } }
+                                    .disabled(viewModel.isSending)
+                                Button(role: .destructive) {
+                                    Task { await viewModel.deleteSavedQueue(queue) }
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Saved Queues")
+                }
+            }
+            .navigationTitle("Controls")
+            .task {
+                await viewModel.loadBots(defaultGuildId: appState.guildId)
+                await viewModel.loadInventory()
+                await viewModel.loadControlStateAndQueues()
+            }
+            // Old single-parameter onChange signature — deprecated but still
+            // available in iOS 17+, and required (not just preferred) for the
+            // iOS 16.0 deployment target used here (the zero-parameter overload
+            // is iOS 17+ only and would fail to build against iOS 16).
+            .onChange(of: viewModel.selectedBotKey) { _ in
+                Task {
+                    await viewModel.loadInventory()
+                    await viewModel.loadControlStateAndQueues()
+                }
+            }
+            .onChange(of: viewModel.guildId) { _ in
+                Task { await viewModel.loadControlStateAndQueues() }
+            }
+        }
+    }
+}
+
+#Preview {
+    ControlsView()
+        .environmentObject(AppState())
+}
