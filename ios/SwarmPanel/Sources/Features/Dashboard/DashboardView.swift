@@ -22,41 +22,62 @@ struct DashboardView: View {
             Group {
                 if viewModel.isLoading && viewModel.response == nil {
                     ProgressView("Loading fleet status...")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(SwarmTheme.background)
                 } else {
-                    List {
-                        if let error = viewModel.errorMessage {
-                            Section { Text(error).foregroundStyle(.red) }
-                        }
-
-                        Section("Fleet") {
-                            HStack {
-                                metric("Bots", "\(allBots.count)")
-                                Spacer()
-                                metric("Live", "\(allSessions.filter { $0.isPlaying == true }.count)")
-                                Spacer()
-                                metric("Queued", "\(allSessions.reduce(0) { $0 + ($1.queueCount ?? 0) })")
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 18) {
+                            if let error = viewModel.errorMessage {
+                                Text(error)
+                                    .foregroundStyle(SwarmTheme.danger)
+                                    .padding(.horizontal)
                             }
-                            .padding(.vertical, 4)
-                        }
 
-                        if let ownSession, let ownBotKey {
-                            Section("Your Guild") {
-                                QuickControlCard(session: ownSession, botKey: ownBotKey)
-                            }
-                        }
-
-                        Section("Live Sessions") {
-                            if allSessions.isEmpty {
-                                Text("No active sessions right now.")
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                ForEach(allSessions) { session in
-                                    SessionRow(session: session)
+                            VStack(alignment: .leading, spacing: 10) {
+                                SectionLabel(title: "Fleet")
+                                PanelCard {
+                                    HStack(spacing: 0) {
+                                        MetricTile(icon: "server.rack", label: "Bots", value: "\(allBots.count)")
+                                        MetricTile(icon: "dot.radiowaves.left.and.right", label: "Live", value: "\(allSessions.filter { $0.isPlaying == true }.count)")
+                                        MetricTile(icon: "music.note.list", label: "Queued", value: "\(allSessions.reduce(0) { $0 + ($1.queueCount ?? 0) })")
+                                    }
                                 }
                             }
+                            .padding(.horizontal)
+
+                            if let ownSession, let ownBotKey {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    SectionLabel(title: "Your Guild")
+                                    QuickControlCard(session: ownSession, botKey: ownBotKey)
+                                }
+                                .padding(.horizontal)
+                            }
+
+                            VStack(alignment: .leading, spacing: 10) {
+                                SectionLabel(title: "Live Sessions", count: allSessions.count)
+                                if allSessions.isEmpty {
+                                    PanelCard {
+                                        Text("No active sessions right now.")
+                                            .foregroundStyle(SwarmTheme.textMuted)
+                                    }
+                                } else {
+                                    PanelCard(padding: 0) {
+                                        VStack(spacing: 0) {
+                                            ForEach(Array(allSessions.enumerated()), id: \.element.id) { index, session in
+                                                if index > 0 {
+                                                    Divider().overlay(SwarmTheme.line)
+                                                }
+                                                SessionRow(session: session)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(.horizontal)
                         }
+                        .padding(.vertical)
                     }
-                    .listStyle(.insetGrouped)
+                    .background(SwarmTheme.background)
                     .refreshable { await viewModel.refresh() }
                 }
             }
@@ -65,38 +86,50 @@ struct DashboardView: View {
         .onAppear { viewModel.start() }
         .onDisappear { viewModel.stop() }
     }
-
-    private func metric(_ label: String, _ value: String) -> some View {
-        VStack(spacing: 2) {
-            Text(value).font(.title2.bold())
-            Text(label).font(.caption).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-    }
 }
 
 private struct SessionRow: View {
     let session: DashboardSession
 
+    private var tone: StatusTone {
+        if session.isPlaying == true && session.isPaused != true { return .live }
+        if session.isPlaying == true && session.isPaused == true { return .soft }
+        return .off
+    }
+
+    private var statusText: String {
+        if session.isPlaying == true && session.isPaused != true { return "Playing" }
+        if session.isPaused == true { return "Paused" }
+        return session.sessionStateLabel ?? "Idle"
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(session.title?.isEmpty == false ? session.title! : "No title")
-                .font(.headline)
-            Text(session.channelName ?? session.guildName ?? "Guild \(session.guildId ?? "?")")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack(spacing: 12) {
-                Label("\(session.queueCount ?? 0)", systemImage: "music.note.list")
-                Label("\(session.backupQueueCount ?? 0)", systemImage: "arrow.triangle.2.circlepath")
-                if session.isPlaying == true {
-                    Label("Live", systemImage: "dot.radiowaves.left.and.right")
-                        .foregroundStyle(.green)
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "music.note")
+                .font(.subheadline)
+                .foregroundStyle(SwarmTheme.accent)
+                .frame(width: 28, height: 28)
+                .background(SwarmTheme.accent.opacity(0.15), in: Circle())
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(session.title?.isEmpty == false ? session.title! : "No title")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(SwarmTheme.textPrimary)
+                Text(session.channelName ?? session.guildName ?? "Guild \(session.guildId ?? "?")")
+                    .font(.caption)
+                    .foregroundStyle(SwarmTheme.textMuted)
+                HStack(spacing: 12) {
+                    Label("\(session.queueCount ?? 0)", systemImage: "music.note.list")
+                    Label("\(session.backupQueueCount ?? 0)", systemImage: "arrow.triangle.2.circlepath")
                 }
+                .font(.caption2)
+                .foregroundStyle(SwarmTheme.textMuted)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+
+            Spacer()
+            StatusPill(text: statusText, tone: tone)
         }
-        .padding(.vertical, 4)
+        .padding(14)
     }
 }
 
@@ -110,27 +143,29 @@ private struct QuickControlCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        PanelCard {
             Text(session.title?.isEmpty == false ? session.title! : "Nothing playing right now.")
                 .font(.subheadline.bold())
-            HStack(spacing: 20) {
+                .foregroundStyle(SwarmTheme.textPrimary)
+            HStack(spacing: 16) {
                 Button {
                     Task { await send(isCurrentlyPlaying ? "PAUSE" : "RESUME") }
                 } label: {
                     Image(systemName: isCurrentlyPlaying ? "pause.fill" : "play.fill")
-                        .frame(width: 32, height: 32)
+                        .frame(width: 44, height: 44)
+                        .background(SwarmTheme.accent.opacity(0.15), in: Circle())
                 }
                 Button {
                     Task { await send("SKIP") }
                 } label: {
                     Image(systemName: "forward.fill")
-                        .frame(width: 32, height: 32)
+                        .frame(width: 44, height: 44)
+                        .background(SwarmTheme.panel2, in: Circle())
                 }
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.plain)
             .disabled(isBusy)
         }
-        .padding(.vertical, 4)
     }
 
     private func send(_ action: String) async {
@@ -143,7 +178,7 @@ private struct QuickControlCard: View {
                 body: BotControlRequest(botKey: botKey, guildId: guildId, action: action, payload: [:])
             )
         } catch {
-            // Best-effort — Phase 4's Controls screen surfaces errors properly;
+            // Best-effort — the Controls screen surfaces errors properly;
             // a failed quick-action here just leaves the button re-enabled.
         }
     }
