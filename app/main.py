@@ -24,6 +24,7 @@ from .routers import (
     lumisound,
     monitoring,
     pages,
+    queues,
     session,
     swarm_accounts,
     users,
@@ -188,5 +189,6 @@ app.include_router(websocket.router)
 app.include_router(monitoring.router)
 app.include_router(audit.router)
 app.include_router(alerts.router)
+app.include_router(queues.router)
 # Defensive: keep the catch-all ios-bridge proxy included last.
 app.include_router(ios_bridge.router)

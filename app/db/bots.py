@@ -460,6 +460,7 @@ class BotsMixin:
         settings: dict[str, Any] = {}
         queue_count = 0
         backup_queue_count = 0
+        queue_preview: list[dict[str, Any]] = []
         backup_queue_preview: list[dict[str, Any]] = []
         pending_direct_orders = 0
         latest_direct_order: dict[str, Any] | None = None
@@ -513,6 +514,18 @@ class BotsMixin:
                     (gid,),
                 ) or {}
             queue_count = int(row.get("queue_count") or 0)
+            try:
+                queue_preview = await self._fetchall(
+                    f"SELECT title, video_url, requester_id FROM `{schema}`.`{queue_table}` "
+                    f"WHERE guild_id = %s AND bot_name = %s ORDER BY id ASC LIMIT 25",
+                    (gid, bot.key),
+                )
+            except Exception:
+                queue_preview = await self._fetchall(
+                    f"SELECT title, video_url, requester_id FROM `{schema}`.`{queue_table}` "
+                    f"WHERE guild_id = %s ORDER BY id ASC LIMIT 25",
+                    (gid,),
+                )
 
         if table_exists["backup"]:
             try:
@@ -755,6 +768,7 @@ class BotsMixin:
                 "dj_only_mode": bool(settings.get("dj_only_mode")),
                 "stay_in_vc": bool(settings.get("stay_in_vc")),
                 "queue_count": queue_count,
+                "queue_preview": queue_preview,
                 "backup_queue_count": backup_queue_count,
                 "backup_queue_preview": backup_queue_preview,
                 "backup_restore_ready": backup_restore_ready,

@@ -23,6 +23,7 @@ from .gallery import GalleryMixin
 from .lumisound import LumisoundMixin
 from .metrics import MetricsMixin
 from .metrics_history import MetricsHistoryMixin
+from .queues import QueuesMixin
 from .social import SocialMixin
 
 
@@ -38,6 +39,7 @@ class PanelDatabase(
     AuditMixin,
     AlertsMixin,
     MetricsHistoryMixin,
+    QueuesMixin,
 ):
     pass
 

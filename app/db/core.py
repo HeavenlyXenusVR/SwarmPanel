@@ -232,6 +232,10 @@ class CoreMixin:
                     await self._ensure_metrics_history_schema(cur)
                 except Exception as exc:
                     logger.warning("Could not ensure swarm_metrics_history table: %s", exc)
+                try:
+                    await self._ensure_saved_queues_schema(cur)
+                except Exception as exc:
+                    logger.warning("Could not ensure swarm_saved_queues table: %s", exc)
 
     async def close(self) -> None:
         if self.pool:

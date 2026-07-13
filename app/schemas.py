@@ -266,6 +266,26 @@ class AlertRuleUpdateRequest(BaseModel):
     enabled: bool | None = None
 
 
+# --- Saved queues / playlists --------------------------------------------------
+
+
+class SavedQueueItem(BaseModel):
+    video_url: str
+    title: str | None = None
+    requester_id: str | int | None = None
+
+
+class SavedQueueCreateRequest(BaseModel):
+    guild_id: str | int
+    bot_key: str
+    name: str
+    items: list[SavedQueueItem]
+
+
+class SavedQueueDeleteRequest(BaseModel):
+    guild_id: str | int
+
+
 # --- Bot control ---------------------------------------------------------------
 
 

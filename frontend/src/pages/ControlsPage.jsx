@@ -1,13 +1,132 @@
 import { useCallback, useEffect, useState } from "react";
-import { RefreshCw, Send, WandSparkles } from "lucide-react";
+import { ListMusic, Play, Plus, RefreshCw, Send, Trash2, WandSparkles } from "lucide-react";
 import { apiFetch, cachedFetch, clearCache, query } from "../api.js";
 import { useLiveRefresh } from "../hooks/useLiveRefresh.js";
 import { useDashboardStream } from "../hooks/useDashboardStream.js";
 import { CONTROL_ACTIONS } from "../config.js";
 import { ChannelSelect, ControlState } from "../components/swarm.jsx";
-import { LoadingSection, Page, SectionHead } from "../components/ui.jsx";
+import { EmptyState, LoadingSection, Page, SectionHead } from "../components/ui.jsx";
 import { payloadForAction } from "../utils/control.js";
 import { uniqueBy } from "../utils/format.js";
+
+function SavedQueuesPanel({ ctx, botKey, guildId, voiceChannelId, currentQueue }) {
+  const [queues, setQueues] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [name, setName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [loadingQueueId, setLoadingQueueId] = useState(null);
+  const showToast = ctx.showToast;
+
+  const load = useCallback(async ({ background = false, force = false } = {}) => {
+    if (!botKey || !guildId) return;
+    if (!background) setLoading(true);
+    try {
+      const result = await apiFetch(`/api/queues${query({ guild_id: guildId, bot_key: botKey })}`, { force });
+      setQueues(result.queues || []);
+    } catch (error) {
+      if (!background) showToast(error.message, "error");
+    } finally {
+      if (!background) setLoading(false);
+    }
+  }, [botKey, guildId, showToast]);
+
+  useEffect(() => { load(); }, [load]);
+  useLiveRefresh(() => load({ background: true, force: true }), { enabled: Boolean(botKey && guildId), interval: 30_000 });
+
+  async function saveCurrentQueue(event) {
+    event.preventDefault();
+    if (!currentQueue.length) {
+      showToast("The live queue is empty — nothing to save.", "error");
+      return;
+    }
+    setSaving(true);
+    try {
+      await apiFetch("/api/queues", {
+        method: "POST",
+        body: JSON.stringify({ guild_id: guildId, bot_key: botKey, name: name || "Saved Queue", items: currentQueue }),
+      });
+      setName("");
+      showToast("Queue saved.", "success");
+      await load({ force: true });
+    } catch (error) {
+      showToast(error.message, "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function loadQueue(savedQueue) {
+    if (!voiceChannelId) {
+      showToast("Select a voice channel before loading a saved queue.", "error");
+      return;
+    }
+    setLoadingQueueId(savedQueue.id);
+    try {
+      for (const item of savedQueue.items || []) {
+        await apiFetch("/api/bots/control", {
+          method: "POST",
+          body: JSON.stringify({
+            bot_key: botKey,
+            guild_id: guildId,
+            action: "PLAY",
+            payload: { source_url: item.video_url, voice_channel_id: voiceChannelId },
+          }),
+        });
+      }
+      clearCache();
+      showToast(`Queued ${savedQueue.items?.length || 0} track(s) from "${savedQueue.name}".`, "success");
+    } catch (error) {
+      showToast(error.message, "error");
+    } finally {
+      setLoadingQueueId(null);
+    }
+  }
+
+  async function deleteQueue(savedQueue) {
+    try {
+      await apiFetch(`/api/queues/${savedQueue.id}/delete`, {
+        method: "POST",
+        body: JSON.stringify({ guild_id: guildId }),
+      });
+      showToast("Saved queue deleted.", "success");
+      await load({ force: true });
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  }
+
+  return (
+    <div className="panel">
+      <SectionHead title="Saved Queues" count={queues.length} />
+      <form className="toolbar" onSubmit={saveCurrentQueue}>
+        <input
+          placeholder="Name this queue"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+        />
+        <button className="primary" type="submit" disabled={saving}><Plus size={16} />Save Current Queue</button>
+      </form>
+      {loading ? null : queues.length ? (
+        <table className="data-table">
+          <tbody>
+            {queues.map((savedQueue) => (
+              <tr key={savedQueue.id}>
+                <td><ListMusic size={14} /> {savedQueue.name}</td>
+                <td className="table-mono">{savedQueue.items?.length || 0} tracks</td>
+                <td className="table-actions">
+                  <button type="button" disabled={loadingQueueId === savedQueue.id} onClick={() => loadQueue(savedQueue)}>
+                    <Play size={14} />{loadingQueueId === savedQueue.id ? "Loading" : "Load"}
+                  </button>
+                  <button type="button" className="danger" onClick={() => deleteQueue(savedQueue)}><Trash2 size={14} />Delete</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : <EmptyState title="No saved queues yet" compact />}
+    </div>
+  );
+}
 
 const DASHBOARD_CACHE_TTL = 4_000;
 const DASHBOARD_STALE_TTL = 10_000;
@@ -218,6 +337,15 @@ export default function ControlsPage({ ctx }) {
             <div className="mini-stack">{(matrix?.bots || []).map((bot) => <ControlState state={bot} compact key={bot.key} />)}</div>
           </aside>
         </LoadingSection>
+        {form.bot_key && form.guild_id ? (
+          <SavedQueuesPanel
+            ctx={ctx}
+            botKey={form.bot_key}
+            guildId={form.guild_id}
+            voiceChannelId={form.voice_channel_id}
+            currentQueue={controlState?.session?.queue_preview || []}
+          />
+        ) : null}
       </section>
     </Page>
   );
