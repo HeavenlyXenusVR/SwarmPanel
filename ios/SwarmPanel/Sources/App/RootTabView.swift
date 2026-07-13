@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// Authenticated shell. Dashboard, Controls, Leaderboard, and Notifications
-/// are real; the remaining tabs are filled in by later build phases (Social,
-/// Profile) — kept as simple placeholders here so the tab bar structure
-/// exists end-to-end. NotificationsViewModel is owned here (not inside
+/// Authenticated shell. Dashboard, Controls, Leaderboard, Notifications, and
+/// Social are real; Profile gets its real screen in the next build phase —
+/// kept as a simple placeholder here so the tab bar structure exists
+/// end-to-end. NotificationsViewModel is owned here (not inside
 /// NotificationsView) so its unread-count poll — mirroring the web bell's
 /// always-on polling in Shell.jsx — keeps running no matter which tab is
 /// selected, and can drive the tab badge.
@@ -26,7 +26,7 @@ struct RootTabView: View {
                 .tabItem { Label("Notifications", systemImage: "bell") }
                 .badge(notificationsViewModel.unreadCount)
 
-            ComingSoonView(title: "Social", systemImage: "person.2")
+            SocialView()
                 .tabItem { Label("Social", systemImage: "person.2") }
 
             ProfileTabPlaceholder()
@@ -34,27 +34,6 @@ struct RootTabView: View {
         }
         .onAppear { notificationsViewModel.startPolling() }
         .onDisappear { notificationsViewModel.stopPolling() }
-    }
-}
-
-private struct ComingSoonView: View {
-    let title: String
-    let systemImage: String
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 12) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 40))
-                    .foregroundStyle(.secondary)
-                Text("\(title) is coming in a later build phase.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-            }
-            .navigationTitle(title)
-        }
     }
 }
 
