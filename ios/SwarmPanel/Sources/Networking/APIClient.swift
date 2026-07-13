@@ -67,6 +67,35 @@ final class APIClient {
         try await request(method: "POST", path: path, query: [:], body: body)
     }
 
+    /// Raw (non-JSON) download — used for CSV export files, which aren't a
+    /// Decodable JSON body. Shares the same base URL + bearer-token attachment
+    /// and error-payload handling as the generic request(_:) path.
+    func downloadRaw(_ path: String) async throws -> Data {
+        guard let url = URL(string: path, relativeTo: baseURL) else { throw APIError.invalidResponse }
+        var urlRequest = URLRequest(url: url)
+        if let token {
+            urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: urlRequest)
+        } catch {
+            throw APIError.network(error)
+        }
+        guard let httpResponse = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            if httpResponse.statusCode == 401 {
+                onUnauthorized?()
+                throw APIError.unauthorized
+            }
+            let message = (try? decoder.decode(APIErrorPayload.self, from: data))?.detail?.message
+                ?? "Download failed (\(httpResponse.statusCode))."
+            throw APIError.server(statusCode: httpResponse.statusCode, message: message)
+        }
+        return data
+    }
+
     private func request<T: Decodable, B: Encodable>(
         method: String,
         path: String,

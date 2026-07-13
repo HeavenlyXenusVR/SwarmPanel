@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ProfileView: View {
     @EnvironmentObject private var appState: AppState
@@ -17,9 +18,18 @@ struct ProfileView: View {
                                 .font(.title3.bold())
                                 .foregroundStyle(SwarmTheme.textPrimary)
                             if let guildId = appState.guildId {
-                                Text("Guild \(guildId)")
+                                Button {
+                                    UIPasteboard.general.string = guildId
+                                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Text("Guild \(guildId)")
+                                        Image(systemName: "doc.on.doc")
+                                    }
                                     .font(.caption)
                                     .foregroundStyle(SwarmTheme.textMuted)
+                                }
+                                .buttonStyle(.plain)
                             }
                         }
                         Spacer()
@@ -99,6 +109,11 @@ struct ProfileView: View {
                         if appState.canGallery {
                             NavigationLink("Gallery Moderation") { GalleryModerationView() }
                         }
+                        if appState.isAdmin {
+                            NavigationLink("Accounts") { AccountsAdminView() }
+                            NavigationLink("Fleet Health") { DiagnosticsView() }
+                            NavigationLink("Scheduled Exports") { ExportsView() }
+                        }
                     } header: {
                         SectionLabel(title: "Admin Tools")
                     } footer: {
@@ -106,6 +121,13 @@ struct ProfileView: View {
                     }
                     .listRowBackground(SwarmTheme.panel)
                 }
+
+                Section {
+                    NavigationLink("Server") { ServerSettingsView() }
+                } header: {
+                    SectionLabel(title: "Advanced")
+                }
+                .listRowBackground(SwarmTheme.panel)
 
                 Section {
                     Button("Log Out", role: .destructive) { appState.logout() }
