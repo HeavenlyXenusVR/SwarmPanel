@@ -68,14 +68,48 @@ enum StatusTone {
 struct StatusPill: View {
     let text: String
     let tone: StatusTone
+    @State private var pulse = false
 
     var body: some View {
-        Text(text)
-            .font(.caption2.bold())
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(tone.color.opacity(0.18), in: Capsule())
-            .foregroundStyle(tone.color)
+        HStack(spacing: 5) {
+            if tone == .live {
+                Circle()
+                    .fill(tone.color)
+                    .frame(width: 5, height: 5)
+                    .opacity(pulse ? 0.35 : 1)
+                    .onAppear {
+                        withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                            pulse = true
+                        }
+                    }
+            }
+            Text(text)
+        }
+        .font(.caption2.bold())
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(tone.color.opacity(0.18), in: Capsule())
+        .foregroundStyle(tone.color)
+    }
+}
+
+/// Colored rounded-square icon badge, matching iOS Settings/Shortcuts'
+/// per-row icon chips — used to give list rows (Profile, Bot Detail stats)
+/// a scannable identity instead of a uniform muted-gray SF Symbol.
+struct IconChip: View {
+    let systemName: String
+    var tint: Color = SwarmTheme.accent
+    var diameter: CGFloat = 28
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: diameter * 0.3, style: .continuous)
+            .fill(tint.gradient)
+            .frame(width: diameter, height: diameter)
+            .overlay(
+                Image(systemName: systemName)
+                    .font(.system(size: diameter * 0.5, weight: .medium))
+                    .foregroundStyle(.white)
+            )
     }
 }
 
@@ -114,14 +148,15 @@ struct MetricTile: View {
     let icon: String
     let label: String
     let value: String
+    var tint: Color = SwarmTheme.accent
 
     var body: some View {
         VStack(spacing: 6) {
             Image(systemName: icon)
                 .font(.subheadline)
-                .foregroundStyle(SwarmTheme.accent)
+                .foregroundStyle(tint)
             Text(value)
-                .font(.title3.bold())
+                .font(.system(.title2, design: .rounded).bold())
                 .foregroundStyle(SwarmTheme.textPrimary)
             Text(label)
                 .font(.caption2)
@@ -148,6 +183,7 @@ struct PanelCard<Content: View>: View {
                 RoundedRectangle(cornerRadius: SwarmTheme.cardRadius, style: .continuous)
                     .stroke(SwarmTheme.line, lineWidth: 1)
             )
+            .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
     }
 }
 

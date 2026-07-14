@@ -125,17 +125,17 @@ struct ProfileView: View {
                 if appState.isAdmin || appState.isModerator || appState.canGallery {
                     Section {
                         if appState.isAdmin || appState.isModerator {
-                            NavigationLink("Audit Log") { AuditLogView() }
-                            NavigationLink("Alert Rules") { AlertRulesView() }
-                            NavigationLink("Lumisound Moderation") { LumisoundAdminView() }
+                            NavigationLink { AuditLogView() } label: { IconRow(icon: "list.bullet.clipboard", tint: .indigo, title: "Audit Log") }
+                            NavigationLink { AlertRulesView() } label: { IconRow(icon: "bell.badge", tint: .red, title: "Alert Rules") }
+                            NavigationLink { LumisoundAdminView() } label: { IconRow(icon: "waveform", tint: .pink, title: "Lumisound Moderation") }
                         }
                         if appState.canGallery {
-                            NavigationLink("Gallery Moderation") { GalleryModerationView() }
+                            NavigationLink { GalleryModerationView() } label: { IconRow(icon: "photo.on.rectangle", tint: .teal, title: "Gallery Moderation") }
                         }
                         if appState.isAdmin {
-                            NavigationLink("Accounts") { AccountsAdminView() }
-                            NavigationLink("Fleet Health") { DiagnosticsView() }
-                            NavigationLink("Scheduled Exports") { ExportsView() }
+                            NavigationLink { AccountsAdminView() } label: { IconRow(icon: "person.2.badge.gearshape", tint: .blue, title: "Accounts") }
+                            NavigationLink { DiagnosticsView() } label: { IconRow(icon: "heart.text.square", tint: .green, title: "Fleet Health") }
+                            NavigationLink { ExportsView() } label: { IconRow(icon: "square.and.arrow.down", tint: .orange, title: "Scheduled Exports") }
                         }
                     } header: {
                         SectionLabel(title: "Admin Tools")
@@ -146,8 +146,11 @@ struct ProfileView: View {
                 }
 
                 Section {
-                    Toggle("Require \(biometricLock.biometryLabel)", isOn: $biometricLock.isEnabled)
-                        .tint(SwarmTheme.accent)
+                    HStack {
+                        IconChip(systemName: "faceid", tint: .green)
+                        Toggle("Require \(biometricLock.biometryLabel)", isOn: $biometricLock.isEnabled)
+                    }
+                    .tint(SwarmTheme.accent)
                 } header: {
                     SectionLabel(title: "Privacy")
                 } footer: {
@@ -156,14 +159,14 @@ struct ProfileView: View {
                 .listRowBackground(SwarmTheme.panel)
 
                 Section {
-                    NavigationLink("Server") { ServerSettingsView() }
+                    NavigationLink { ServerSettingsView() } label: { IconRow(icon: "server.rack", tint: .gray, title: "Server") }
                 } header: {
                     SectionLabel(title: "Advanced")
                 }
                 .listRowBackground(SwarmTheme.panel)
 
                 Section {
-                    NavigationLink("What's New") { WhatsNewView() }
+                    NavigationLink { WhatsNewView() } label: { IconRow(icon: "sparkles", tint: .yellow, title: "What's New") }
                     LabeledContent("Version", value: appVersionString)
                 } header: {
                     SectionLabel(title: "About")
@@ -184,6 +187,22 @@ struct ProfileView: View {
                 await viewModel.load()
             }
             .notificationsBell(notificationsViewModel)
+        }
+    }
+}
+
+/// Icon-chip + title row, matching iOS Settings' colored-icon navigation
+/// rows — used for every NavigationLink destination on this screen so the
+/// list reads as a scannable menu instead of a plain text list.
+private struct IconRow: View {
+    let icon: String
+    let tint: Color
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            IconChip(systemName: icon, tint: tint)
+            Text(title).foregroundStyle(SwarmTheme.textPrimary)
         }
     }
 }

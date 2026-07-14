@@ -20,23 +20,23 @@ struct RootTabView: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             DashboardView()
-                .tabItem { Label("Dashboard", systemImage: "square.grid.2x2") }
+                .tabItem { Label("Dashboard", systemImage: selectedTab == .dashboard ? "square.grid.2x2.fill" : "square.grid.2x2") }
                 .tag(SwarmTab.dashboard)
 
             ControlsView()
-                .tabItem { Label("Controls", systemImage: "play.circle") }
+                .tabItem { Label("Controls", systemImage: selectedTab == .controls ? "play.circle.fill" : "play.circle") }
                 .tag(SwarmTab.controls)
 
             LeaderboardView()
-                .tabItem { Label("Leaderboard", systemImage: "trophy") }
+                .tabItem { Label("Leaderboard", systemImage: selectedTab == .leaderboard ? "trophy.fill" : "trophy") }
                 .tag(SwarmTab.leaderboard)
 
             SocialView()
-                .tabItem { Label("Social", systemImage: "person.2") }
+                .tabItem { Label("Social", systemImage: selectedTab == .social ? "person.2.fill" : "person.2") }
                 .tag(SwarmTab.social)
 
             ProfileView()
-                .tabItem { Label("Profile", systemImage: "person.crop.circle") }
+                .tabItem { Label("Profile", systemImage: selectedTab == .profile ? "person.crop.circle.fill" : "person.crop.circle") }
                 .tag(SwarmTab.profile)
         }
         .environmentObject(notificationsViewModel)

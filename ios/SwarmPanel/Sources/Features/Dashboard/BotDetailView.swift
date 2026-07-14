@@ -42,13 +42,14 @@ struct BotDetailView: View {
                     .padding(.horizontal)
 
                     PanelCard {
-                        LabeledContent("Queue", value: "\(session.queueCount ?? 0)")
-                        LabeledContent("Backup Queue", value: "\(session.backupQueueCount ?? 0)")
+                        StatRow(icon: "music.note.list", tint: .purple, label: "Queue", value: "\(session.queueCount ?? 0)")
+                        StatRow(icon: "arrow.triangle.2.circlepath", tint: .indigo, label: "Backup Queue", value: "\(session.backupQueueCount ?? 0)")
                         if let volume = session.volume {
-                            LabeledContent("Volume", value: "\(volume)%")
+                            StatRow(icon: "speaker.wave.2.fill", tint: .orange, label: "Volume", value: "\(volume)%")
                         }
                         Divider().overlay(SwarmTheme.line)
                         HStack {
+                            IconChip(systemName: "repeat", tint: .teal)
                             Text("Loop").foregroundStyle(SwarmTheme.textMuted)
                             Spacer()
                             Menu {
@@ -64,6 +65,7 @@ struct BotDetailView: View {
                             .disabled(viewModel.isSending)
                         }
                         HStack {
+                            IconChip(systemName: "slider.horizontal.3", tint: .pink)
                             Text("Filter").foregroundStyle(SwarmTheme.textMuted)
                             Spacer()
                             Menu {
@@ -80,8 +82,7 @@ struct BotDetailView: View {
                         }
                         if let pending = session.pendingDirectOrders, pending > 0 {
                             Divider().overlay(SwarmTheme.line)
-                            LabeledContent("Pending Orders", value: "\(pending)")
-                                .foregroundStyle(SwarmTheme.warn)
+                            StatRow(icon: "clock.badge.exclamationmark", tint: SwarmTheme.warn, label: "Pending Orders", value: "\(pending)")
                             if let command = session.latestDirectOrder?.command {
                                 Text("Waiting on the bot to pick up: \(command)")
                                     .font(.caption2)
@@ -200,6 +201,22 @@ struct BotDetailView: View {
             toastCenter.success("Queued")
         } else {
             Haptics.error()
+        }
+    }
+}
+
+private struct StatRow: View {
+    let icon: String
+    let tint: Color
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            IconChip(systemName: icon, tint: tint)
+            Text(label).foregroundStyle(SwarmTheme.textMuted)
+            Spacer()
+            Text(value).foregroundStyle(SwarmTheme.textPrimary)
         }
     }
 }

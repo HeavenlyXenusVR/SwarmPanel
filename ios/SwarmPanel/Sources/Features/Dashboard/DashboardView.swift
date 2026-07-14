@@ -77,9 +77,9 @@ struct DashboardView: View {
                                 }
                                 PanelCard {
                                     HStack(spacing: 0) {
-                                        MetricTile(icon: "server.rack", label: "Bots", value: "\(allBots.count)")
-                                        MetricTile(icon: "dot.radiowaves.left.and.right", label: "Live", value: "\(allSessions.filter { $0.isPlaying == true }.count)")
-                                        MetricTile(icon: "music.note.list", label: "Queued", value: "\(allSessions.reduce(0) { $0 + ($1.queueCount ?? 0) })")
+                                        MetricTile(icon: "server.rack", label: "Bots", value: "\(allBots.count)", tint: .blue)
+                                        MetricTile(icon: "dot.radiowaves.left.and.right", label: "Live", value: "\(allSessions.filter { $0.isPlaying == true }.count)", tint: SwarmTheme.ok)
+                                        MetricTile(icon: "music.note.list", label: "Queued", value: "\(allSessions.reduce(0) { $0 + ($1.queueCount ?? 0) })", tint: .purple)
                                     }
                                 }
                             }
