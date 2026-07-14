@@ -78,6 +78,16 @@ struct BotDetailView: View {
                             }
                             .disabled(viewModel.isSending)
                         }
+                        if let pending = session.pendingDirectOrders, pending > 0 {
+                            Divider().overlay(SwarmTheme.line)
+                            LabeledContent("Pending Orders", value: "\(pending)")
+                                .foregroundStyle(SwarmTheme.warn)
+                            if let command = session.latestDirectOrder?.command {
+                                Text("Waiting on the bot to pick up: \(command)")
+                                    .font(.caption2)
+                                    .foregroundStyle(SwarmTheme.textMuted)
+                            }
+                        }
                     }
                     .padding(.horizontal)
 

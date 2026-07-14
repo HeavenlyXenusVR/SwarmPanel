@@ -122,6 +122,15 @@ struct ControlsView: View {
                         if let filterMode = session.filterMode {
                             LabeledContent("Filter", value: filterMode.capitalized)
                         }
+                        if let pending = session.pendingDirectOrders, pending > 0 {
+                            LabeledContent("Pending Orders", value: "\(pending)")
+                                .foregroundStyle(SwarmTheme.warn)
+                            if let command = session.latestDirectOrder?.command {
+                                Text("Waiting on the bot to pick up: \(command)")
+                                    .font(.caption2)
+                                    .foregroundStyle(SwarmTheme.textMuted)
+                            }
+                        }
                     } header: {
                         SectionLabel(title: "Current Session")
                     }

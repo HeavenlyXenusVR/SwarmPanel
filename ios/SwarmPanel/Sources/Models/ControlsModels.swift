@@ -61,6 +61,12 @@ struct ControlStateSession: Decodable {
     let durationSeconds: Int?
     let positionObservedAt: String?
     let volume: Int?
+    /// Some control actions (LEAVE, SEEK, RECOVER, RESTART) are implemented
+    /// as a queued "direct order" the bot polls for rather than an instant
+    /// DB write — this surfaces whether one is still waiting to be picked
+    /// up, since otherwise "did my order actually go through?" is invisible.
+    let pendingDirectOrders: Int?
+    let latestDirectOrder: DirectOrder?
 
     /// The backend only precomputes a `thumbnail` field for /api/dashboard's
     /// session list (app/db/bots.py's _build_dashboard_payload) — control-state
@@ -87,6 +93,11 @@ struct ControlStateSession: Decodable {
         }
         return nil
     }
+}
+
+struct DirectOrder: Decodable {
+    let command: String?
+    let data: String?
 }
 
 struct QueueItem: Codable, Hashable {

@@ -72,8 +72,12 @@ final class ControlsViewModel: ObservableObject {
                 query: ["guild_id": guildId]
             )
             controlState = state.session
+            errorMessage = nil
         } catch {
             controlState = nil
+            if !error.isCancellation {
+                errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to load current session."
+            }
         }
         do {
             let queues: SavedQueuesResponse = try await api.get(
