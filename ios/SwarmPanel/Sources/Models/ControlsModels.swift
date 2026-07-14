@@ -45,6 +45,7 @@ struct ControlStateResponse: Decodable {
 
 struct ControlStateSession: Decodable {
     let title: String?
+    let videoUrl: String?
     let isPlaying: Bool?
     let isPaused: Bool?
     let sessionStateLabel: String?
@@ -55,6 +56,35 @@ struct ControlStateSession: Decodable {
     let channelId: String?
     let loopMode: String?
     let filterMode: String?
+    let positionSeconds: Int?
+    let durationSeconds: Int?
+    let positionObservedAt: String?
+
+    /// The backend only precomputes a `thumbnail` field for /api/dashboard's
+    /// session list (app/db/bots.py's _build_dashboard_payload) — control-state
+    /// doesn't, so YouTube thumbnails are derived client-side from the same
+    /// video ID pattern used server-side (app/db/helpers.py's
+    /// _derive_thumbnail_url). Non-YouTube sources just show a placeholder.
+    var derivedThumbnailURL: String? {
+        guard let videoUrl, let id = Self.youTubeVideoId(from: videoUrl) else { return nil }
+        return "https://i.ytimg.com/vi/\(id)/hqdefault.jpg"
+    }
+
+    private static func youTubeVideoId(from urlString: String) -> String? {
+        guard let components = URLComponents(string: urlString), let host = components.host?.lowercased() else { return nil }
+        guard host.contains("youtube.com") || host.contains("youtu.be") else { return nil }
+        if host.contains("youtu.be") {
+            return components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).components(separatedBy: "/").first
+        }
+        if let videoId = components.queryItems?.first(where: { $0.name == "v" })?.value {
+            return videoId
+        }
+        let pathParts = components.path.components(separatedBy: "/").filter { !$0.isEmpty }
+        if let index = pathParts.firstIndex(where: { ["embed", "shorts", "live"].contains($0) }), pathParts.count > index + 1 {
+            return pathParts[index + 1]
+        }
+        return nil
+    }
 }
 
 struct QueueItem: Codable, Hashable {

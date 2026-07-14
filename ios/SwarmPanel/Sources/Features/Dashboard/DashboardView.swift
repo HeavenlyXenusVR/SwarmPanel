@@ -73,7 +73,7 @@ struct DashboardView: View {
                             if let ownSession, let ownBotKey {
                                 VStack(alignment: .leading, spacing: 10) {
                                     SectionLabel(title: "Your Guild")
-                                    QuickControlCard(session: ownSession, botKey: ownBotKey)
+                                    NowPlayingQuickControl(session: ownSession, botKey: ownBotKey)
                                     if let topTrack = viewModel.topTrack {
                                         TopTrackTeaser(track: topTrack)
                                     }
@@ -213,11 +213,7 @@ private struct SessionRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "music.note")
-                .font(.subheadline)
-                .foregroundStyle(SwarmTheme.accent)
-                .frame(width: 28, height: 28)
-                .background(SwarmTheme.accent.opacity(0.15), in: Circle())
+            thumbnail
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(session.title?.isEmpty == false ? session.title! : "No title")
@@ -239,9 +235,36 @@ private struct SessionRow: View {
         }
         .padding(14)
     }
+
+    @ViewBuilder
+    private var thumbnail: some View {
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        if let thumbnail = session.thumbnail, let url = URL(string: thumbnail) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().aspectRatio(contentMode: .fill)
+                default:
+                    placeholderIcon
+                }
+            }
+            .frame(width: 28, height: 28)
+            .clipShape(shape)
+        } else {
+            placeholderIcon
+        }
+    }
+
+    private var placeholderIcon: some View {
+        Image(systemName: "music.note")
+            .font(.subheadline)
+            .foregroundStyle(SwarmTheme.accent)
+            .frame(width: 28, height: 28)
+            .background(SwarmTheme.accent.opacity(0.15), in: Circle())
+    }
 }
 
-private struct QuickControlCard: View {
+private struct NowPlayingQuickControl: View {
     let session: DashboardSession
     let botKey: String
     @State private var isBusy = false
@@ -251,29 +274,22 @@ private struct QuickControlCard: View {
     }
 
     var body: some View {
-        PanelCard {
-            Text(session.title?.isEmpty == false ? session.title! : "Nothing playing right now.")
-                .font(.subheadline.bold())
-                .foregroundStyle(SwarmTheme.textPrimary)
-            HStack(spacing: 16) {
-                Button {
-                    Task { await send(isCurrentlyPlaying ? "PAUSE" : "RESUME") }
-                } label: {
-                    Image(systemName: isCurrentlyPlaying ? "pause.fill" : "play.fill")
-                        .frame(width: 44, height: 44)
-                        .background(SwarmTheme.accent.opacity(0.15), in: Circle())
-                }
-                Button {
-                    Task { await send("SKIP") }
-                } label: {
-                    Image(systemName: "forward.fill")
-                        .frame(width: 44, height: 44)
-                        .background(SwarmTheme.panel2, in: Circle())
-                }
-            }
-            .buttonStyle(.plain)
-            .disabled(isBusy)
-        }
+        NowPlayingCard(
+            title: session.title ?? "",
+            subtitle: session.channelName ?? session.guildName,
+            thumbnailURL: session.thumbnail,
+            isPlaying: session.isPlaying ?? false,
+            isPaused: session.isPaused ?? false,
+            positionSeconds: session.positionSeconds ?? 0,
+            durationSeconds: session.durationSeconds ?? 0,
+            positionObservedAt: session.positionObservedAt,
+            mediaSourceLabel: session.mediaSourceLabel,
+            cached: session.cached,
+            isBusy: isBusy,
+            onPause: isCurrentlyPlaying ? { Task { await send("PAUSE") } } : nil,
+            onResume: !isCurrentlyPlaying ? { Task { await send("RESUME") } } : nil,
+            onSkip: { Task { await send("SKIP") } }
+        )
     }
 
     private func send(_ action: String) async {

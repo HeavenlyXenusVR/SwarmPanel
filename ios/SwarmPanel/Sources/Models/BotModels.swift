@@ -39,6 +39,10 @@ struct DashboardSession: Decodable, Identifiable {
     let backupQueueCount: Int?
     let positionSeconds: Int?
     let durationSeconds: Int?
+    let positionObservedAt: String?
+    let thumbnail: String?
+    let mediaSourceLabel: String?
+    let cached: Bool?
 
     var id: String { (guildId ?? "g") + ":" + (channelId ?? "c") }
 }

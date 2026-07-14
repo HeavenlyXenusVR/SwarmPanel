@@ -19,15 +19,19 @@ struct BotDetailView: View {
                     Text(error).foregroundStyle(SwarmTheme.danger).padding(.horizontal)
                 }
                 if let session = viewModel.session {
+                    NowPlayingCard(
+                        title: session.title ?? "",
+                        subtitle: session.sessionStateLabel,
+                        thumbnailURL: session.derivedThumbnailURL,
+                        isPlaying: session.isPlaying ?? false,
+                        isPaused: session.isPaused ?? false,
+                        positionSeconds: session.positionSeconds ?? 0,
+                        durationSeconds: session.durationSeconds ?? 0,
+                        positionObservedAt: session.positionObservedAt
+                    )
+                    .padding(.horizontal)
+
                     PanelCard {
-                        Text(session.title?.isEmpty == false ? session.title! : "Nothing playing")
-                            .font(.headline)
-                            .foregroundStyle(SwarmTheme.textPrimary)
-                        StatusPill(
-                            text: session.sessionStateLabel ?? "Unknown",
-                            tone: session.isPlaying == true && session.isPaused != true ? .live : .off
-                        )
-                        Divider().overlay(SwarmTheme.line)
                         LabeledContent("Queue", value: "\(session.queueCount ?? 0)")
                         LabeledContent("Backup Queue", value: "\(session.backupQueueCount ?? 0)")
                         if let loopMode = session.loopMode {
