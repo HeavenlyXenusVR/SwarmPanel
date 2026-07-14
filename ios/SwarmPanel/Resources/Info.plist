@@ -3,9 +3,78 @@
 <plist version="1.0">
 <dict>
     <!-- Explicit icon declarations so sideloading services (Sideloadly, AltStore)
-         preserve the app icon after re-signing. -->
+         preserve the app icon after re-signing. CFBundleIcons/~ipad are also
+         REQUIRED for UIApplication.supportsAlternateIcons / setAlternateIconName
+         to work — ASSETCATALOG_COMPILER_INCLUDE_ALL_APPS_IN_ASSET_CATALOG_COMPILATION
+         alone does not auto-register alternate icons from the asset catalog. -->
     <key>CFBundleIconName</key>
     <string>AppIcon</string>
+    <key>CFBundleIcons</key>
+    <dict>
+        <key>CFBundlePrimaryIcon</key>
+        <dict>
+            <key>CFBundleIconName</key>
+            <string>AppIcon</string>
+            <key>CFBundleIconFiles</key>
+            <array>
+                <string>AppIcon</string>
+            </array>
+        </dict>
+        <key>CFBundleAlternateIcons</key>
+        <dict>
+            <key>AppIcon-Light</key>
+            <dict>
+                <key>CFBundleIconName</key>
+                <string>AppIcon-Light</string>
+                <key>CFBundleIconFiles</key>
+                <array>
+                    <string>AppIcon-Light</string>
+                </array>
+            </dict>
+            <key>AppIcon-Neon</key>
+            <dict>
+                <key>CFBundleIconName</key>
+                <string>AppIcon-Neon</string>
+                <key>CFBundleIconFiles</key>
+                <array>
+                    <string>AppIcon-Neon</string>
+                </array>
+            </dict>
+        </dict>
+    </dict>
+    <key>CFBundleIcons~ipad</key>
+    <dict>
+        <key>CFBundlePrimaryIcon</key>
+        <dict>
+            <key>CFBundleIconName</key>
+            <string>AppIcon</string>
+            <key>CFBundleIconFiles</key>
+            <array>
+                <string>AppIcon</string>
+            </array>
+        </dict>
+        <key>CFBundleAlternateIcons</key>
+        <dict>
+            <key>AppIcon-Light</key>
+            <dict>
+                <key>CFBundleIconName</key>
+                <string>AppIcon-Light</string>
+                <key>CFBundleIconFiles</key>
+                <array>
+                    <string>AppIcon-Light</string>
+                </array>
+            </dict>
+            <key>AppIcon-Neon</key>
+            <dict>
+                <key>CFBundleIconName</key>
+                <string>AppIcon-Neon</string>
+                <key>CFBundleIconFiles</key>
+                <array>
+                    <string>AppIcon-Neon</string>
+                </array>
+            </dict>
+        </dict>
+    </dict>
 
     <!-- Bundle identity -->
     <key>CFBundleName</key>

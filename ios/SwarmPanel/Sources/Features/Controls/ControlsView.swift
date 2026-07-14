@@ -57,12 +57,20 @@ struct ControlsView: View {
                             .autocorrectionDisabled()
                     }
                     if viewModel.action.needsVoiceChannel {
-                        Picker("Voice Channel", selection: $viewModel.voiceChannelId) {
-                            Text("Select a channel").tag("")
-                            ForEach(viewModel.voiceChannels) { channel in
-                                Text(channel.name ?? channel.id).tag(channel.id)
+                        if !viewModel.voiceChannels.isEmpty {
+                            Picker("Voice Channel", selection: $viewModel.voiceChannelId) {
+                                Text("Select a channel").tag("")
+                                ForEach(viewModel.voiceChannels) { channel in
+                                    Text(channel.name ?? channel.id).tag(channel.id)
+                                }
                             }
                         }
+                        // Always available, not just a fallback for when the picker
+                        // above is empty — Discord's channel list can be incomplete
+                        // (bot in many guilds, API pagination, transient fetch
+                        // failures), so typing the ID directly is the reliable path.
+                        TextField("Voice Channel ID", text: $viewModel.voiceChannelId)
+                            .keyboardType(.numberPad)
                     }
                     if viewModel.action.needsLoopMode {
                         Picker("Loop", selection: $viewModel.loopMode) {
@@ -91,20 +99,29 @@ struct ControlsView: View {
 
                 if let session = viewModel.controlState {
                     Section {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(session.title?.isEmpty == false ? session.title! : "Nothing playing")
-                                    .font(.subheadline.bold())
-                                    .foregroundStyle(SwarmTheme.textPrimary)
-                            }
-                            Spacer()
-                            StatusPill(
-                                text: session.sessionStateLabel ?? "Unknown",
-                                tone: session.isPlaying == true && session.isPaused != true ? .live : .off
-                            )
-                        }
+                        NowPlayingCard(
+                            title: session.title ?? "",
+                            subtitle: session.sessionStateLabel,
+                            thumbnailURL: session.derivedThumbnailURL,
+                            isPlaying: session.isPlaying ?? false,
+                            isPaused: session.isPaused ?? false,
+                            positionSeconds: session.positionSeconds ?? 0,
+                            durationSeconds: session.durationSeconds ?? 0,
+                            positionObservedAt: session.positionObservedAt
+                        )
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
                         LabeledContent("Queue", value: "\(session.queueCount ?? 0)")
                         LabeledContent("Backup", value: "\(session.backupQueueCount ?? 0)")
+                        if let volume = session.volume {
+                            LabeledContent("Volume", value: "\(volume)%")
+                        }
+                        if let loopMode = session.loopMode {
+                            LabeledContent("Loop", value: loopMode.capitalized)
+                        }
+                        if let filterMode = session.filterMode {
+                            LabeledContent("Filter", value: filterMode.capitalized)
+                        }
                     } header: {
                         SectionLabel(title: "Current Session")
                     }

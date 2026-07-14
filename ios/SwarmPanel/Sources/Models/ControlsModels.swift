@@ -25,6 +25,7 @@ struct InventoryGuild: Decodable, Identifiable, Hashable {
     let id: String
     let name: String?
     let channels: [InventoryChannel]?
+    let channelsError: String?
 }
 
 struct InventoryChannel: Decodable, Identifiable, Hashable {

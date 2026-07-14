@@ -47,8 +47,20 @@ final class ControlsViewModel: ObservableObject {
         do {
             let response: BotInventoryResponse = try await api.get("/api/bots/\(selectedBotKey)/inventory")
             guilds = response.guilds ?? []
+            // A guild with no channels listed (Discord fetch failed or this
+            // bot's account is in enough guilds that ours fell outside the
+            // Discord API's page) isn't a "channels are empty" state — it's
+            // "we couldn't confirm channels," so the picker's fallback text
+            // field (bound to the same voiceChannelId) stays the only way in.
+            if let matched = guilds.first(where: { $0.id == guildId }), let channelsError = matched.channelsError {
+                errorMessage = "Couldn't load channels: \(channelsError). Enter the voice channel ID manually below."
+            } else if !guildId.isEmpty, !guilds.contains(where: { $0.id == guildId }) {
+                errorMessage = "Couldn't confirm this bot's channel list for this guild — enter the voice channel ID manually below."
+            }
         } catch {
+            guard !error.isCancellation else { return }
             guilds = []
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to load bot inventory."
         }
     }
 
