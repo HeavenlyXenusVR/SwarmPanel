@@ -173,7 +173,10 @@ struct SocialView: View {
             .background(SwarmTheme.background)
             .navigationTitle("Social")
             .task { await viewModel.loadAll() }
-            .refreshable { await viewModel.loadAll() }
+            .refreshable {
+                Haptics.light()
+                await viewModel.loadAll()
+            }
             .notificationsBell(notificationsViewModel)
         }
     }

@@ -30,6 +30,23 @@
     <key>LSRequiresIPhoneOS</key>
     <true/>
 
+    <!-- swarmpanel://dashboard | controls | leaderboard | social | profile
+         deep links, handled by DeepLinkRouter via .onOpenURL. -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.swarmpanel.ios</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>swarmpanel</string>
+            </array>
+        </dict>
+    </array>
+
+    <key>NSFaceIDUsageDescription</key>
+    <string>Used to unlock SwarmPanel when app lock is enabled in Profile settings.</string>
+
     <key>UILaunchScreen</key>
     <dict/>
 

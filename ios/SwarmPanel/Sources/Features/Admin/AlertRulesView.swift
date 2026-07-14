@@ -61,7 +61,10 @@ struct AlertRulesView: View {
         .background(SwarmTheme.background)
         .navigationTitle("Alert Rules")
         .task { await viewModel.load() }
-        .refreshable { await viewModel.load() }
+        .refreshable {
+            Haptics.light()
+            await viewModel.load()
+        }
     }
 }
 

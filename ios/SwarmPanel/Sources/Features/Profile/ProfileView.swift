@@ -5,6 +5,7 @@ struct ProfileView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var appearance: AppearanceSettings
     @EnvironmentObject private var notificationsViewModel: NotificationsViewModel
+    @EnvironmentObject private var biometricLock: BiometricLock
     @StateObject private var viewModel = ProfileViewModel()
     @State private var selectedIcon = AppIconOption.current
 
@@ -139,6 +140,16 @@ struct ProfileView: View {
                 }
 
                 Section {
+                    Toggle("Require \(biometricLock.biometryLabel)", isOn: $biometricLock.isEnabled)
+                        .tint(SwarmTheme.accent)
+                } header: {
+                    SectionLabel(title: "Privacy")
+                } footer: {
+                    Text("Locks SwarmPanel behind \(biometricLock.biometryLabel) whenever it returns from the background.")
+                }
+                .listRowBackground(SwarmTheme.panel)
+
+                Section {
                     NavigationLink("Server") { ServerSettingsView() }
                 } header: {
                     SectionLabel(title: "Advanced")
@@ -154,7 +165,10 @@ struct ProfileView: View {
             .background(SwarmTheme.background)
             .navigationTitle("Profile")
             .task { await viewModel.load() }
-            .refreshable { await viewModel.load() }
+            .refreshable {
+                Haptics.light()
+                await viewModel.load()
+            }
             .notificationsBell(notificationsViewModel)
         }
     }
@@ -165,4 +179,5 @@ struct ProfileView: View {
         .environmentObject(AppState())
         .environmentObject(AppearanceSettings())
         .environmentObject(NotificationsViewModel())
+        .environmentObject(BiometricLock())
 }

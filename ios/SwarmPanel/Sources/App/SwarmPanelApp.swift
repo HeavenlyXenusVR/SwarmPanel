@@ -4,8 +4,12 @@ import UserNotifications
 
 @main
 struct SwarmPanelApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var appState = AppState()
     @StateObject private var appearance = AppearanceSettings()
+    @StateObject private var router = DeepLinkRouter()
+    @StateObject private var biometricLock = BiometricLock()
 
     init() {
         Self.configureGlobalChrome()
@@ -37,14 +41,28 @@ struct SwarmPanelApp: App {
             ContentView()
                 .environmentObject(appState)
                 .environmentObject(appearance)
+                .environmentObject(router)
+                .environmentObject(biometricLock)
                 .tint(appearance.accentColor)
                 .preferredColorScheme(appearance.colorScheme)
+                .overlay(BiometricLockOverlay(lock: biometricLock))
                 .task { await appState.bootstrap() }
                 .task {
                     // Badge-only authorization (no alerts/sounds) so the app
                     // icon can reflect unread notification count — declining
                     // this just means the badge silently never appears.
                     try? await UNUserNotificationCenter.current().requestAuthorization(options: [.badge])
+                }
+                .onAppear {
+                    appDelegate.router = router
+                    if let type = appDelegate.pendingShortcutType {
+                        router.handleShortcut(identifier: type)
+                        appDelegate.pendingShortcutType = nil
+                    }
+                }
+                .onOpenURL { url in router.handleURL(url) }
+                .onChange(of: scenePhase) { newPhase in
+                    if newPhase == .background { biometricLock.lock() }
                 }
         }
     }

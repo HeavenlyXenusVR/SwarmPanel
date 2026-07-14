@@ -160,7 +160,10 @@ struct ControlsView: View {
             .onChange(of: viewModel.guildId) { _ in
                 Task { await viewModel.loadControlStateAndQueues() }
             }
-            .refreshable { await viewModel.loadControlStateAndQueues() }
+            .refreshable {
+                Haptics.light()
+                await viewModel.loadControlStateAndQueues()
+            }
             .notificationsBell(notificationsViewModel)
         }
     }

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Drill-down from a Dashboard session row into that bot+guild's full
 /// control-state — same endpoint the Controls screen uses, just presented
@@ -8,6 +9,8 @@ struct BotDetailView: View {
     let botDisplayName: String
     let guildId: String
     @StateObject private var viewModel = BotDetailViewModel()
+    @EnvironmentObject private var toastCenter: ToastCenter
+    @EnvironmentObject private var recentBots: RecentBotsStore
 
     var body: some View {
         ScrollView {
@@ -48,6 +51,27 @@ struct BotDetailView: View {
                                             .foregroundStyle(SwarmTheme.textPrimary)
                                             .lineLimit(1)
                                             .padding(12)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .contentShape(Rectangle())
+                                            .onTapGesture {
+                                                guard let url = URL(string: item.videoUrl) else { return }
+                                                UIApplication.shared.open(url)
+                                            }
+                                            .contextMenu {
+                                                Button {
+                                                    UIPasteboard.general.string = item.videoUrl
+                                                    Haptics.success()
+                                                    toastCenter.success("Link copied")
+                                                } label: {
+                                                    Label("Copy Link", systemImage: "doc.on.doc")
+                                                }
+                                                Button {
+                                                    guard let url = URL(string: item.videoUrl) else { return }
+                                                    UIApplication.shared.open(url)
+                                                } label: {
+                                                    Label("Open in Safari", systemImage: "safari")
+                                                }
+                                            }
                                     }
                                 }
                             }
@@ -63,7 +87,13 @@ struct BotDetailView: View {
         .background(SwarmTheme.background)
         .navigationTitle(botDisplayName)
         .navigationBarTitleDisplayMode(.inline)
-        .task { await viewModel.load(botKey: botKey, guildId: guildId) }
-        .refreshable { await viewModel.load(botKey: botKey, guildId: guildId) }
+        .task {
+            await viewModel.load(botKey: botKey, guildId: guildId)
+            recentBots.record(botKey: botKey, guildId: guildId, displayName: botDisplayName)
+        }
+        .refreshable {
+            Haptics.light()
+            await viewModel.load(botKey: botKey, guildId: guildId)
+        }
     }
 }

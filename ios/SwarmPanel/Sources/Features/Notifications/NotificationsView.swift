@@ -1,8 +1,19 @@
 import SwiftUI
+import UIKit
 
 struct NotificationsView: View {
     @ObservedObject var viewModel: NotificationsViewModel
+    @EnvironmentObject private var toastCenter: ToastCenter
     @Environment(\.dismiss) private var dismiss
+    @State private var searchQuery = ""
+
+    private var filteredNotifications: [PanelNotification] {
+        guard !searchQuery.isEmpty else { return viewModel.notifications }
+        let needle = searchQuery.lowercased()
+        return viewModel.notifications.filter {
+            $0.title.lowercased().contains(needle) || ($0.body ?? "").lowercased().contains(needle)
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -20,9 +31,14 @@ struct NotificationsView: View {
                         EmptyStateView(icon: "checkmark.circle", title: "You're all caught up.")
                     }
                     .listRowBackground(SwarmTheme.panel)
+                } else if filteredNotifications.isEmpty {
+                    Section {
+                        EmptyStateView(icon: "magnifyingglass", title: "No notifications match \"\(searchQuery)\".")
+                    }
+                    .listRowBackground(SwarmTheme.panel)
                 } else {
                     Section {
-                        ForEach(viewModel.notifications) { notification in
+                        ForEach(filteredNotifications) { notification in
                             Button {
                                 Task { await viewModel.markRead(notification) }
                             } label: {
@@ -39,6 +55,15 @@ struct NotificationsView: View {
                                     .tint(SwarmTheme.accent)
                                 }
                             }
+                            .contextMenu {
+                                Button {
+                                    UIPasteboard.general.string = [notification.title, notification.body].compactMap { $0 }.joined(separator: "\n")
+                                    Haptics.success()
+                                    toastCenter.success("Copied")
+                                } label: {
+                                    Label("Copy", systemImage: "doc.on.doc")
+                                }
+                            }
                         }
                     }
                     .listRowBackground(SwarmTheme.panel)
@@ -47,6 +72,7 @@ struct NotificationsView: View {
             .scrollContentBackground(.hidden)
             .background(SwarmTheme.background)
             .navigationTitle("Notifications")
+            .searchable(text: $searchQuery, prompt: "Search notifications")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Done") { dismiss() }
@@ -58,7 +84,10 @@ struct NotificationsView: View {
                 }
             }
             .task { await viewModel.loadNotifications() }
-            .refreshable { await viewModel.loadNotifications() }
+            .refreshable {
+                Haptics.light()
+                await viewModel.loadNotifications()
+            }
         }
     }
 }
@@ -106,4 +135,5 @@ private struct NotificationRow: View {
 
 #Preview {
     NotificationsView(viewModel: NotificationsViewModel())
+        .environmentObject(ToastCenter())
 }

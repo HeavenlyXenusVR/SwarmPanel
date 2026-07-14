@@ -34,14 +34,36 @@ struct DiagnosticsView: View {
         }
         .background(SwarmTheme.background)
         .navigationTitle("Fleet Health")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                ShareLink(item: combinedReportText) {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .disabled(viewModel.diagnosticsText.isEmpty)
+            }
+        }
         .task {
             await viewModel.load()
             await chartViewModel.load()
         }
         .refreshable {
+            Haptics.light()
             await viewModel.load()
             await chartViewModel.load()
         }
+    }
+
+    private var combinedReportText: String {
+        """
+        System Diagnostics
+        \(viewModel.diagnosticsText)
+
+        Metrics
+        \(viewModel.metricsText)
+
+        Stability
+        \(viewModel.stabilityText)
+        """
     }
 }
 

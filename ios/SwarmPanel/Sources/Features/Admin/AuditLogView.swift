@@ -50,7 +50,10 @@ struct AuditLogView: View {
         .background(SwarmTheme.background)
         .navigationTitle("Audit Log")
         .task { await viewModel.load() }
-        .refreshable { await viewModel.load() }
+        .refreshable {
+            Haptics.light()
+            await viewModel.load()
+        }
     }
 }
 

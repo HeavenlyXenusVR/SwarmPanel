@@ -55,7 +55,10 @@ struct GalleryModerationView: View {
         .background(SwarmTheme.background)
         .navigationTitle("Gallery Moderation")
         .task { await viewModel.load() }
-        .refreshable { await viewModel.load() }
+        .refreshable {
+            Haptics.light()
+            await viewModel.load()
+        }
     }
 }
 

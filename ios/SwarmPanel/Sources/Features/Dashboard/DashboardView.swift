@@ -3,7 +3,9 @@ import SwiftUI
 struct DashboardView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var notificationsViewModel: NotificationsViewModel
+    @EnvironmentObject private var toastCenter: ToastCenter
     @StateObject private var viewModel = DashboardViewModel()
+    @StateObject private var recentBots = RecentBotsStore()
 
     private var allBots: [DashboardBot] { viewModel.response?.bots ?? [] }
     private var allSessions: [DashboardSession] {
@@ -82,6 +84,30 @@ struct DashboardView: View {
                                 }
                             }
 
+                            if !recentBots.visits.isEmpty {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    SectionLabel(title: "Recently Viewed")
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        HStack(spacing: 10) {
+                                            ForEach(recentBots.visits) { visit in
+                                                NavigationLink {
+                                                    BotDetailView(botKey: visit.botKey, botDisplayName: visit.displayName, guildId: visit.guildId)
+                                                } label: {
+                                                    Text(visit.displayName)
+                                                        .font(.caption.bold())
+                                                        .foregroundStyle(SwarmTheme.textPrimary)
+                                                        .padding(.horizontal, 12)
+                                                        .padding(.vertical, 8)
+                                                        .background(SwarmTheme.panel, in: Capsule())
+                                                        .overlay(Capsule().stroke(SwarmTheme.line, lineWidth: 1))
+                                                }
+                                            }
+                                        }
+                                        .padding(.horizontal)
+                                    }
+                                }
+                            }
+
                             VStack(alignment: .leading, spacing: 10) {
                                 SectionLabel(title: "Live Sessions", count: allSessions.count)
                                 if allSessions.isEmpty {
@@ -106,6 +132,9 @@ struct DashboardView: View {
                                                         SessionRow(session: session)
                                                     }
                                                     .buttonStyle(.plain)
+                                                    .contextMenu {
+                                                        sessionQuickActions(bot: bot, session: session)
+                                                    }
                                                 } else {
                                                     SessionRow(session: session)
                                                 }
@@ -119,14 +148,51 @@ struct DashboardView: View {
                         .padding(.vertical)
                     }
                     .background(SwarmTheme.background)
-                    .refreshable { await viewModel.refresh() }
+                    .refreshable {
+                        Haptics.light()
+                        await viewModel.refresh()
+                    }
                 }
             }
             .navigationTitle("Dashboard")
             .notificationsBell(notificationsViewModel)
+            .environmentObject(recentBots)
         }
         .onAppear { viewModel.start() }
         .onDisappear { viewModel.stop() }
+    }
+
+    @ViewBuilder
+    private func sessionQuickActions(bot: DashboardBot, session: DashboardSession) -> some View {
+        let isPlaying = session.isPlaying == true && session.isPaused != true
+        Button {
+            Task { await sendQuickAction(isPlaying ? "PAUSE" : "RESUME", bot: bot, session: session) }
+        } label: {
+            Label(isPlaying ? "Pause" : "Resume", systemImage: isPlaying ? "pause.fill" : "play.fill")
+        }
+        Button {
+            Task { await sendQuickAction("SKIP", bot: bot, session: session) }
+        } label: {
+            Label("Skip", systemImage: "forward.fill")
+        }
+    }
+
+    private func sendQuickAction(_ action: String, bot: DashboardBot, session: DashboardSession) async {
+        guard let guildId = session.guildId else { return }
+        do {
+            let _: OKResponse = try await APIClient.shared.post(
+                "/api/bots/control",
+                body: BotControlRequest(botKey: bot.key, guildId: guildId, action: action, payload: [:])
+            )
+            Haptics.success()
+            toastCenter.success("Sent \(action.capitalized)")
+            await viewModel.refresh()
+        } catch {
+            if !error.isCancellation {
+                Haptics.error()
+                toastCenter.failure("Action failed")
+            }
+        }
     }
 }
 
@@ -261,6 +327,11 @@ private struct TopTrackTeaser: View {
             }
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            ShareLink(item: "🏆 Top track: \(track.title?.isEmpty == false ? track.title! : "Unknown title") — \(track.playCount ?? 0) plays") {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+        }
     }
 }
 
@@ -268,4 +339,5 @@ private struct TopTrackTeaser: View {
     DashboardView()
         .environmentObject(AppState())
         .environmentObject(NotificationsViewModel())
+        .environmentObject(ToastCenter())
 }

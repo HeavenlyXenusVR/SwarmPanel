@@ -82,7 +82,10 @@ struct LumisoundAdminView: View {
         .background(SwarmTheme.background)
         .navigationTitle("Lumisound")
         .task { await viewModel.load() }
-        .refreshable { await viewModel.load() }
+        .refreshable {
+            Haptics.light()
+            await viewModel.load()
+        }
     }
 }
 

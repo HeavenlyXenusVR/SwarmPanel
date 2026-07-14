@@ -66,7 +66,10 @@ struct ExportsView: View {
         .background(SwarmTheme.background)
         .navigationTitle("Scheduled Exports")
         .task { await viewModel.load() }
-        .refreshable { await viewModel.load() }
+        .refreshable {
+            Haptics.light()
+            await viewModel.load()
+        }
         .sheet(item: $shareURL) { item in
             ActivityShareSheet(activityItems: [item.url])
         }

@@ -57,7 +57,10 @@ struct AccountsAdminView: View {
         .background(SwarmTheme.background)
         .navigationTitle("Accounts")
         .task { await viewModel.load() }
-        .refreshable { await viewModel.load() }
+        .refreshable {
+            Haptics.light()
+            await viewModel.load()
+        }
         .alert("Reset Password", isPresented: Binding(get: { resetPasswordTarget != nil }, set: { if !$0 { resetPasswordTarget = nil } })) {
             SecureField("New password", text: $newPassword)
             Button("Cancel", role: .cancel) { resetPasswordTarget = nil }
