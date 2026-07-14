@@ -67,6 +67,13 @@ struct NowPlayingCard: View {
         return min(max(extrapolated, 0), durationSeconds)
     }
 
+    private func currentElapsed(at date: Date) -> Int {
+        if let dragFraction {
+            return Int(dragFraction * CGFloat(max(durationSeconds, 1)))
+        }
+        return elapsedSeconds(at: date)
+    }
+
     var body: some View {
         PanelCard {
             HStack(alignment: .top, spacing: 12) {
@@ -99,42 +106,53 @@ struct NowPlayingCard: View {
             }
 
             if durationSeconds > 0 || positionSeconds > 0 {
-                TimelineView(.periodic(from: .now, by: 1)) { timeline in
-                    let elapsed = dragFraction.map { Int($0 * CGFloat(max(durationSeconds, 1))) } ?? elapsedSeconds(at: timeline.date)
-                    VStack(alignment: .leading, spacing: 4) {
-                        GeometryReader { geo in
-                            ZStack(alignment: .leading) {
-                                Capsule().fill(SwarmTheme.panel2).frame(height: 6)
+                VStack(alignment: .leading, spacing: 4) {
+                    // The gesture-bearing GeometryReader is created ONCE, not
+                    // re-evaluated every tick — only the fill width and labels
+                    // update live via their own small TimelineViews. Rebuilding
+                    // a view that owns an active gesture recognizer every
+                    // second (the previous approach) risked the drag gesture
+                    // getting torn down mid-touch.
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(SwarmTheme.panel2).frame(height: 6)
+                            TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                                let elapsed = currentElapsed(at: timeline.date)
                                 let fraction = durationSeconds > 0 ? CGFloat(elapsed) / CGFloat(durationSeconds) : 0
                                 Capsule()
                                     .fill(SwarmTheme.accent)
                                     .frame(width: max(0, min(1, fraction)) * geo.size.width, height: 6)
                             }
-                            .frame(maxHeight: .infinity, alignment: .center)
-                            .contentShape(Rectangle())
-                            .gesture(
-                                DragGesture(minimumDistance: 0)
-                                    .onChanged { value in
-                                        guard canSeek else { return }
-                                        dragFraction = max(0, min(1, value.location.x / max(geo.size.width, 1)))
-                                    }
-                                    .onEnded { value in
-                                        guard canSeek else { return }
-                                        let fraction = max(0, min(1, value.location.x / max(geo.size.width, 1)))
-                                        onSeek?(Int(fraction * CGFloat(durationSeconds)))
-                                        dragFraction = nil
-                                    }
-                            )
                         }
-                        .frame(height: 20)
-                        HStack {
-                            Text(formatDuration(elapsed))
-                            Spacer()
-                            Text(durationSeconds > 0 ? formatDuration(durationSeconds) : "—")
-                        }
-                        .font(.caption2)
-                        .foregroundStyle(SwarmTheme.textMuted)
+                        .frame(maxHeight: .infinity, alignment: .center)
+                        .contentShape(Rectangle())
+                        .gesture(
+                            // minimumDistance > 0 so a simple tap (e.g. from a
+                            // parent NavigationLink/context menu) never gets
+                            // misread as a scrub-to-zero seek.
+                            DragGesture(minimumDistance: 8)
+                                .onChanged { value in
+                                    guard canSeek else { return }
+                                    dragFraction = max(0, min(1, value.location.x / max(geo.size.width, 1)))
+                                }
+                                .onEnded { value in
+                                    guard canSeek else { return }
+                                    let fraction = max(0, min(1, value.location.x / max(geo.size.width, 1)))
+                                    onSeek?(Int(fraction * CGFloat(durationSeconds)))
+                                    dragFraction = nil
+                                }
+                        )
                     }
+                    .frame(height: 20)
+                    HStack {
+                        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                            Text(formatDuration(currentElapsed(at: timeline.date)))
+                        }
+                        Spacer()
+                        Text(durationSeconds > 0 ? formatDuration(durationSeconds) : "—")
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(SwarmTheme.textMuted)
                 }
             }
 
