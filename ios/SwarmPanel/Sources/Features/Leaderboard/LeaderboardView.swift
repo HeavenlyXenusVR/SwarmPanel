@@ -47,7 +47,7 @@ struct LeaderboardView: View {
                     .padding(.horizontal)
 
                     if let error = viewModel.errorMessage {
-                        Text(error).foregroundStyle(SwarmTheme.danger).padding(.horizontal)
+                        ErrorBanner(message: error).padding(.horizontal)
                     }
 
                     VStack(alignment: .leading, spacing: 10) {

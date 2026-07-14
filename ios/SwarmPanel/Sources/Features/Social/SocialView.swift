@@ -3,12 +3,14 @@ import SwiftUI
 struct SocialView: View {
     @EnvironmentObject private var notificationsViewModel: NotificationsViewModel
     @StateObject private var viewModel = SocialViewModel()
+    @FocusState private var isSearchFocused: Bool
 
     var body: some View {
         NavigationStack {
+            ScrollViewReader { proxy in
             List {
                 if let error = viewModel.errorMessage {
-                    Section { Text(error).foregroundStyle(SwarmTheme.danger) }
+                    Section { ErrorBanner(message: error) }
                         .listRowBackground(SwarmTheme.panel)
                 }
 
@@ -17,6 +19,7 @@ struct SocialView: View {
                         TextField("Search username or display name", text: $viewModel.searchQuery)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
+                            .focused($isSearchFocused)
                             .onSubmit { Task { await viewModel.search() } }
                         Button("Search") { Task { await viewModel.search() } }
                             .tint(SwarmTheme.accent)
@@ -53,6 +56,7 @@ struct SocialView: View {
                     SectionLabel(title: "Find People")
                 }
                 .listRowBackground(SwarmTheme.panel)
+                .id("findPeople")
 
                 if !viewModel.incomingRequests.isEmpty {
                     Section {
@@ -118,7 +122,16 @@ struct SocialView: View {
 
                 Section {
                     if viewModel.friends.isEmpty {
-                        EmptyStateView(icon: "person.2.slash", title: "No friends yet.")
+                        VStack(spacing: 10) {
+                            EmptyStateView(icon: "person.2.slash", title: "No friends yet.")
+                            Button("Find People") {
+                                withAnimation { proxy.scrollTo("findPeople", anchor: .top) }
+                                isSearchFocused = true
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(SwarmTheme.accent)
+                        }
+                        .frame(maxWidth: .infinity)
                     } else {
                         ForEach(viewModel.friends) { friend in
                             NavigationLink {
@@ -178,6 +191,7 @@ struct SocialView: View {
                 await viewModel.loadAll()
             }
             .notificationsBell(notificationsViewModel)
+            }
         }
     }
 }
@@ -185,4 +199,5 @@ struct SocialView: View {
 #Preview {
     SocialView()
         .environmentObject(NotificationsViewModel())
+        .environmentObject(ToastCenter())
 }

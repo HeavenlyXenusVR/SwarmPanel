@@ -1,11 +1,18 @@
 import SwiftUI
 
+private let relativeTimeFormatter: RelativeDateTimeFormatter = {
+    let formatter = RelativeDateTimeFormatter()
+    formatter.unitsStyle = .abbreviated
+    return formatter
+}()
+
 struct DashboardView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var notificationsViewModel: NotificationsViewModel
     @EnvironmentObject private var toastCenter: ToastCenter
     @StateObject private var viewModel = DashboardViewModel()
     @StateObject private var recentBots = RecentBotsStore()
+    @StateObject private var pinnedBots = PinnedBotsStore()
 
     private var allBots: [DashboardBot] { viewModel.response?.bots ?? [] }
     private var allSessions: [DashboardSession] {
@@ -53,13 +60,21 @@ struct DashboardView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 18) {
                             if let error = viewModel.errorMessage {
-                                Text(error)
-                                    .foregroundStyle(SwarmTheme.danger)
-                                    .padding(.horizontal)
+                                ErrorBanner(message: error).padding(.horizontal)
                             }
 
                             VStack(alignment: .leading, spacing: 10) {
-                                SectionLabel(title: "Fleet")
+                                HStack {
+                                    SectionLabel(title: "Fleet")
+                                    Spacer()
+                                    if let lastUpdatedAt = viewModel.lastUpdatedAt {
+                                        TimelineView(.periodic(from: .now, by: 30)) { timeline in
+                                            Text("Updated \(relativeTimeFormatter.localizedString(for: lastUpdatedAt, relativeTo: timeline.date))")
+                                                .font(.caption2)
+                                                .foregroundStyle(SwarmTheme.textMuted)
+                                        }
+                                    }
+                                }
                                 PanelCard {
                                     HStack(spacing: 0) {
                                         MetricTile(icon: "server.rack", label: "Bots", value: "\(allBots.count)")
@@ -81,6 +96,37 @@ struct DashboardView: View {
                                 .padding(.horizontal)
                                 .task(id: "\(ownBotKey):\(ownSession.guildId ?? "")") {
                                     await viewModel.loadTopTrack(botKey: ownBotKey, guildId: ownSession.guildId ?? "")
+                                }
+                            }
+
+                            if !pinnedBots.pinned.isEmpty {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    SectionLabel(title: "Pinned")
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        HStack(spacing: 10) {
+                                            ForEach(pinnedBots.pinned) { pin in
+                                                NavigationLink {
+                                                    BotDetailView(botKey: pin.botKey, botDisplayName: pin.displayName, guildId: pin.guildId)
+                                                } label: {
+                                                    Label(pin.displayName, systemImage: "pin.fill")
+                                                        .font(.caption.bold())
+                                                        .foregroundStyle(SwarmTheme.textPrimary)
+                                                        .padding(.horizontal, 12)
+                                                        .padding(.vertical, 8)
+                                                        .background(SwarmTheme.accent.opacity(0.12), in: Capsule())
+                                                        .overlay(Capsule().stroke(SwarmTheme.accent.opacity(0.4), lineWidth: 1))
+                                                }
+                                                .contextMenu {
+                                                    Button(role: .destructive) {
+                                                        pinnedBots.toggle(botKey: pin.botKey, guildId: pin.guildId, displayName: pin.displayName)
+                                                    } label: {
+                                                        Label("Unpin", systemImage: "pin.slash")
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        .padding(.horizontal)
+                                    }
                                 }
                             }
 
@@ -155,11 +201,32 @@ struct DashboardView: View {
                 }
             }
             .navigationTitle("Dashboard")
+            .toolbar {
+                if !allBots.isEmpty {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        ShareLink(item: fleetStatusShareText) {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                    }
+                }
+            }
             .notificationsBell(notificationsViewModel)
             .environmentObject(recentBots)
+            .environmentObject(pinnedBots)
         }
         .onAppear { viewModel.start() }
         .onDisappear { viewModel.stop() }
+    }
+
+    private var fleetStatusShareText: String {
+        let liveCount = allSessions.filter { $0.isPlaying == true }.count
+        let queued = allSessions.reduce(0) { $0 + ($1.queueCount ?? 0) }
+        var lines = ["SwarmPanel Fleet Status", "\(allBots.count) bots · \(liveCount) live · \(queued) queued"]
+        for session in allSessions where session.isPlaying == true {
+            let name = session.channelName ?? session.guildName ?? "Guild \(session.guildId ?? "?")"
+            lines.append("• \(name): \(session.title?.isEmpty == false ? session.title! : "Untitled")")
+        }
+        return lines.joined(separator: "\n")
     }
 
     @ViewBuilder
@@ -288,11 +355,12 @@ private struct NowPlayingQuickControl: View {
             isBusy: isBusy,
             onPause: isCurrentlyPlaying ? { Task { await send("PAUSE") } } : nil,
             onResume: !isCurrentlyPlaying ? { Task { await send("RESUME") } } : nil,
-            onSkip: { Task { await send("SKIP") } }
+            onSkip: { Task { await send("SKIP") } },
+            onSeek: { seconds in Task { await send("SEEK", payload: ["position_seconds": "\(seconds)"]) } }
         )
     }
 
-    private func send(_ action: String) async {
+    private func send(_ action: String, payload: [String: String] = [:]) async {
         guard let guildId = session.guildId else { return }
         isBusy = true
         Haptics.light()
@@ -300,7 +368,7 @@ private struct NowPlayingQuickControl: View {
         do {
             let _: OKResponse = try await APIClient.shared.post(
                 "/api/bots/control",
-                body: BotControlRequest(botKey: botKey, guildId: guildId, action: action, payload: [:])
+                body: BotControlRequest(botKey: botKey, guildId: guildId, action: action, payload: payload)
             )
         } catch {
             // Best-effort — the Controls screen surfaces errors properly;

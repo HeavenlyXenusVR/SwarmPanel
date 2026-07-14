@@ -2,11 +2,12 @@ import SwiftUI
 
 struct GalleryModerationView: View {
     @StateObject private var viewModel = GalleryModerationViewModel()
+    @State private var deleteTarget: GalleryComment?
 
     var body: some View {
         List {
             if let error = viewModel.errorMessage {
-                Section { Text(error).foregroundStyle(SwarmTheme.danger) }
+                Section { ErrorBanner(message: error) }
                     .listRowBackground(SwarmTheme.panel)
             }
 
@@ -39,7 +40,7 @@ struct GalleryModerationView: View {
                         }
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) {
-                                Task { await viewModel.deleteComment(comment) }
+                                deleteTarget = comment
                             } label: {
                                 Label("Delete", systemImage: "trash")
                             }
@@ -58,6 +59,17 @@ struct GalleryModerationView: View {
         .refreshable {
             Haptics.light()
             await viewModel.load()
+        }
+        .confirmationDialog(
+            "Delete this comment?",
+            isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if let target = deleteTarget { Task { await viewModel.deleteComment(target) } }
+                deleteTarget = nil
+            }
+            Button("Cancel", role: .cancel) { deleteTarget = nil }
         }
     }
 }
@@ -99,4 +111,5 @@ private struct ReportRow: View {
 
 #Preview {
     NavigationStack { GalleryModerationView() }
+        .environmentObject(ToastCenter())
 }

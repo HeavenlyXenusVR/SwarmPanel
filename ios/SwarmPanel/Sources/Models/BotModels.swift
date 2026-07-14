@@ -4,12 +4,12 @@ import Foundation
 /// _build_dashboard_payload). Only the fields the app actually renders are
 /// declared — Codable ignores extra JSON keys and tolerates missing optional
 /// ones, so this stays resilient to backend fields we don't display yet.
-struct DashboardResponse: Decodable {
+struct DashboardResponse: Codable {
     let bots: [DashboardBot]?
     let sessions: [DashboardSession]?
 }
 
-struct DashboardBot: Decodable, Identifiable {
+struct DashboardBot: Codable, Identifiable {
     let key: String
     let displayName: String?
     let kind: String?
@@ -24,7 +24,7 @@ struct DashboardBot: Decodable, Identifiable {
     var id: String { key }
 }
 
-struct DashboardSession: Decodable, Identifiable {
+struct DashboardSession: Codable, Identifiable {
     let guildId: String?
     let channelId: String?
     let guildName: String?

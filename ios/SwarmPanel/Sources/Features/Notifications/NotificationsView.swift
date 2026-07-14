@@ -19,7 +19,7 @@ struct NotificationsView: View {
         NavigationStack {
             List {
                 if let error = viewModel.errorMessage {
-                    Section { Text(error).foregroundStyle(SwarmTheme.danger) }
+                    Section { ErrorBanner(message: error) }
                         .listRowBackground(SwarmTheme.panel)
                 }
                 if viewModel.notifications.isEmpty && viewModel.isLoading {

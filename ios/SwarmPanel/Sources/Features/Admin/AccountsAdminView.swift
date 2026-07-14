@@ -21,7 +21,7 @@ struct AccountsAdminView: View {
                 .padding(.horizontal)
 
                 if let error = viewModel.errorMessage {
-                    Text(error).foregroundStyle(SwarmTheme.danger).padding(.horizontal)
+                    ErrorBanner(message: error).padding(.horizontal)
                 }
                 if let status = viewModel.statusMessage {
                     Text(status).foregroundStyle(SwarmTheme.ok).padding(.horizontal)
@@ -126,4 +126,5 @@ private struct AccountRow: View {
 
 #Preview {
     NavigationStack { AccountsAdminView() }
+        .environmentObject(ToastCenter())
 }

@@ -8,7 +8,7 @@ struct ExportsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 if let error = viewModel.errorMessage {
-                    Text(error).foregroundStyle(SwarmTheme.danger).padding(.horizontal)
+                    ErrorBanner(message: error).padding(.horizontal)
                 }
 
                 if !viewModel.enabled {
@@ -83,4 +83,5 @@ struct IdentifiableURL: Identifiable {
 
 #Preview {
     NavigationStack { ExportsView() }
+        .environmentObject(ToastCenter())
 }

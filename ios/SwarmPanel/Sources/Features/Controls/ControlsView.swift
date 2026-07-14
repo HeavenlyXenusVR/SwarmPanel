@@ -1,16 +1,18 @@
 import SwiftUI
+import UIKit
 
 struct ControlsView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var notificationsViewModel: NotificationsViewModel
     @StateObject private var viewModel = ControlsViewModel()
     @State private var newQueueName = ""
+    @State private var deleteQueueTarget: SavedQueue?
 
     var body: some View {
         NavigationStack {
             Form {
                 if let error = viewModel.errorMessage {
-                    Section { Text(error).foregroundStyle(SwarmTheme.danger) }
+                    Section { ErrorBanner(message: error) }
                         .listRowBackground(SwarmTheme.panel)
                 }
                 if let status = viewModel.statusMessage {
@@ -19,9 +21,21 @@ struct ControlsView: View {
                 }
 
                 Section {
-                    Picker("Bot", selection: $viewModel.selectedBotKey) {
-                        ForEach(viewModel.bots) { bot in
-                            Text(bot.label).tag(bot.id)
+                    HStack {
+                        Picker("Bot", selection: $viewModel.selectedBotKey) {
+                            ForEach(viewModel.bots) { bot in
+                                Text(bot.label).tag(bot.id)
+                            }
+                        }
+                        if !viewModel.selectedBotKey.isEmpty {
+                            Button {
+                                UIPasteboard.general.string = viewModel.selectedBotKey
+                                Haptics.success()
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                                    .foregroundStyle(SwarmTheme.textMuted)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                     TextField("Guild ID", text: $viewModel.guildId)
@@ -127,7 +141,7 @@ struct ControlsView: View {
                             }
                             .swipeActions(edge: .trailing) {
                                 Button(role: .destructive) {
-                                    Task { await viewModel.deleteSavedQueue(queue) }
+                                    deleteQueueTarget = queue
                                 } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
@@ -165,6 +179,17 @@ struct ControlsView: View {
                 await viewModel.loadControlStateAndQueues()
             }
             .notificationsBell(notificationsViewModel)
+            .confirmationDialog(
+                "Delete \"\(deleteQueueTarget?.name ?? "")\"?",
+                isPresented: Binding(get: { deleteQueueTarget != nil }, set: { if !$0 { deleteQueueTarget = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("Delete", role: .destructive) {
+                    if let target = deleteQueueTarget { Task { await viewModel.deleteSavedQueue(target) } }
+                    deleteQueueTarget = nil
+                }
+                Button("Cancel", role: .cancel) { deleteQueueTarget = nil }
+            }
         }
     }
 }
@@ -173,4 +198,5 @@ struct ControlsView: View {
     ControlsView()
         .environmentObject(AppState())
         .environmentObject(NotificationsViewModel())
+        .environmentObject(ToastCenter())
 }

@@ -59,6 +59,7 @@ struct ControlStateSession: Decodable {
     let positionSeconds: Int?
     let durationSeconds: Int?
     let positionObservedAt: String?
+    let volume: Int?
 
     /// The backend only precomputes a `thumbnail` field for /api/dashboard's
     /// session list (app/db/bots.py's _build_dashboard_payload) — control-state

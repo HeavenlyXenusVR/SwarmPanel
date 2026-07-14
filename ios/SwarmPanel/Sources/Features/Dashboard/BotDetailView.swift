@@ -11,12 +11,22 @@ struct BotDetailView: View {
     @StateObject private var viewModel = BotDetailViewModel()
     @EnvironmentObject private var toastCenter: ToastCenter
     @EnvironmentObject private var recentBots: RecentBotsStore
+    @EnvironmentObject private var pinnedBots: PinnedBotsStore
+
+    /// The bot's currently-connected voice channel, falling back to its
+    /// configured home channel — whichever we have is where "Queue This"
+    /// should (re)join to play, since PLAY requires a voice_channel_id.
+    private var playbackVoiceChannelId: String? {
+        guard let session = viewModel.session else { return nil }
+        let candidate = session.channelId ?? session.homeChannelId
+        return candidate?.isEmpty == false ? candidate : nil
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 if let error = viewModel.errorMessage {
-                    Text(error).foregroundStyle(SwarmTheme.danger).padding(.horizontal)
+                    ErrorBanner(message: error).padding(.horizontal)
                 }
                 if let session = viewModel.session {
                     NowPlayingCard(
@@ -34,11 +44,39 @@ struct BotDetailView: View {
                     PanelCard {
                         LabeledContent("Queue", value: "\(session.queueCount ?? 0)")
                         LabeledContent("Backup Queue", value: "\(session.backupQueueCount ?? 0)")
-                        if let loopMode = session.loopMode {
-                            LabeledContent("Loop", value: loopMode.capitalized)
+                        if let volume = session.volume {
+                            LabeledContent("Volume", value: "\(volume)%")
                         }
-                        if let filterMode = session.filterMode {
-                            LabeledContent("Filter", value: filterMode.capitalized)
+                        Divider().overlay(SwarmTheme.line)
+                        HStack {
+                            Text("Loop").foregroundStyle(SwarmTheme.textMuted)
+                            Spacer()
+                            Menu {
+                                ForEach(loopModes, id: \.self) { mode in
+                                    Button(mode.capitalized) {
+                                        Task { await setLoopMode(mode) }
+                                    }
+                                }
+                            } label: {
+                                Label((session.loopMode ?? "queue").capitalized, systemImage: "chevron.up.chevron.down")
+                                    .font(.subheadline)
+                            }
+                            .disabled(viewModel.isSending)
+                        }
+                        HStack {
+                            Text("Filter").foregroundStyle(SwarmTheme.textMuted)
+                            Spacer()
+                            Menu {
+                                ForEach(filterModes, id: \.self) { mode in
+                                    Button(mode.capitalized) {
+                                        Task { await setFilterMode(mode) }
+                                    }
+                                }
+                            } label: {
+                                Label((session.filterMode ?? "none").capitalized, systemImage: "chevron.up.chevron.down")
+                                    .font(.subheadline)
+                            }
+                            .disabled(viewModel.isSending)
                         }
                     }
                     .padding(.horizontal)
@@ -62,6 +100,13 @@ struct BotDetailView: View {
                                                 UIApplication.shared.open(url)
                                             }
                                             .contextMenu {
+                                                if let voiceChannelId = playbackVoiceChannelId {
+                                                    Button {
+                                                        Task { await queueThis(item, voiceChannelId: voiceChannelId) }
+                                                    } label: {
+                                                        Label("Queue This", systemImage: "text.badge.plus")
+                                                    }
+                                                }
                                                 Button {
                                                     UIPasteboard.general.string = item.videoUrl
                                                     Haptics.success()
@@ -91,6 +136,23 @@ struct BotDetailView: View {
         .background(SwarmTheme.background)
         .navigationTitle(botDisplayName)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    pinnedBots.toggle(botKey: botKey, guildId: guildId, displayName: botDisplayName)
+                    Haptics.selection()
+                } label: {
+                    Image(systemName: pinnedBots.isPinned(botKey: botKey, guildId: guildId) ? "pin.fill" : "pin")
+                }
+            }
+            if let items = viewModel.session?.queuePreview, !items.isEmpty {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    ShareLink(item: upNextShareText(items)) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                }
+            }
+        }
         .task {
             await viewModel.load(botKey: botKey, guildId: guildId)
             recentBots.record(botKey: botKey, guildId: guildId, displayName: botDisplayName)
@@ -98,6 +160,36 @@ struct BotDetailView: View {
         .refreshable {
             Haptics.light()
             await viewModel.load(botKey: botKey, guildId: guildId)
+        }
+    }
+
+    private func upNextShareText(_ items: [QueueItem]) -> String {
+        let lines = items.enumerated().map { index, item in
+            "\(index + 1). \(item.title?.isEmpty == false ? item.title! : item.videoUrl)"
+        }
+        return "Up Next on \(botDisplayName):\n" + lines.joined(separator: "\n")
+    }
+
+    private func setLoopMode(_ mode: String) async {
+        let ok = await viewModel.sendAction(botKey: botKey, guildId: guildId, action: "LOOP", payload: ["loop_mode": mode])
+        if ok { Haptics.success(); toastCenter.success("Loop set to \(mode.capitalized)") } else { Haptics.error() }
+    }
+
+    private func setFilterMode(_ mode: String) async {
+        let ok = await viewModel.sendAction(botKey: botKey, guildId: guildId, action: "FILTER", payload: ["filter_mode": mode])
+        if ok { Haptics.success(); toastCenter.success("Filter set to \(mode.capitalized)") } else { Haptics.error() }
+    }
+
+    private func queueThis(_ item: QueueItem, voiceChannelId: String) async {
+        let ok = await viewModel.sendAction(
+            botKey: botKey, guildId: guildId, action: "PLAY",
+            payload: ["source_url": item.videoUrl, "voice_channel_id": voiceChannelId]
+        )
+        if ok {
+            Haptics.success()
+            toastCenter.success("Queued")
+        } else {
+            Haptics.error()
         }
     }
 }

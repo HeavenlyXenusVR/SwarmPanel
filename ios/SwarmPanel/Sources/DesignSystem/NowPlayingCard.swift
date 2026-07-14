@@ -53,8 +53,12 @@ struct NowPlayingCard: View {
     var onPause: (() -> Void)? = nil
     var onResume: (() -> Void)? = nil
     var onSkip: (() -> Void)? = nil
+    var onSeek: ((Int) -> Void)? = nil
+
+    @State private var dragFraction: CGFloat?
 
     private var isLive: Bool { isPlaying && !isPaused }
+    private var canSeek: Bool { onSeek != nil && durationSeconds > 0 }
 
     private func elapsedSeconds(at date: Date) -> Int {
         guard isLive, let observedAt = NaiveUTCDate.parse(positionObservedAt) else { return positionSeconds }
@@ -96,10 +100,33 @@ struct NowPlayingCard: View {
 
             if durationSeconds > 0 || positionSeconds > 0 {
                 TimelineView(.periodic(from: .now, by: 1)) { timeline in
-                    let elapsed = elapsedSeconds(at: timeline.date)
+                    let elapsed = dragFraction.map { Int($0 * CGFloat(max(durationSeconds, 1))) } ?? elapsedSeconds(at: timeline.date)
                     VStack(alignment: .leading, spacing: 4) {
-                        ProgressView(value: Double(elapsed), total: Double(max(durationSeconds, elapsed, 1)))
-                            .tint(SwarmTheme.accent)
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(SwarmTheme.panel2).frame(height: 6)
+                                let fraction = durationSeconds > 0 ? CGFloat(elapsed) / CGFloat(durationSeconds) : 0
+                                Capsule()
+                                    .fill(SwarmTheme.accent)
+                                    .frame(width: max(0, min(1, fraction)) * geo.size.width, height: 6)
+                            }
+                            .frame(maxHeight: .infinity, alignment: .center)
+                            .contentShape(Rectangle())
+                            .gesture(
+                                DragGesture(minimumDistance: 0)
+                                    .onChanged { value in
+                                        guard canSeek else { return }
+                                        dragFraction = max(0, min(1, value.location.x / max(geo.size.width, 1)))
+                                    }
+                                    .onEnded { value in
+                                        guard canSeek else { return }
+                                        let fraction = max(0, min(1, value.location.x / max(geo.size.width, 1)))
+                                        onSeek?(Int(fraction * CGFloat(durationSeconds)))
+                                        dragFraction = nil
+                                    }
+                            )
+                        }
+                        .frame(height: 20)
                         HStack {
                             Text(formatDuration(elapsed))
                             Spacer()

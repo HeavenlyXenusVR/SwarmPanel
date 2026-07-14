@@ -11,7 +11,7 @@ struct ThreadView: View {
     var body: some View {
         VStack {
             if let error = viewModel.errorMessage {
-                Text(error).foregroundStyle(SwarmTheme.danger).padding(.horizontal)
+                ErrorBanner(message: error).padding(.horizontal)
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {

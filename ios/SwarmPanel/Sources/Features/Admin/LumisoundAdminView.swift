@@ -2,11 +2,12 @@ import SwiftUI
 
 struct LumisoundAdminView: View {
     @StateObject private var viewModel = LumisoundAdminViewModel()
+    @State private var deleteTarget: LumisoundUpload?
 
     var body: some View {
         List {
             if let error = viewModel.errorMessage {
-                Section { Text(error).foregroundStyle(SwarmTheme.danger) }
+                Section { ErrorBanner(message: error) }
                     .listRowBackground(SwarmTheme.panel)
             }
 
@@ -41,7 +42,7 @@ struct LumisoundAdminView: View {
                         }
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) {
-                                Task { await viewModel.deleteUpload(upload) }
+                                deleteTarget = upload
                             } label: {
                                 Label("Delete", systemImage: "trash")
                             }
@@ -86,6 +87,17 @@ struct LumisoundAdminView: View {
             Haptics.light()
             await viewModel.load()
         }
+        .confirmationDialog(
+            "Delete this upload?",
+            isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if let target = deleteTarget { Task { await viewModel.deleteUpload(target) } }
+                deleteTarget = nil
+            }
+            Button("Cancel", role: .cancel) { deleteTarget = nil }
+        }
     }
 }
 
@@ -123,4 +135,5 @@ private struct BugReportRow: View {
 
 #Preview {
     NavigationStack { LumisoundAdminView() }
+        .environmentObject(ToastCenter())
 }

@@ -10,7 +10,7 @@ struct AlertRulesView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 if let error = viewModel.errorMessage {
-                    Text(error).foregroundStyle(SwarmTheme.danger).padding(.horizontal)
+                    ErrorBanner(message: error).padding(.horizontal)
                 }
 
                 if appState.isAdmin {
@@ -112,4 +112,5 @@ private struct AlertRuleRow: View {
 #Preview {
     NavigationStack { AlertRulesView() }
         .environmentObject(AppState())
+        .environmentObject(ToastCenter())
 }

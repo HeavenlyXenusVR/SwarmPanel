@@ -9,6 +9,12 @@ struct ProfileView: View {
     @StateObject private var viewModel = ProfileViewModel()
     @State private var selectedIcon = AppIconOption.current
 
+    private var appVersionString: String {
+        let shortVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        return "\(shortVersion) (\(build))"
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -51,7 +57,7 @@ struct ProfileView: View {
                 .listRowBackground(SwarmTheme.panel)
 
                 if let error = viewModel.errorMessage {
-                    Section { Text(error).foregroundStyle(SwarmTheme.danger) }
+                    Section { ErrorBanner(message: error) }
                         .listRowBackground(SwarmTheme.panel)
                 }
                 if let status = viewModel.statusMessage {
@@ -157,6 +163,14 @@ struct ProfileView: View {
                 .listRowBackground(SwarmTheme.panel)
 
                 Section {
+                    NavigationLink("What's New") { WhatsNewView() }
+                    LabeledContent("Version", value: appVersionString)
+                } header: {
+                    SectionLabel(title: "About")
+                }
+                .listRowBackground(SwarmTheme.panel)
+
+                Section {
                     Button("Log Out", role: .destructive) { appState.logout() }
                 }
                 .listRowBackground(SwarmTheme.panel)
@@ -180,4 +194,5 @@ struct ProfileView: View {
         .environmentObject(AppearanceSettings())
         .environmentObject(NotificationsViewModel())
         .environmentObject(BiometricLock())
+        .environmentObject(ToastCenter())
 }

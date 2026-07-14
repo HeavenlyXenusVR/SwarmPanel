@@ -26,7 +26,7 @@ struct AuditLogView: View {
                 .padding(.horizontal)
 
                 if let error = viewModel.errorMessage {
-                    Text(error).foregroundStyle(SwarmTheme.danger).padding(.horizontal)
+                    ErrorBanner(message: error).padding(.horizontal)
                 }
                 if viewModel.entries.isEmpty && viewModel.isLoading {
                     SkeletonList(rowCount: 5).padding(.horizontal)
@@ -92,4 +92,5 @@ private struct AuditLogRow: View {
 
 #Preview {
     NavigationStack { AuditLogView() }
+        .environmentObject(ToastCenter())
 }
