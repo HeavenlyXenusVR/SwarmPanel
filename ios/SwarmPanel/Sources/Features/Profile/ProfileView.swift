@@ -10,9 +10,8 @@ struct ProfileView: View {
     @State private var selectedIcon = AppIconOption.current
 
     private var appVersionString: String {
-        let shortVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
-        return "\(shortVersion) (\(build))"
+        return "\(currentAppVersion) (\(build))"
     }
 
     var body: some View {
@@ -135,6 +134,7 @@ struct ProfileView: View {
                         if appState.isAdmin {
                             NavigationLink { AccountsAdminView() } label: { IconRow(icon: "person.2.badge.gearshape", tint: .blue, title: "Accounts") }
                             NavigationLink { DiagnosticsView() } label: { IconRow(icon: "heart.text.square", tint: .green, title: "Fleet Health") }
+                            NavigationLink { FleetTopologyView() } label: { IconRow(icon: "point.3.filled.connected.trianglepath.dotted", tint: .cyan, title: "Fleet Topology") }
                             NavigationLink { ExportsView() } label: { IconRow(icon: "square.and.arrow.down", tint: .orange, title: "Scheduled Exports") }
                         }
                     } header: {

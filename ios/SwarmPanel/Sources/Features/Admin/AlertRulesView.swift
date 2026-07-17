@@ -7,6 +7,7 @@ struct AlertRulesView: View {
     @State private var newThreshold = 5
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 if let error = viewModel.errorMessage {
@@ -41,12 +42,25 @@ struct AlertRulesView: View {
                         }
                     }
                     .padding(.horizontal)
+                    .id("newRule")
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
                     SectionLabel(title: "Rules", count: viewModel.rules.count)
                     if viewModel.rules.isEmpty {
-                        PanelCard { EmptyStateView(icon: "bell.badge", title: "No alert rules configured.") }
+                        PanelCard {
+                            VStack(spacing: 10) {
+                                EmptyStateView(icon: "bell.badge", title: "No alert rules configured.")
+                                if appState.isAdmin {
+                                    Button("Add a Rule") {
+                                        withAnimation { proxy.scrollTo("newRule", anchor: .top) }
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .tint(SwarmTheme.accent)
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
                     } else {
                         PanelCard(padding: 0) {
                             VStack(spacing: 0) {
@@ -68,6 +82,7 @@ struct AlertRulesView: View {
         .refreshable {
             Haptics.light()
             await viewModel.load()
+        }
         }
     }
 }

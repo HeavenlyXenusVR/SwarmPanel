@@ -7,9 +7,42 @@ struct ReleaseNote: Identifiable {
     var id: String { version }
 }
 
+/// CFBundleShortVersionString, e.g. "0.7.3" — matches the `ios/vX.Y.Z` tag
+/// format (with the "v" stripped) that release-ios.yml stamps into
+/// MARKETING_VERSION, which is in turn what `releaseNotes` entries below are
+/// keyed by.
+let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+
 /// Static changelog shown on the "What's New" screen — updated by hand
 /// alongside each ios/vX.Y.Z tag, mirroring the tag's own release notes.
 let releaseNotes: [ReleaseNote] = [
+    ReleaseNote(version: "0.7.4", highlights: [
+        "New Fleet Topology screen (Admin Tools): see which bot is serving which guild, flags any guild covered by more than one bot, and lets admins restart a bot from the list",
+        "What's New now surfaces automatically after an update instead of only being reachable from Profile",
+        "Alert Rules' empty state now jumps straight to the New Rule form",
+    ]),
+    ReleaseNote(version: "0.7.3", highlights: [
+        "Fixed a crash when tapping bots or cards on Dashboard",
+    ]),
+    ReleaseNote(version: "0.7.2", highlights: [
+        "Refined-native visual treatment extended to Admin, Login, Register, and Server Settings",
+    ]),
+    ReleaseNote(version: "0.7.1", highlights: [
+        "Refined-native visual treatment extended to Controls, Leaderboard, Social, and Notifications",
+    ]),
+    ReleaseNote(version: "0.7.0", highlights: [
+        "New \"refined native iOS\" visual direction: colored icon chips, card shadows, live-pulsing status dots",
+        "Applied to Dashboard, Bot Detail, and Profile",
+    ]),
+    ReleaseNote(version: "0.6.3", highlights: [
+        "Reworked the Now Playing progress bar to keep its drag-to-seek gesture stable during live updates",
+    ]),
+    ReleaseNote(version: "0.6.2", highlights: [
+        "Fixed alternate app icons (Light, Neon) not applying",
+    ]),
+    ReleaseNote(version: "0.6.1", highlights: [
+        "Fixed control actions failing to send from Controls",
+    ]),
     ReleaseNote(version: "0.6.0", highlights: [
         "Drag-to-seek scrubbing on the Now Playing progress bar",
         "\"Queue This\" to replay an upcoming track instantly from Bot Detail",

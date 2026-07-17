@@ -16,6 +16,8 @@ struct RootTabView: View {
     @StateObject private var toastCenter = ToastCenter()
     @EnvironmentObject private var router: DeepLinkRouter
     @State private var selectedTab: SwarmTab = .dashboard
+    @AppStorage("swarmpanel.lastSeenWhatsNewVersion") private var lastSeenVersion = ""
+    @State private var showWhatsNew = false
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -42,12 +44,30 @@ struct RootTabView: View {
         .environmentObject(notificationsViewModel)
         .environmentObject(toastCenter)
         .toastOverlay(toastCenter)
-        .onAppear { notificationsViewModel.startPolling() }
+        .onAppear {
+            notificationsViewModel.startPolling()
+            // Skip on a true first launch (nothing to compare against) but
+            // still record the version so the next real update triggers this.
+            if !lastSeenVersion.isEmpty && lastSeenVersion != currentAppVersion {
+                showWhatsNew = true
+            }
+            lastSeenVersion = currentAppVersion
+        }
         .onDisappear { notificationsViewModel.stopPolling() }
         .onChange(of: router.pendingTab) { newValue in
             guard let newValue else { return }
             selectedTab = newValue
             router.pendingTab = nil
+        }
+        .sheet(isPresented: $showWhatsNew) {
+            NavigationStack {
+                WhatsNewView()
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showWhatsNew = false }
+                        }
+                    }
+            }
         }
     }
 }
