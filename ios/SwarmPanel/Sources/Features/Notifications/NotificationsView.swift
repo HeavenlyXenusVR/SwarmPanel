@@ -105,13 +105,19 @@ private struct NotificationRow: View {
         }
     }
 
+    private var tint: Color {
+        switch notification.kind {
+        case "follow": return .blue
+        case "friend_request": return .purple
+        case "friend_accept": return SwarmTheme.ok
+        case "message": return .teal
+        default: return SwarmTheme.accent
+        }
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon)
-                .font(.subheadline)
-                .foregroundStyle(SwarmTheme.accent)
-                .frame(width: 28, height: 28)
-                .background(SwarmTheme.accent.opacity(0.15), in: Circle())
+            IconChip(systemName: icon, tint: tint)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(notification.title)

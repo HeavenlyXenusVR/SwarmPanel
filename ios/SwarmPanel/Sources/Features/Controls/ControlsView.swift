@@ -22,6 +22,7 @@ struct ControlsView: View {
 
                 Section {
                     HStack {
+                        IconChip(systemName: "server.rack", tint: .blue)
                         Picker("Bot", selection: $viewModel.selectedBotKey) {
                             ForEach(viewModel.bots) { bot in
                                 Text(bot.label).tag(bot.id)
@@ -38,17 +39,23 @@ struct ControlsView: View {
                             .buttonStyle(.plain)
                         }
                     }
-                    TextField("Guild ID", text: $viewModel.guildId)
-                        .keyboardType(.numberPad)
+                    HStack {
+                        IconChip(systemName: "number", tint: .indigo)
+                        TextField("Guild ID", text: $viewModel.guildId)
+                            .keyboardType(.numberPad)
+                    }
                 } header: {
                     SectionLabel(title: "Bot & Guild")
                 }
                 .listRowBackground(SwarmTheme.panel)
 
                 Section {
-                    Picker("Action", selection: $viewModel.action) {
-                        ForEach(ControlAction.allCases) { action in
-                            Text(action.label).tag(action)
+                    HStack {
+                        IconChip(systemName: "bolt.fill", tint: .orange)
+                        Picker("Action", selection: $viewModel.action) {
+                            ForEach(ControlAction.allCases) { action in
+                                Text(action.label).tag(action)
+                            }
                         }
                     }
                     if viewModel.action.needsSourceURL {
@@ -87,11 +94,19 @@ struct ControlsView: View {
                     } label: {
                         HStack {
                             Spacer()
-                            if viewModel.isSending { ProgressView() } else { Text("Send Control").bold() }
+                            if viewModel.isSending {
+                                ProgressView().tint(.white)
+                            } else {
+                                Label("Send Control", systemImage: "paperplane.fill").bold()
+                            }
                             Spacer()
                         }
+                        .foregroundStyle(.white)
+                        .padding(.vertical, 4)
                     }
+                    .listRowBackground(Rectangle().fill(SwarmTheme.accent.gradient))
                     .disabled(viewModel.isSending || viewModel.selectedBotKey.isEmpty || viewModel.guildId.isEmpty)
+                    .opacity(viewModel.isSending || viewModel.selectedBotKey.isEmpty || viewModel.guildId.isEmpty ? 0.5 : 1)
                 } header: {
                     SectionLabel(title: "Action")
                 }
@@ -111,20 +126,19 @@ struct ControlsView: View {
                         )
                         .listRowInsets(EdgeInsets())
                         .listRowBackground(Color.clear)
-                        LabeledContent("Queue", value: "\(session.queueCount ?? 0)")
-                        LabeledContent("Backup", value: "\(session.backupQueueCount ?? 0)")
+                        StatRow(icon: "music.note.list", tint: .purple, label: "Queue", value: "\(session.queueCount ?? 0)")
+                        StatRow(icon: "arrow.triangle.2.circlepath", tint: .indigo, label: "Backup", value: "\(session.backupQueueCount ?? 0)")
                         if let volume = session.volume {
-                            LabeledContent("Volume", value: "\(volume)%")
+                            StatRow(icon: "speaker.wave.2.fill", tint: .orange, label: "Volume", value: "\(volume)%")
                         }
                         if let loopMode = session.loopMode {
-                            LabeledContent("Loop", value: loopMode.capitalized)
+                            StatRow(icon: "repeat", tint: .teal, label: "Loop", value: loopMode.capitalized)
                         }
                         if let filterMode = session.filterMode {
-                            LabeledContent("Filter", value: filterMode.capitalized)
+                            StatRow(icon: "slider.horizontal.3", tint: .pink, label: "Filter", value: filterMode.capitalized)
                         }
                         if let pending = session.pendingDirectOrders, pending > 0 {
-                            LabeledContent("Pending Orders", value: "\(pending)")
-                                .foregroundStyle(SwarmTheme.warn)
+                            StatRow(icon: "clock.badge.exclamationmark", tint: SwarmTheme.warn, label: "Pending Orders", value: "\(pending)")
                             if let command = session.latestDirectOrder?.command {
                                 Text("Waiting on the bot to pick up: \(command)")
                                     .font(.caption2)
@@ -152,7 +166,8 @@ struct ControlsView: View {
                         EmptyStateView(icon: "list.bullet.rectangle", title: "No saved queues yet.")
                     } else {
                         ForEach(viewModel.savedQueues) { queue in
-                            HStack {
+                            HStack(spacing: 12) {
+                                IconChip(systemName: "list.bullet.rectangle.fill", tint: .purple)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(queue.name).font(.subheadline.bold())
                                     Text("\(queue.itemCount) tracks").font(.caption).foregroundStyle(SwarmTheme.textMuted)

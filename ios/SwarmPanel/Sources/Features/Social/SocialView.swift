@@ -21,8 +21,12 @@ struct SocialView: View {
                             .autocorrectionDisabled()
                             .focused($isSearchFocused)
                             .onSubmit { Task { await viewModel.search() } }
-                        Button("Search") { Task { await viewModel.search() } }
-                            .tint(SwarmTheme.accent)
+                        Button { Task { await viewModel.search() } } label: {
+                            Image(systemName: "magnifyingglass.circle.fill")
+                                .font(.title2)
+                                .foregroundStyle(SwarmTheme.accent)
+                        }
+                        .buttonStyle(.plain)
                     }
                     ForEach(viewModel.searchResults) { user in
                         HStack(spacing: 10) {
@@ -34,22 +38,21 @@ struct SocialView: View {
                                 }
                             }
                             Spacer()
-                            Button { Task { await viewModel.follow(user.id) } } label: {
-                                Image(systemName: "person.badge.plus")
+                            SocialActionButton(icon: "person.badge.plus", tint: .blue) {
+                                Task { await viewModel.follow(user.id) }
                             }
-                            .buttonStyle(.borderless)
-                            .tint(SwarmTheme.accent)
-                            Button { Task { await viewModel.sendFriendRequest(user.id) } } label: {
-                                Image(systemName: "person.2")
+                            SocialActionButton(icon: "person.2.fill", tint: .purple) {
+                                Task { await viewModel.sendFriendRequest(user.id) }
                             }
-                            .buttonStyle(.borderless)
-                            .tint(SwarmTheme.accent)
                             NavigationLink {
                                 ThreadView(accountId: user.id, peerName: user.name)
                             } label: {
-                                Image(systemName: "message")
+                                Image(systemName: "message.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.white)
+                                    .frame(width: 30, height: 30)
+                                    .background(SwarmTheme.ok.gradient, in: Circle())
                             }
-                            .tint(SwarmTheme.accent)
                         }
                     }
                 } header: {
@@ -193,6 +196,23 @@ struct SocialView: View {
             .notificationsBell(notificationsViewModel)
             }
         }
+    }
+}
+
+private struct SocialActionButton: View {
+    let icon: String
+    let tint: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(tint.gradient, in: Circle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

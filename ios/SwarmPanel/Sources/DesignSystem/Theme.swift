@@ -113,6 +113,24 @@ struct IconChip: View {
     }
 }
 
+/// IconChip + label + trailing value — the standard stat-row shape used on
+/// Bot Detail and Controls' Current Session cards.
+struct StatRow: View {
+    let icon: String
+    let tint: Color
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            IconChip(systemName: icon, tint: tint)
+            Text(label).foregroundStyle(SwarmTheme.textMuted)
+            Spacer()
+            Text(value).foregroundStyle(SwarmTheme.textPrimary)
+        }
+    }
+}
+
 /// Circular initials avatar — matches the web's IdentityAvatar fallback
 /// (components/swarm.jsx) for accounts/users with no image.
 struct InitialsAvatar: View {

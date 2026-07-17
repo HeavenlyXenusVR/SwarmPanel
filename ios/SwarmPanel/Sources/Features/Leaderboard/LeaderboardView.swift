@@ -26,6 +26,7 @@ struct LeaderboardView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     PanelCard {
                         HStack {
+                            IconChip(systemName: "server.rack", tint: .blue)
                             Text("Bot").foregroundStyle(SwarmTheme.textMuted)
                             Spacer()
                             Picker("Bot", selection: $viewModel.selectedBotKey) {
@@ -38,6 +39,7 @@ struct LeaderboardView: View {
                         }
                         Divider().overlay(SwarmTheme.line)
                         HStack {
+                            IconChip(systemName: "number", tint: .indigo)
                             Text("Guild").foregroundStyle(SwarmTheme.textMuted)
                             TextField("Guild ID", text: $viewModel.guildId)
                                 .keyboardType(.numberPad)
@@ -161,22 +163,33 @@ private struct RankRow: View {
     let subtitle: String
     var videoUrl: String? = nil
 
-    private var badgeColor: Color {
+    private var medalColor: Color? {
         switch rank {
         case 1: return Color(hex: "FFD700") ?? SwarmTheme.warn
         case 2: return Color(hex: "C0C0C0") ?? SwarmTheme.textMuted
         case 3: return Color(hex: "CD7F32") ?? SwarmTheme.warn
-        default: return SwarmTheme.panel2
+        default: return nil
         }
     }
 
     var body: some View {
         HStack(spacing: 12) {
-            Text("\(rank)")
-                .font(.caption.bold())
-                .frame(width: 26, height: 26)
-                .background(badgeColor.opacity(rank <= 3 ? 0.35 : 1), in: Circle())
-                .foregroundStyle(rank <= 3 ? SwarmTheme.textPrimary : SwarmTheme.textMuted)
+            if let medalColor {
+                Circle()
+                    .fill(medalColor.gradient)
+                    .frame(width: 28, height: 28)
+                    .overlay(
+                        Image(systemName: "trophy.fill")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.white)
+                    )
+            } else {
+                Text("\(rank)")
+                    .font(.caption.bold())
+                    .frame(width: 28, height: 28)
+                    .background(SwarmTheme.panel2, in: Circle())
+                    .foregroundStyle(SwarmTheme.textMuted)
+            }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)

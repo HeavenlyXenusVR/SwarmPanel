@@ -205,18 +205,3 @@ struct BotDetailView: View {
     }
 }
 
-private struct StatRow: View {
-    let icon: String
-    let tint: Color
-    let label: String
-    let value: String
-
-    var body: some View {
-        HStack {
-            IconChip(systemName: icon, tint: tint)
-            Text(label).foregroundStyle(SwarmTheme.textMuted)
-            Spacer()
-            Text(value).foregroundStyle(SwarmTheme.textPrimary)
-        }
-    }
-}
