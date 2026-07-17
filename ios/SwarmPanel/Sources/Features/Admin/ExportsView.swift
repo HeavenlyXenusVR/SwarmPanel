@@ -31,7 +31,8 @@ struct ExportsView: View {
                                 VStack(spacing: 0) {
                                     ForEach(Array((snapshot.files ?? []).enumerated()), id: \.element.id) { index, file in
                                         if index > 0 { Divider().overlay(SwarmTheme.line) }
-                                        HStack {
+                                        HStack(spacing: 12) {
+                                            IconChip(systemName: "doc.text.fill", tint: .blue)
                                             VStack(alignment: .leading, spacing: 2) {
                                                 Text(file.name).font(.subheadline).foregroundStyle(SwarmTheme.textPrimary)
                                                 Text(file.sizeDescription).font(.caption2).foregroundStyle(SwarmTheme.textMuted)

@@ -25,9 +25,9 @@ struct DiagnosticsView: View {
                     }
                     .padding(.horizontal)
                 } else {
-                    JSONSection(title: "System Diagnostics", text: viewModel.diagnosticsText)
-                    JSONSection(title: "Metrics", text: viewModel.metricsText)
-                    JSONSection(title: "Stability", text: viewModel.stabilityText)
+                    JSONSection(title: "System Diagnostics", icon: "heart.text.square.fill", tint: .green, text: viewModel.diagnosticsText)
+                    JSONSection(title: "Metrics", icon: "chart.bar.fill", tint: .blue, text: viewModel.metricsText)
+                    JSONSection(title: "Stability", icon: "waveform.path.ecg", tint: .orange, text: viewModel.stabilityText)
                 }
             }
             .padding(.vertical)
@@ -69,11 +69,16 @@ struct DiagnosticsView: View {
 
 private struct JSONSection: View {
     let title: String
+    let icon: String
+    let tint: Color
     let text: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionLabel(title: title)
+            HStack {
+                IconChip(systemName: icon, tint: tint)
+                SectionLabel(title: title)
+            }
             PanelCard {
                 ScrollView(.horizontal) {
                     Text(text.isEmpty ? "—" : text)

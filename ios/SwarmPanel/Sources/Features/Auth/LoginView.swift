@@ -16,12 +16,21 @@ struct LoginView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("Username", text: $username)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    SecureField("Password", text: $password)
-                    TextField("Guild ID (owner login only)", text: $guildId)
-                        .keyboardType(.numberPad)
+                    HStack {
+                        IconChip(systemName: "person.fill", tint: .blue)
+                        TextField("Username", text: $username)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                    }
+                    HStack {
+                        IconChip(systemName: "lock.fill", tint: .gray)
+                        SecureField("Password", text: $password)
+                    }
+                    HStack {
+                        IconChip(systemName: "number", tint: .indigo)
+                        TextField("Guild ID (owner login only)", text: $guildId)
+                            .keyboardType(.numberPad)
+                    }
                 } footer: {
                     Text("Guild members can leave Guild ID blank — it's only needed for the site-owner admin login.")
                 }
@@ -39,14 +48,18 @@ struct LoginView: View {
                         HStack {
                             Spacer()
                             if isSubmitting {
-                                ProgressView()
+                                ProgressView().tint(.white)
                             } else {
                                 Text("Log In").bold()
                             }
                             Spacer()
                         }
+                        .foregroundStyle(.white)
+                        .padding(.vertical, 4)
                     }
+                    .listRowBackground(Rectangle().fill(SwarmTheme.accent.gradient))
                     .disabled(!canSubmit)
+                    .opacity(canSubmit ? 1 : 0.5)
                 }
             }
             .navigationTitle("SwarmPanel")

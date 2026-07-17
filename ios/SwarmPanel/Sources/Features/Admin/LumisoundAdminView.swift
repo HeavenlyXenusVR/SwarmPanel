@@ -29,7 +29,8 @@ struct LumisoundAdminView: View {
                     EmptyStateView(icon: "waveform", title: "No uploads.")
                 } else {
                     ForEach(viewModel.uploads) { upload in
-                        HStack {
+                        HStack(spacing: 12) {
+                            IconChip(systemName: "waveform", tint: .pink)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(upload.title?.isEmpty == false ? upload.title! : (upload.filename ?? "Untitled"))
                                     .font(.subheadline.bold())
@@ -59,7 +60,8 @@ struct LumisoundAdminView: View {
                     EmptyStateView(icon: "person.3", title: "No users.")
                 } else {
                     ForEach(viewModel.users) { user in
-                        HStack {
+                        HStack(spacing: 12) {
+                            IconChip(systemName: "person.fill", tint: user.isActive == true ? .blue : SwarmTheme.textMuted)
                             Text(user.username ?? "unknown").foregroundStyle(SwarmTheme.textPrimary)
                             Spacer()
                             StatusPill(text: user.isActive == true ? "Active" : "Suspended", tone: user.isActive == true ? .live : .danger)
@@ -106,27 +108,30 @@ private struct BugReportRow: View {
     @ObservedObject var viewModel: LumisoundAdminViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(report.category?.capitalized ?? "Bug")
-                    .font(.subheadline.bold())
-                    .foregroundStyle(SwarmTheme.textPrimary)
-                Spacer()
-                StatusPill(text: report.status?.capitalized ?? "Open", tone: report.status == "resolved" ? .off : .soft)
-            }
-            if let description = report.description {
-                Text(description)
-                    .font(.caption)
-                    .foregroundStyle(SwarmTheme.textMuted)
-                    .lineLimit(2)
-            }
-            if report.status != "resolved" {
-                Button("Mark Resolved") {
-                    Task { await viewModel.setBugReportStatus(report, status: "resolved") }
+        HStack(alignment: .top, spacing: 12) {
+            IconChip(systemName: "ladybug.fill", tint: report.status == "resolved" ? SwarmTheme.textMuted : .red)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(report.category?.capitalized ?? "Bug")
+                        .font(.subheadline.bold())
+                        .foregroundStyle(SwarmTheme.textPrimary)
+                    Spacer()
+                    StatusPill(text: report.status?.capitalized ?? "Open", tone: report.status == "resolved" ? .off : .soft)
                 }
-                .buttonStyle(.borderless)
-                .tint(SwarmTheme.accent)
-                .font(.caption)
+                if let description = report.description {
+                    Text(description)
+                        .font(.caption)
+                        .foregroundStyle(SwarmTheme.textMuted)
+                        .lineLimit(2)
+                }
+                if report.status != "resolved" {
+                    Button("Mark Resolved") {
+                        Task { await viewModel.setBugReportStatus(report, status: "resolved") }
+                    }
+                    .buttonStyle(.borderless)
+                    .tint(SwarmTheme.accent)
+                    .font(.caption)
+                }
             }
         }
         .padding(14)

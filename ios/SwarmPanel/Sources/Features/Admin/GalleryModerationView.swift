@@ -29,7 +29,8 @@ struct GalleryModerationView: View {
                     EmptyStateView(icon: "bubble.left", title: "No comments.")
                 } else {
                     ForEach(viewModel.comments) { comment in
-                        HStack(alignment: .top) {
+                        HStack(alignment: .top, spacing: 12) {
+                            IconChip(systemName: "bubble.left.fill", tint: .teal)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(comment.body ?? "").font(.caption).foregroundStyle(SwarmTheme.textPrimary).lineLimit(2)
                                 Text("\(comment.username ?? "unknown") on \(comment.mediaTitle ?? "media")")
@@ -79,30 +80,33 @@ private struct ReportRow: View {
     @ObservedObject var viewModel: GalleryModerationViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(report.reason?.capitalized ?? "Report")
-                    .font(.subheadline.bold())
-                    .foregroundStyle(SwarmTheme.textPrimary)
-                Spacer()
-                StatusPill(text: report.status?.capitalized ?? "Open", tone: report.status == "open" ? .soft : .off)
-            }
-            Text("\(report.username ?? "unknown") on \(report.mediaTitle ?? "media")")
-                .font(.caption2)
-                .foregroundStyle(SwarmTheme.textMuted)
-            if let details = report.details, !details.isEmpty {
-                Text(details).font(.caption).foregroundStyle(SwarmTheme.textMuted).lineLimit(2)
-            }
-            if report.status != "dismissed" {
+        HStack(alignment: .top, spacing: 12) {
+            IconChip(systemName: "flag.fill", tint: report.status == "open" ? .red : SwarmTheme.textMuted)
+            VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Button("Reviewed") { Task { await viewModel.setReportStatus(report, status: "reviewed") } }
-                        .buttonStyle(.borderless)
-                        .tint(SwarmTheme.accent)
-                    Button("Dismiss") { Task { await viewModel.setReportStatus(report, status: "dismissed") } }
-                        .buttonStyle(.borderless)
-                        .tint(SwarmTheme.textMuted)
+                    Text(report.reason?.capitalized ?? "Report")
+                        .font(.subheadline.bold())
+                        .foregroundStyle(SwarmTheme.textPrimary)
+                    Spacer()
+                    StatusPill(text: report.status?.capitalized ?? "Open", tone: report.status == "open" ? .soft : .off)
                 }
-                .font(.caption)
+                Text("\(report.username ?? "unknown") on \(report.mediaTitle ?? "media")")
+                    .font(.caption2)
+                    .foregroundStyle(SwarmTheme.textMuted)
+                if let details = report.details, !details.isEmpty {
+                    Text(details).font(.caption).foregroundStyle(SwarmTheme.textMuted).lineLimit(2)
+                }
+                if report.status != "dismissed" {
+                    HStack {
+                        Button("Reviewed") { Task { await viewModel.setReportStatus(report, status: "reviewed") } }
+                            .buttonStyle(.borderless)
+                            .tint(SwarmTheme.accent)
+                        Button("Dismiss") { Task { await viewModel.setReportStatus(report, status: "dismissed") } }
+                            .buttonStyle(.borderless)
+                            .tint(SwarmTheme.textMuted)
+                    }
+                    .font(.caption)
+                }
             }
         }
         .padding(14)

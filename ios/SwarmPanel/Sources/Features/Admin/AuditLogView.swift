@@ -8,7 +8,7 @@ struct AuditLogView: View {
             VStack(alignment: .leading, spacing: 12) {
                 PanelCard {
                     HStack {
-                        Image(systemName: "line.3.horizontal.decrease.circle").foregroundStyle(SwarmTheme.textMuted)
+                        IconChip(systemName: "line.3.horizontal.decrease", tint: .gray)
                         TextField("Filter by exact action (e.g. truncate_table)", text: $viewModel.actionFilter)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
@@ -61,29 +61,32 @@ private struct AuditLogRow: View {
     let entry: AuditLogEntry
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(entry.action)
-                    .font(.caption.bold())
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(SwarmTheme.panel2, in: Capsule())
-                    .foregroundStyle(SwarmTheme.textMuted)
-                Spacer()
-                Text(entry.actorUsername ?? "unknown")
-                    .font(.caption)
-                    .foregroundStyle(SwarmTheme.textMuted)
-            }
-            if let targetType = entry.targetType {
-                Text("\(targetType): \(entry.targetId ?? "-")")
-                    .font(.caption2)
-                    .foregroundStyle(SwarmTheme.textMuted)
-            }
-            if let details = entry.details, !details.isEmpty {
-                Text(details)
-                    .font(.caption2)
-                    .foregroundStyle(SwarmTheme.textMuted)
-                    .lineLimit(3)
+        HStack(alignment: .top, spacing: 12) {
+            IconChip(systemName: "list.bullet.clipboard", tint: .indigo)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(entry.action)
+                        .font(.caption.bold())
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(SwarmTheme.panel2, in: Capsule())
+                        .foregroundStyle(SwarmTheme.textMuted)
+                    Spacer()
+                    Text(entry.actorUsername ?? "unknown")
+                        .font(.caption)
+                        .foregroundStyle(SwarmTheme.textMuted)
+                }
+                if let targetType = entry.targetType {
+                    Text("\(targetType): \(entry.targetId ?? "-")")
+                        .font(.caption2)
+                        .foregroundStyle(SwarmTheme.textMuted)
+                }
+                if let details = entry.details, !details.isEmpty {
+                    Text(details)
+                        .font(.caption2)
+                        .foregroundStyle(SwarmTheme.textMuted)
+                        .lineLimit(3)
+                }
             }
         }
         .padding(14)

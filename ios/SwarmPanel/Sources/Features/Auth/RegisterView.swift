@@ -22,21 +22,36 @@ struct RegisterView: View {
         NavigationStack {
             Form {
                 Section("Account") {
-                    TextField("Username", text: $username)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    TextField("Discord Guild ID", text: $guildId)
-                        .keyboardType(.numberPad)
-                    SecureField("Password (min. 8 characters)", text: $password)
-                    TextField("Email (optional)", text: $email)
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.emailAddress)
+                    HStack {
+                        IconChip(systemName: "person.fill", tint: .blue)
+                        TextField("Username", text: $username)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                    }
+                    HStack {
+                        IconChip(systemName: "number", tint: .indigo)
+                        TextField("Discord Guild ID", text: $guildId)
+                            .keyboardType(.numberPad)
+                    }
+                    HStack {
+                        IconChip(systemName: "lock.fill", tint: .gray)
+                        SecureField("Password (min. 8 characters)", text: $password)
+                    }
+                    HStack {
+                        IconChip(systemName: "envelope.fill", tint: .teal)
+                        TextField("Email (optional)", text: $email)
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.emailAddress)
+                    }
                 }
 
                 Section {
-                    TextField("Discord webhook URL", text: $verificationWebhookUrl)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                    HStack {
+                        IconChip(systemName: "link", tint: .purple)
+                        TextField("Discord webhook URL", text: $verificationWebhookUrl)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                    }
                 } header: {
                     Text("Guild ownership proof")
                 } footer: {
@@ -56,14 +71,18 @@ struct RegisterView: View {
                         HStack {
                             Spacer()
                             if isSubmitting {
-                                ProgressView()
+                                ProgressView().tint(.white)
                             } else {
                                 Text("Create Account").bold()
                             }
                             Spacer()
                         }
+                        .foregroundStyle(.white)
+                        .padding(.vertical, 4)
                     }
+                    .listRowBackground(Rectangle().fill(SwarmTheme.accent.gradient))
                     .disabled(!canSubmit)
+                    .opacity(canSubmit ? 1 : 0.5)
                 }
             }
             .navigationTitle("Register")

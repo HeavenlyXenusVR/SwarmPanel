@@ -11,7 +11,7 @@ struct AccountsAdminView: View {
             VStack(alignment: .leading, spacing: 14) {
                 PanelCard {
                     HStack {
-                        Image(systemName: "magnifyingglass").foregroundStyle(SwarmTheme.textMuted)
+                        IconChip(systemName: "magnifyingglass", tint: .gray)
                         TextField("Search accounts", text: $viewModel.query)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
@@ -94,6 +94,7 @@ private struct AccountRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
+                InitialsAvatar(name: account.name, diameter: 28)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(account.name).font(.subheadline.bold()).foregroundStyle(SwarmTheme.textPrimary)
                     if let guildId = account.guildId {

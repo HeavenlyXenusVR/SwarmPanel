@@ -17,6 +17,10 @@ struct AlertRulesView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         SectionLabel(title: "New Rule")
                         PanelCard {
+                            HStack {
+                                IconChip(systemName: "bell.badge", tint: .red)
+                                Text("New Rule").foregroundStyle(SwarmTheme.textMuted)
+                            }
                             Picker("Type", selection: $newRuleType) {
                                 ForEach(alertRuleTypes, id: \.self) { type in
                                     Text(type.replacingOccurrences(of: "_", with: " ").capitalized).tag(type)
@@ -75,6 +79,7 @@ private struct AlertRuleRow: View {
 
     var body: some View {
         HStack {
+            IconChip(systemName: "bell.badge", tint: rule.enabled ? .red : SwarmTheme.textMuted)
             VStack(alignment: .leading, spacing: 4) {
                 Text(rule.ruleType.replacingOccurrences(of: "_", with: " ").capitalized)
                     .font(.subheadline.bold())

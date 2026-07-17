@@ -13,10 +13,13 @@ struct ServerSettingsView: View {
     var body: some View {
         Form {
             Section {
-                TextField("https://your-backend", text: $urlText)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .keyboardType(.URL)
+                HStack {
+                    IconChip(systemName: "server.rack", tint: .gray)
+                    TextField("https://your-backend", text: $urlText)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                }
             } header: {
                 SectionLabel(title: "Backend URL")
             } footer: {
@@ -45,10 +48,11 @@ struct ServerSettingsView: View {
                         Text("Save & Log Out").bold()
                         Spacer()
                     }
+                    .foregroundStyle(.white)
+                    .padding(.vertical, 4)
                 }
-                .tint(SwarmTheme.accent)
             }
-            .listRowBackground(SwarmTheme.panel)
+            .listRowBackground(Rectangle().fill(SwarmTheme.accent.gradient))
         }
         .scrollContentBackground(.hidden)
         .background(SwarmTheme.background)
