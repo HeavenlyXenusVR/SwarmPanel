@@ -18,14 +18,14 @@ struct DashboardView: View {
     private var allSessions: [DashboardSession] {
         allBots.flatMap { $0.sessions ?? [] }
     }
-    private var botBySessionId: [String: DashboardBot] {
-        var map: [String: DashboardBot] = [:]
-        for bot in allBots {
-            for session in bot.sessions ?? [] {
-                map[session.id] = bot
-            }
-        }
-        return map
+    /// Pairs each session with its owning bot and keys identity on
+    /// `bot.key`, not just `session.id` (guildId+channelId) — two different
+    /// bots can report a session for the same guild/channel (the whole
+    /// point of a "swarm" of bots covering overlapping guilds), which would
+    /// otherwise give ForEach/NavigationLink duplicate identifiers and crash
+    /// SwiftUI's diffing on the very next tap anywhere on this screen.
+    private var allBotSessions: [BotSession] {
+        allBots.flatMap { bot in (bot.sessions ?? []).map { BotSession(bot: bot, session: $0) } }
     }
     private var ownBotKey: String? {
         guard let guildId = appState.guildId else { return nil }
@@ -156,33 +156,29 @@ struct DashboardView: View {
 
                             VStack(alignment: .leading, spacing: 10) {
                                 SectionLabel(title: "Live Sessions", count: allSessions.count)
-                                if allSessions.isEmpty {
+                                if allBotSessions.isEmpty {
                                     PanelCard {
                                         EmptyStateView(icon: "waveform.slash", title: "No active sessions right now.")
                                     }
                                 } else {
                                     PanelCard(padding: 0) {
                                         VStack(spacing: 0) {
-                                            ForEach(Array(allSessions.enumerated()), id: \.element.id) { index, session in
+                                            ForEach(Array(allBotSessions.enumerated()), id: \.element.id) { index, entry in
                                                 if index > 0 {
                                                     Divider().overlay(SwarmTheme.line)
                                                 }
-                                                if let bot = botBySessionId[session.id] {
-                                                    NavigationLink {
-                                                        BotDetailView(
-                                                            botKey: bot.key,
-                                                            botDisplayName: bot.displayName?.isEmpty == false ? bot.displayName! : bot.key,
-                                                            guildId: session.guildId ?? ""
-                                                        )
-                                                    } label: {
-                                                        SessionRow(session: session)
-                                                    }
-                                                    .buttonStyle(.plain)
-                                                    .contextMenu {
-                                                        sessionQuickActions(bot: bot, session: session)
-                                                    }
-                                                } else {
-                                                    SessionRow(session: session)
+                                                NavigationLink {
+                                                    BotDetailView(
+                                                        botKey: entry.bot.key,
+                                                        botDisplayName: entry.bot.displayName?.isEmpty == false ? entry.bot.displayName! : entry.bot.key,
+                                                        guildId: entry.session.guildId ?? ""
+                                                    )
+                                                } label: {
+                                                    SessionRow(session: entry.session)
+                                                }
+                                                .buttonStyle(.plain)
+                                                .contextMenu {
+                                                    sessionQuickActions(bot: entry.bot, session: entry.session)
                                                 }
                                             }
                                         }
@@ -261,6 +257,16 @@ struct DashboardView: View {
             }
         }
     }
+}
+
+/// A session paired with the bot that reported it. `DashboardSession.id`
+/// alone (guildId+channelId) isn't guaranteed unique across bots — two bots
+/// covering the same guild would collide — so identity here is keyed on
+/// `bot.key` too.
+private struct BotSession: Identifiable {
+    let bot: DashboardBot
+    let session: DashboardSession
+    var id: String { "\(bot.key):\(session.id)" }
 }
 
 private struct SessionRow: View {
