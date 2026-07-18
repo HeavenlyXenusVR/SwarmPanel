@@ -212,6 +212,17 @@ struct DashboardView: View {
         }
         .onAppear { viewModel.start() }
         .onDisappear { viewModel.stop() }
+        // Uses the emitted value directly rather than re-reading
+        // viewModel.response — @Published's publisher fires from willSet,
+        // so the backing property isn't guaranteed updated yet at the point
+        // this closure runs.
+        .onReceive(viewModel.$response) { newResponse in
+            let bots = newResponse?.bots ?? []
+            let ownSession = appState.guildId.flatMap { guildId in
+                bots.flatMap { $0.sessions ?? [] }.first { $0.guildId == guildId }
+            }
+            WidgetDataService.shared.update(bots: bots, ownSession: ownSession)
+        }
     }
 
     private var fleetStatusShareText: String {

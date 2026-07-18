@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Shared with SwarmPanelWidget so the widget/Live Activity extension
+         can read the Now Playing + fleet status snapshot WidgetDataService
+         writes (see project.yml's SwarmPanelWidget target). -->
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.com.swarmpanel.ios</string>
+    </array>
+</dict>
+</plist>

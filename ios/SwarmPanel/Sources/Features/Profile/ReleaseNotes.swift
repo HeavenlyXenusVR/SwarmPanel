@@ -16,6 +16,10 @@ let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"
 /// Static changelog shown on the "What's New" screen — updated by hand
 /// alongside each ios/vX.Y.Z tag, mirroring the tag's own release notes.
 let releaseNotes: [ReleaseNote] = [
+    ReleaseNote(version: "0.8.0", highlights: [
+        "Home Screen & Lock Screen widgets: fleet status (bots/live/queued) and your guild's Now Playing track",
+        "Live Activity for your guild's Now Playing session on the Lock Screen and Dynamic Island, with Skip/Pause/Resume buttons",
+    ]),
     ReleaseNote(version: "0.7.5", highlights: [
         "Siri & Shortcuts support: \"Skip the track\", \"Pause\", \"Resume\", and \"What's playing\" for your guild's bot",
         "Notifications can now arrive in the background as local banners (best-effort — this app isn't on a paid Apple Developer account, so this isn't true push, just an opportunistic background check)",

@@ -129,6 +129,11 @@
         <string>com.swarmpanel.ios.refresh</string>
     </array>
 
+    <!-- Lock Screen / Dynamic Island Live Activity for the account's own
+         guild's Now Playing session — see LiveActivityManager.swift. -->
+    <key>NSSupportsLiveActivities</key>
+    <true/>
+
     <key>UILaunchScreen</key>
     <dict/>
 

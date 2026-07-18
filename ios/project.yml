@@ -33,6 +33,13 @@ targets:
     platform: iOS
     sources:
       - path: SwarmPanel/Sources
+      # Shared with SwarmPanelWidget so both targets agree on the App
+      # Group's storage keys, the Live Activity's data shape, and the
+      # control AppIntents (Skip/Pause/Resume/What's Playing — the widget's
+      # buttons use these same intents, not a duplicate set) without
+      # needing a separate framework target.
+      - path: Shared/WidgetShared.swift
+      - path: Shared/SwarmPanelControlIntents.swift
     # Resources listed EXPLICITLY so XcodeGen creates a proper "Compile Asset
     # Catalogs" (actool) build phase — mirrors Lumisound's project.yml.
     resources:
@@ -43,8 +50,11 @@ targets:
         INFOPLIST_FILE: SwarmPanel/Resources/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_INCLUDE_ALL_APPS_IN_ASSET_CATALOG_COMPILATION: "YES"
+        CODE_SIGN_ENTITLEMENTS: SwarmPanel/Resources/SwarmPanel.entitlements
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ""
+    dependencies:
+      - target: SwarmPanelWidget
     scheme:
       buildAction:
         targets:
@@ -61,6 +71,36 @@ targets:
         config: Debug
       testTargets:
         - SwarmPanelTests
+
+  # Widget + Lock Screen/Dynamic Island Live Activity extension. Embedded in
+  # the SwarmPanel app target above (dependencies:), so it ships inside the
+  # same .ipa and installs automatically through the same AltStore sideload
+  # flow as the app itself — no separate pairing/install step. Reads the
+  # Now Playing + fleet status snapshot WidgetDataService writes to the
+  # shared App Group container; its transport buttons call the shared
+  # Skip/Pause/Resume AppIntents directly (a plain network POST via
+  # FleetControlService, not a local audio engine call), so — unlike a
+  # widget controlling on-device playback — it never needs the host app to
+  # be alive to act.
+  SwarmPanelWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: SwarmPanelWidget/Sources
+      - path: Shared/WidgetShared.swift
+      - path: Shared/SwarmPanelControlIntents.swift
+      - path: SwarmPanel/Sources/Networking
+      - path: SwarmPanel/Sources/Models/BotModels.swift
+      - path: SwarmPanel/Sources/Models/Common.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.swarmpanel.ios.widget
+        INFOPLIST_FILE: SwarmPanelWidget/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: SwarmPanelWidget/SwarmPanelWidget.entitlements
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+        SKIP_INSTALL: "YES"
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
 
   SwarmPanelTests:
     type: bundle.unit-test
