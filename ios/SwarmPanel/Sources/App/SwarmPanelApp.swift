@@ -13,6 +13,10 @@ struct SwarmPanelApp: App {
 
     init() {
         Self.configureGlobalChrome()
+        // Must be registered before the app finishes launching — doing this
+        // from a .task (after the first view appears) is too late per
+        // BGTaskScheduler's contract.
+        BackgroundRefreshManager.register()
     }
 
     /// UIKit appearance proxies for the tab bar / nav bar — SwiftUI has no
@@ -48,10 +52,13 @@ struct SwarmPanelApp: App {
                 .overlay(BiometricLockOverlay(lock: biometricLock))
                 .task { await appState.bootstrap() }
                 .task {
-                    // Badge-only authorization (no alerts/sounds) so the app
-                    // icon can reflect unread notification count — declining
-                    // this just means the badge silently never appears.
-                    try? await UNUserNotificationCenter.current().requestAuthorization(options: [.badge])
+                    // Full alert/sound/badge authorization — this app has no
+                    // paid Apple Developer account for real APNs push, so
+                    // BackgroundRefreshManager's opportunistic background
+                    // fetch + locally-delivered banners are the workaround;
+                    // badge-only auth would silently suppress those banners.
+                    // Declining just means neither badges nor banners appear.
+                    try? await UNUserNotificationCenter.current().requestAuthorization(options: [.badge, .sound, .alert])
                 }
                 .onAppear {
                     appDelegate.router = router
@@ -62,7 +69,10 @@ struct SwarmPanelApp: App {
                 }
                 .onOpenURL { url in router.handleURL(url) }
                 .onChange(of: scenePhase) { newPhase in
-                    if newPhase == .background { biometricLock.lock() }
+                    if newPhase == .background {
+                        biometricLock.lock()
+                        BackgroundRefreshManager.scheduleNext()
+                    }
                 }
         }
     }

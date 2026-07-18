@@ -16,6 +16,10 @@ let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"
 /// Static changelog shown on the "What's New" screen — updated by hand
 /// alongside each ios/vX.Y.Z tag, mirroring the tag's own release notes.
 let releaseNotes: [ReleaseNote] = [
+    ReleaseNote(version: "0.7.5", highlights: [
+        "Siri & Shortcuts support: \"Skip the track\", \"Pause\", \"Resume\", and \"What's playing\" for your guild's bot",
+        "Notifications can now arrive in the background as local banners (best-effort — this app isn't on a paid Apple Developer account, so this isn't true push, just an opportunistic background check)",
+    ]),
     ReleaseNote(version: "0.7.4", highlights: [
         "New Fleet Topology screen (Admin Tools): see which bot is serving which guild, flags any guild covered by more than one bot, and lets admins restart a bot from the list",
         "What's New now surfaces automatically after an update instead of only being reachable from Profile",

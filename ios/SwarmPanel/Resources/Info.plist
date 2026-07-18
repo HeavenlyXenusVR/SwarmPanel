@@ -116,6 +116,19 @@
     <key>NSFaceIDUsageDescription</key>
     <string>Used to unlock SwarmPanel when app lock is enabled in Profile settings.</string>
 
+    <!-- No paid Apple Developer account, so no real APNs push — this is the
+         workaround: an opportunistic BGAppRefreshTask (BackgroundRefreshManager)
+         that checks for new notifications and delivers them as local
+         notifications while the app is backgrounded (not force-quit). -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>fetch</string>
+    </array>
+    <key>BGTaskSchedulerPermittedIdentifiers</key>
+    <array>
+        <string>com.swarmpanel.ios.refresh</string>
+    </array>
+
     <key>UILaunchScreen</key>
     <dict/>
 

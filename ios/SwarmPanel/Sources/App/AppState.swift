@@ -19,6 +19,13 @@ final class AppState: ObservableObject {
     private let api = APIClient.shared
     private var refreshTask: Task<Void, Never>?
 
+    /// AppState only holds guildId in memory for the SwiftUI app's lifetime —
+    /// an App Intent invoked via Siri without opening the app can't rely on
+    /// that, so it's also mirrored to UserDefaults for FleetControlService to
+    /// read headlessly. Not sensitive (unlike the bearer token, which stays
+    /// Keychain-only), just an account identifier.
+    static let lastKnownGuildIdKey = "swarmpanel.lastKnownGuildId"
+
     init() {
         api.onUnauthorized = { [weak self] in
             Task { @MainActor in self?.handleUnauthorized() }
@@ -80,6 +87,7 @@ final class AppState: ObservableObject {
         isAdmin = false
         isModerator = false
         canGallery = false
+        UserDefaults.standard.removeObject(forKey: Self.lastKnownGuildIdKey)
     }
 
     /// Rolling refresh: GET /api/session re-issues a fresh full-TTL bearer
@@ -110,6 +118,7 @@ final class AppState: ObservableObject {
         isModerator = payload.moderator ?? isModerator
         canGallery = payload.imageGalleryOwner ?? canGallery
         isAuthenticated = true
+        if let guildId { UserDefaults.standard.set(guildId, forKey: Self.lastKnownGuildIdKey) }
         startRefreshLoop()
     }
 
@@ -117,6 +126,7 @@ final class AppState: ObservableObject {
         api.token = nil
         stopRefreshLoop()
         isAuthenticated = false
+        UserDefaults.standard.removeObject(forKey: Self.lastKnownGuildIdKey)
     }
 
     private func startRefreshLoop() {
