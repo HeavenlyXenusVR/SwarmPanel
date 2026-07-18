@@ -11,6 +11,13 @@ enum WidgetShared {
     static let appGroupID = "group.com.swarmpanel.ios"
     static let thumbnailFilename = "widget_thumbnail.jpg"
 
+    /// AppState.swift isn't part of the SwarmPanelWidget target's sources
+    /// (it pulls in the whole login/session API surface, unnecessary for a
+    /// widget/intent), so this constant lives here instead — the one thing
+    /// FleetControlService needs from AppState that both targets must agree
+    /// on. AppState.apply(_:) writes it; FleetControlService reads it.
+    static let lastKnownGuildIdKey = "swarmpanel.lastKnownGuildId"
+
     enum Keys {
         static let title = "widget_session_title"
         static let subtitle = "widget_session_subtitle"

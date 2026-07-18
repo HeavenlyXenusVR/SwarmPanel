@@ -227,12 +227,21 @@ struct WidgetNowPlayingView: View {
 
                     if #available(iOS 17.0, *) {
                         HStack(spacing: 20) {
-                            Button(intent: entry.isPlaying && !entry.isPaused ? PauseTrackIntent() : ResumeTrackIntent()) {
-                                Image(systemName: entry.isPlaying && !entry.isPaused ? "pause.fill" : "play.fill")
-                                    .font(.system(size: 20, weight: .semibold))
-                                    .foregroundStyle(.white)
+                            if entry.isPlaying && !entry.isPaused {
+                                Button(intent: PauseTrackIntent()) {
+                                    Image(systemName: "pause.fill")
+                                        .font(.system(size: 20, weight: .semibold))
+                                        .foregroundStyle(.white)
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                Button(intent: ResumeTrackIntent()) {
+                                    Image(systemName: "play.fill")
+                                        .font(.system(size: 20, weight: .semibold))
+                                        .foregroundStyle(.white)
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
 
                             Button(intent: SkipTrackIntent()) {
                                 Image(systemName: "forward.fill")

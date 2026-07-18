@@ -72,11 +72,19 @@ private struct LiveActivityTransportControls: View {
     var body: some View {
         if #available(iOS 17.0, *) {
             HStack(spacing: spacing) {
-                Button(intent: state.isPlaying && !state.isPaused ? PauseTrackIntent() : ResumeTrackIntent()) {
-                    Image(systemName: state.isPlaying && !state.isPaused ? "pause.fill" : "play.fill")
-                        .font(.system(size: iconSize, weight: .semibold))
+                if state.isPlaying && !state.isPaused {
+                    Button(intent: PauseTrackIntent()) {
+                        Image(systemName: "pause.fill")
+                            .font(.system(size: iconSize, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Button(intent: ResumeTrackIntent()) {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: iconSize, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
 
                 Button(intent: SkipTrackIntent()) {
                     Image(systemName: "forward.fill")

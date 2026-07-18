@@ -20,11 +20,14 @@ final class AppState: ObservableObject {
     private var refreshTask: Task<Void, Never>?
 
     /// AppState only holds guildId in memory for the SwiftUI app's lifetime —
-    /// an App Intent invoked via Siri without opening the app can't rely on
-    /// that, so it's also mirrored to UserDefaults for FleetControlService to
-    /// read headlessly. Not sensitive (unlike the bearer token, which stays
-    /// Keychain-only), just an account identifier.
-    static let lastKnownGuildIdKey = "swarmpanel.lastKnownGuildId"
+    /// an App Intent invoked via Siri (or a widget button) without opening
+    /// the app can't rely on that, so it's also mirrored to UserDefaults for
+    /// FleetControlService to read headlessly. Not sensitive (unlike the
+    /// bearer token, which stays Keychain-only), just an account identifier.
+    /// The actual string lives in WidgetShared (Shared/WidgetShared.swift)
+    /// since FleetControlService is compiled into the SwarmPanelWidget
+    /// extension target too, which doesn't include AppState.swift itself.
+    static let lastKnownGuildIdKey = WidgetShared.lastKnownGuildIdKey
 
     init() {
         api.onUnauthorized = { [weak self] in
