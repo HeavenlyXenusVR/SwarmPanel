@@ -172,6 +172,7 @@ struct BotDetailView: View {
             Haptics.light()
             await viewModel.load(botKey: botKey, guildId: guildId)
         }
+        .refreshOnForeground { await viewModel.load(botKey: botKey, guildId: guildId) }
     }
 
     private func upNextShareText(_ items: [QueueItem]) -> String {

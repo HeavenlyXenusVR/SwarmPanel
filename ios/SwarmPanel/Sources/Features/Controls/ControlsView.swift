@@ -219,6 +219,7 @@ struct ControlsView: View {
                 Haptics.light()
                 await viewModel.loadControlStateAndQueues()
             }
+            .refreshOnForeground { await viewModel.loadControlStateAndQueues() }
             .notificationsBell(notificationsViewModel)
             .confirmationDialog(
                 "Delete \"\(deleteQueueTarget?.name ?? "")\"?",

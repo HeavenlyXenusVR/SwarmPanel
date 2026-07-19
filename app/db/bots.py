@@ -1507,6 +1507,23 @@ class BotsMixin:
                             pass
                         result["message"] = f"Cleared the queue and current playback for guild {gid} on {bot.display_name}."
 
+                    elif action == "RESET_QUEUE":
+                        # Gentler than CLEAR: wipe the live queue + backup queue rows
+                        # only. No swarm_overrides STOP, no playback/voice-state writes —
+                        # the bot stays connected and playing, so it repopulates the
+                        # queue on its own next cycle instead of sitting stopped.
+                        await cur.execute(
+                            f"CREATE TABLE IF NOT EXISTS `{schema}`.`{prefix}_queue` "
+                            "(id INT AUTO_INCREMENT PRIMARY KEY, guild_id BIGINT, "
+                            "bot_name VARCHAR(50), video_url TEXT, title TEXT, requester_id BIGINT DEFAULT NULL)"
+                        )
+                        await cur.execute(f"DELETE FROM `{schema}`.`{prefix}_queue` WHERE guild_id = %s AND bot_name = %s", (gid, bot_key))
+                        try:
+                            await cur.execute(f"DELETE FROM `{schema}`.`{prefix}_queue_backup` WHERE guild_id = %s AND bot_name = %s", (gid, bot_key))
+                        except Exception:
+                            pass
+                        result["message"] = f"Cleared the queue and backup queue for guild {gid} on {bot.display_name} — it will repopulate automatically."
+
                     elif action == "LOOP":
                         mode = _normalize_loop_mode(payload.get("loop_mode") if isinstance(payload, dict) else payload)
                         await self._ensure_music_guild_settings_schema(cur, schema, prefix)

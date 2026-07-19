@@ -71,6 +71,7 @@ struct ExportsView: View {
             Haptics.light()
             await viewModel.load()
         }
+        .refreshOnForeground { await viewModel.load() }
         .sheet(item: $shareURL) { item in
             ActivityShareSheet(activityItems: [item.url])
         }

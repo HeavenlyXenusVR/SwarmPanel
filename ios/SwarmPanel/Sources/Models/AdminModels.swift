@@ -140,3 +140,19 @@ struct GalleryReportStatusBody: Encodable {
 }
 
 let galleryReportStatuses = ["open", "reviewed", "dismissed"]
+
+// MARK: - Live event feed (GET /api/events) — admin only
+
+struct EventsResponse: Decodable {
+    let events: [FeedEvent]?
+}
+
+struct FeedEvent: Decodable, Identifiable {
+    let timestamp: String?
+    let source: String?
+    let title: String?
+    let description: String?
+    let type: String?
+
+    var id: String { "\(timestamp ?? "")-\(source ?? "")-\(title ?? "")" }
+}

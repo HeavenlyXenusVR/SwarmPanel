@@ -54,6 +54,7 @@ struct AuditLogView: View {
             Haptics.light()
             await viewModel.load()
         }
+        .refreshOnForeground { await viewModel.load() }
     }
 }
 

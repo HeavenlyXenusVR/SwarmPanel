@@ -41,7 +41,13 @@ struct ThreadView: View {
         .background(SwarmTheme.background)
         .navigationTitle(viewModel.peerName)
         .navigationBarTitleDisplayMode(.inline)
-        .task { await viewModel.load() }
+        .task {
+            await viewModel.load()
+            viewModel.startPolling()
+        }
+        .onDisappear { viewModel.stopPolling() }
+        .refreshable { await viewModel.load() }
+        .refreshOnForeground { await viewModel.load() }
     }
 
     private func bubble(_ message: ChatMessage, mine: Bool) -> some View {

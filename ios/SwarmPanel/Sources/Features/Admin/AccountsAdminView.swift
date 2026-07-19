@@ -61,6 +61,7 @@ struct AccountsAdminView: View {
             Haptics.light()
             await viewModel.load()
         }
+        .refreshOnForeground { await viewModel.load() }
         .alert("Reset Password", isPresented: Binding(get: { resetPasswordTarget != nil }, set: { if !$0 { resetPasswordTarget = nil } })) {
             SecureField("New password", text: $newPassword)
             Button("Cancel", role: .cancel) { resetPasswordTarget = nil }

@@ -42,6 +42,23 @@ enum JSONValue: Decodable {
         }
     }
 
+    /// Single-value rendering for a table cell/key-value row — unlike
+    /// `prettyPrinted` (which requires an Array/Dictionary root), this handles
+    /// every case since a database column value is just as often a bare
+    /// scalar as a nested object.
+    var displayString: String {
+        switch self {
+        case .string(let value): return value
+        case .bool(let value): return value ? "true" : "false"
+        case .null: return "—"
+        case .number(let value):
+            return value.truncatingRemainder(dividingBy: 1) == 0
+                ? String(Int64(value))
+                : String(value)
+        case .array, .object: return prettyPrinted
+        }
+    }
+
     /// JSONSerialization requires the root object to be an Array or
     /// Dictionary — every endpoint this is used for returns a JSON object at
     /// the top level, so that's the only case handled meaningfully; a bare

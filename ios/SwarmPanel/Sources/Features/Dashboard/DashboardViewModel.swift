@@ -86,15 +86,24 @@ final class DashboardViewModel: ObservableObject {
         }
     }
 
+    /// Bumped at the start of every loadOnce() call and captured locally so a
+    /// slower, overlapping request (e.g. the 15s poll racing a manual
+    /// pull-to-refresh) can never clobber a newer response with a stale one.
+    private var loadGeneration = 0
+
     private func loadOnce(silent: Bool = false) async {
         if !silent { isLoading = true }
+        loadGeneration += 1
+        let generation = loadGeneration
         do {
             let fresh: DashboardResponse = try await api.get("/api/dashboard")
-            response = fresh
-            errorMessage = nil
-            persistSnapshot(fresh)
+            if generation == loadGeneration {
+                response = fresh
+                errorMessage = nil
+                persistSnapshot(fresh)
+            }
         } catch {
-            if !silent, !error.isCancellation {
+            if !silent, !error.isCancellation, generation == loadGeneration {
                 errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to load dashboard."
             }
         }

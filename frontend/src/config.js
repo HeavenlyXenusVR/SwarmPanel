@@ -38,6 +38,7 @@ export const CONTROL_ACTIONS = [
   "SKIP",
   "STOP",
   "CLEAR",
+  "RESET_QUEUE",
   "SHUFFLE",
   "LOOP",
   "FILTER",

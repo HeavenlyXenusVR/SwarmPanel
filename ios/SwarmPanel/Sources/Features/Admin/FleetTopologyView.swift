@@ -78,6 +78,7 @@ struct FleetTopologyView: View {
             Haptics.light()
             await viewModel.load()
         }
+        .refreshOnForeground { await viewModel.load() }
         .confirmationDialog(
             "Restart \(restartTarget?.displayName?.isEmpty == false ? restartTarget!.displayName! : (restartTarget?.key ?? "this bot"))?",
             isPresented: Binding(get: { restartTarget != nil }, set: { if !$0 { restartTarget = nil } }),

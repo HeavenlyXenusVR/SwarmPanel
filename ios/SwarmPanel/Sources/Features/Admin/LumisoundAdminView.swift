@@ -89,6 +89,7 @@ struct LumisoundAdminView: View {
             Haptics.light()
             await viewModel.load()
         }
+        .refreshOnForeground { await viewModel.load() }
         .confirmationDialog(
             "Delete this upload?",
             isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }),

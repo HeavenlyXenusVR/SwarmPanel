@@ -4,6 +4,26 @@ import Foundation
 
 struct BotsResponse: Decodable {
     let bots: [BotSummary]?
+    let inviteBots: [InviteBot]?
+}
+
+/// Invite roster card — mirrors invite_payload() in app/routers/bots.py.
+struct InviteBot: Decodable, Identifiable {
+    let key: String
+    let displayName: String?
+    let kind: String?
+    let capabilitySummary: String?
+    let accent: String?
+    let tokenConfigured: Bool?
+    let connectedToSessionGuild: Bool?
+    let iconUrl: String?
+    let identityName: String?
+    let identityError: String?
+    let inviteUrl: String?
+    let permissions: [String]?
+
+    var id: String { key }
+    var label: String { displayName?.isEmpty == false ? displayName! : key }
 }
 
 struct BotSummary: Decodable, Identifiable, Hashable {
@@ -147,6 +167,7 @@ enum ControlAction: String, CaseIterable, Identifiable {
     case skip = "SKIP"
     case stop = "STOP"
     case clear = "CLEAR"
+    case resetQueue = "RESET_QUEUE"
     case shuffle = "SHUFFLE"
     case loop = "LOOP"
     case filter = "FILTER"

@@ -194,6 +194,7 @@ struct DashboardView: View {
                         Haptics.light()
                         await viewModel.refresh()
                     }
+                    .refreshOnForeground { await viewModel.refresh() }
                 }
             }
             .navigationTitle("Dashboard")

@@ -28,6 +28,7 @@ struct DiagnosticsView: View {
                     JSONSection(title: "System Diagnostics", icon: "heart.text.square.fill", tint: .green, text: viewModel.diagnosticsText)
                     JSONSection(title: "Metrics", icon: "chart.bar.fill", tint: .blue, text: viewModel.metricsText)
                     JSONSection(title: "Stability", icon: "waveform.path.ecg", tint: .orange, text: viewModel.stabilityText)
+                    EventsSection(events: viewModel.events)
                 }
             }
             .padding(.vertical)
@@ -48,6 +49,10 @@ struct DiagnosticsView: View {
         }
         .refreshable {
             Haptics.light()
+            await viewModel.load()
+            await chartViewModel.load()
+        }
+        .refreshOnForeground {
             await viewModel.load()
             await chartViewModel.load()
         }
@@ -85,6 +90,47 @@ private struct JSONSection: View {
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(SwarmTheme.textPrimary)
                         .textSelection(.enabled)
+                }
+            }
+        }
+        .padding(.horizontal)
+    }
+}
+
+private struct EventsSection: View {
+    let events: [FeedEvent]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                IconChip(systemName: "bolt.horizontal.fill", tint: .indigo)
+                SectionLabel(title: "Events", count: events.count)
+            }
+            if events.isEmpty {
+                PanelCard { EmptyStateView(icon: "bolt.horizontal", title: "No recent events.") }
+            } else {
+                PanelCard(padding: 0) {
+                    VStack(spacing: 0) {
+                        ForEach(Array(events.prefix(40).enumerated()), id: \.element.id) { index, event in
+                            if index > 0 { Divider().overlay(SwarmTheme.line) }
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack {
+                                    Text(event.title ?? event.type ?? "Event").font(.subheadline.bold()).foregroundStyle(SwarmTheme.textPrimary)
+                                    Spacer()
+                                    if let source = event.source {
+                                        Text(source).font(.caption2).foregroundStyle(SwarmTheme.textMuted)
+                                    }
+                                }
+                                if let description = event.description, !description.isEmpty {
+                                    Text(description).font(.caption).foregroundStyle(SwarmTheme.textMuted)
+                                }
+                                if let timestamp = event.timestamp {
+                                    Text(timestamp).font(.caption2).foregroundStyle(SwarmTheme.textMuted)
+                                }
+                            }
+                            .padding(12)
+                        }
+                    }
                 }
             }
         }

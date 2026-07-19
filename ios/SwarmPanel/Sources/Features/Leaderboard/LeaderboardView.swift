@@ -152,6 +152,7 @@ struct LeaderboardView: View {
                 Haptics.light()
                 await viewModel.loadLeaderboard()
             }
+            .refreshOnForeground { await viewModel.loadLeaderboard() }
             .notificationsBell(notificationsViewModel)
         }
     }

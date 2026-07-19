@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ListMusic, Play, Plus, RefreshCw, Send, Trash2, WandSparkles } from "lucide-react";
+import { ListMusic, Play, Plus, RefreshCw, RotateCcw, Send, Trash2, WandSparkles } from "lucide-react";
 import { apiFetch, cachedFetch, clearCache, query } from "../api.js";
 import { useLiveRefresh } from "../hooks/useLiveRefresh.js";
 import { useDashboardStream } from "../hooks/useDashboardStream.js";
@@ -319,6 +319,7 @@ export default function ControlsPage({ ctx }) {
             <div className="actions-row">
               <button className="primary" type="submit" disabled={busy}><Send size={16} />{busy ? "Sending" : "Send Control"}</button>
               <button type="button" onClick={() => update("action", "SMART_RECOMMEND")}><WandSparkles size={16} />Smart Rec</button>
+              <button type="button" onClick={() => update("action", "RESET_QUEUE")}><RotateCcw size={16} />Reset Queue</button>
             </div>
           </form>
         </LoadingSection>

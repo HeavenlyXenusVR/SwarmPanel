@@ -121,6 +121,14 @@ struct ProfileView: View {
                 }
                 .listRowBackground(SwarmTheme.panel)
 
+                Section {
+                    NavigationLink { InvitesView() } label: { IconRow(icon: "envelope.badge.person.crop", tint: .blue, title: "Invite Bots") }
+                    NavigationLink { UsersDirectoryView() } label: { IconRow(icon: "person.3", tint: .purple, title: "Swarm Directory") }
+                } header: {
+                    SectionLabel(title: "Discover")
+                }
+                .listRowBackground(SwarmTheme.panel)
+
                 if appState.isAdmin || appState.isModerator || appState.canGallery {
                     Section {
                         if appState.isAdmin || appState.isModerator {
@@ -136,6 +144,7 @@ struct ProfileView: View {
                             NavigationLink { DiagnosticsView() } label: { IconRow(icon: "heart.text.square", tint: .green, title: "Fleet Health") }
                             NavigationLink { FleetTopologyView() } label: { IconRow(icon: "point.3.filled.connected.trianglepath.dotted", tint: .cyan, title: "Fleet Topology") }
                             NavigationLink { ExportsView() } label: { IconRow(icon: "square.and.arrow.down", tint: .orange, title: "Scheduled Exports") }
+                            NavigationLink { DatabasesView() } label: { IconRow(icon: "cylinder.split.1x2", tint: .brown, title: "Database Viewer") }
                         }
                     } header: {
                         SectionLabel(title: "Admin Tools")
@@ -185,6 +194,11 @@ struct ProfileView: View {
             .refreshable {
                 Haptics.light()
                 await viewModel.load()
+                await appState.refreshSession()
+            }
+            .refreshOnForeground {
+                await viewModel.load()
+                await appState.refreshSession()
             }
             .notificationsBell(notificationsViewModel)
         }

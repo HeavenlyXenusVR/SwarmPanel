@@ -193,6 +193,7 @@ struct SocialView: View {
                 Haptics.light()
                 await viewModel.loadAll()
             }
+            .refreshOnForeground { await viewModel.loadAll() }
             .notificationsBell(notificationsViewModel)
             }
         }
