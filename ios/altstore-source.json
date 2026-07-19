@@ -19,6 +19,14 @@
       },
       "versions": [
         {
+          "version": "0.9.2",
+          "date": "2026-07-19T17:22:42Z",
+          "downloadURL": "https://github.com/HeavenlyXenusVR/SwarmPanel/releases/download/ios%2Fv0.9.2/SwarmPanel-0.9.2-unsigned.ipa",
+          "localizedDescription": "See release notes on GitHub.",
+          "size": 963945,
+          "minOSVersion": "16.0"
+        },
+        {
           "version": "0.9.1",
           "date": "2026-07-19T17:10:30Z",
           "downloadURL": "https://github.com/HeavenlyXenusVR/SwarmPanel/releases/download/ios%2Fv0.9.1/SwarmPanel-0.9.1-unsigned.ipa",
