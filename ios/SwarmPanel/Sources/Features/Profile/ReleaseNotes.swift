@@ -16,6 +16,9 @@ let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"
 /// Static changelog shown on the "What's New" screen — updated by hand
 /// alongside each ios/vX.Y.Z tag, mirroring the tag's own release notes.
 let releaseNotes: [ReleaseNote] = [
+    ReleaseNote(version: "0.9.2", highlights: [
+        "Fixed \"Missing trusted browser origin\" sometimes blocking logging back in after logging out, and fixed data not loading afterward — caused by a leftover cookie the app never actually needed",
+    ]),
     ReleaseNote(version: "0.9.1", highlights: [
         "Fixed a bug from 0.9.0 where the Dashboard (and other screens) could get permanently stuck on stale data with no error shown, if the network was ever slow enough for two refreshes to overlap",
     ]),

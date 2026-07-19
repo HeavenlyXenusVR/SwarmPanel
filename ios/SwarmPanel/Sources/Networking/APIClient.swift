@@ -40,7 +40,29 @@ final class APIClient {
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
-    private init(session: URLSession = .shared) {
+    /// This app authenticates purely via a bearer token (Keychain-stored) —
+    /// it never relies on cookies. `.shared` would use the device's shared
+    /// cookie jar, which silently accumulates any `Set-Cookie` the backend
+    /// happens to send (Starlette's SessionMiddleware sets one whenever a
+    /// request touches `request.session`, e.g. the site-owner login path).
+    /// A leftover session cookie from an earlier request, sent automatically
+    /// on a later *unauthenticated* request like a fresh login POST (with no
+    /// Authorization header yet and no Origin header, since native clients
+    /// don't send one), trips the backend's
+    /// "cookie without a trusted browser Origin" guard (app/security.py's
+    /// _ensure_allowed_browser_origin) with a 403 — exactly the bug where
+    /// logging out and back in failed with "Missing trusted browser origin."
+    /// An ephemeral, cookie-disabled configuration keeps every request
+    /// bearer-token-only, matching how this client actually authenticates.
+    private static func makeSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieAcceptPolicy = .never
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieStorage = nil
+        return URLSession(configuration: configuration)
+    }
+
+    private init(session: URLSession = APIClient.makeSession()) {
         self.session = session
         self.token = KeychainStore.loadToken()
 
