@@ -468,12 +468,16 @@ async function fetchWithRemoteRetry(path, options, headers) {
   } catch (error) {
     if (error?.isAbort && !error?.retriable) throw error;
 
-    // Grace-period retry loop — keeps the UI clean during brief tunnel rotations
-    // or backend restarts that resolve within a few seconds.  Two automatic retries
-    // for network-unreachable failures (each preceded by a short sleep + tunnel URL
-    // refresh), and one retry for timeouts (with a capped timeout so we don't
-    // double the wait on a genuinely slow backend).
-    if (canRetryWithFreshRemote(options)) {
+    // Grace-period retry loop — keeps the UI clean during brief tunnel rotations,
+    // backend restarts, or a single slow response that resolve within a few
+    // seconds. Two automatic retries for network-unreachable failures (each
+    // preceded by a short sleep, plus a tunnel URL refresh in remote-static
+    // mode), and one retry for timeouts (with a capped timeout so we don't
+    // double the wait on a genuinely slow backend). This must not depend on
+    // remote-static mode — a self-hosted backend behind a tunnel/custom domain
+    // can hit the exact same transient blips, and skipping retries there meant
+    // a single slow DB query flipped the "reconnecting" overlay on immediately.
+    if (canRetryRequest(options)) {
       const isNetwork = error?.code === "NETWORK";
       const isTimeout = error?.code === "TIMEOUT";
       const delays = isNetwork ? TRANSIENT_RETRY_DELAYS_MS : isTimeout ? [TRANSIENT_RETRY_DELAYS_MS[0]] : [];
@@ -481,7 +485,7 @@ async function fetchWithRemoteRetry(path, options, headers) {
         let lastGraceError;
         for (const delayMs of delays) {
           await sleep(delayMs);
-          await refreshRemoteOrigin();
+          if (isRemoteStaticHost()) await refreshRemoteOrigin();
           const graceTarget = await resolveApiUrl(path);
           const graceTimeoutMs = isTimeout
             ? Math.min(Number(options.timeoutMs) || API_FETCH_TIMEOUT_MS, 8_000)
@@ -632,11 +636,23 @@ function shouldRefreshRemoteAfterStatus(status, options) {
   );
 }
 
-function canRetryWithFreshRemote(options) {
+// Whether this request is safe to retry at all (idempotent method, or a body
+// that can be re-sent unchanged) — independent of hosting mode. A transient
+// network blip or a single slow response can happen over any connection,
+// self-hosted or remote-static, so retrying shouldn't depend on whether
+// there's a rotating tunnel origin to rediscover.
+function canRetryRequest(options) {
   const method = String(options.method || "GET").toUpperCase();
-  if (!isRemoteStaticHost()) return false;
   if (method === "GET" || method === "HEAD") return true;
   return isReplayableRequestBody(options.body);
+}
+
+// Whether retrying should ALSO try rediscovering the API origin first (via
+// live-config.json) — only meaningful in remote-static mode, where the
+// tunnel URL can rotate out from under a still-open tab.
+function canRetryWithFreshRemote(options) {
+  if (!isRemoteStaticHost()) return false;
+  return canRetryRequest(options);
 }
 
 function isReplayableRequestBody(body) {
