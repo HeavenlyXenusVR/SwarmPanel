@@ -16,6 +16,9 @@ let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"
 /// Static changelog shown on the "What's New" screen — updated by hand
 /// alongside each ios/vX.Y.Z tag, mirroring the tag's own release notes.
 let releaseNotes: [ReleaseNote] = [
+    ReleaseNote(version: "0.9.1", highlights: [
+        "Fixed a bug from 0.9.0 where the Dashboard (and other screens) could get permanently stuck on stale data with no error shown, if the network was ever slow enough for two refreshes to overlap",
+    ]),
     ReleaseNote(version: "0.9.0", highlights: [
         "New \"Reset Queue\" control action: clears a guild bot's live queue and backup queue while leaving it connected and playing, so it repopulates itself instead of stopping",
         "Live data now refreshes automatically when the app returns to the foreground, including Profile's Admin Tools visibility, which used to need a relaunch to catch a role change",
