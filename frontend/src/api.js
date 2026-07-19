@@ -297,6 +297,13 @@ function currentApiOrigin() {
 }
 
 function isRemoteStaticHost() {
+  // An explicit `false` (set by the self-hosted FastAPI build's shell script)
+  // means this exact page is served by the panel's own backend on this exact
+  // origin — skip the hostname auto-detect below entirely, since that
+  // heuristic can't distinguish "GitHub Pages" from "self-hosted behind a
+  // custom domain/tunnel" and would otherwise misclassify the latter as
+  // remote-static and waste every request on a doomed live-config.json fetch.
+  if (window.SWARM_PANEL_REMOTE_MODE === false) return false;
   if (Boolean(window.SWARM_PANEL_REMOTE_MODE) || window.location.hostname.endsWith("github.io")) return true;
   // Auto-detect tunnel/remote access: if the page is served from a non-local hostname
   // that is NOT the panel's own FastAPI backend (i.e. a Cloudflare/Pinggy/ngrok tunnel),

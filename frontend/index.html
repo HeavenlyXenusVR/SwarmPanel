@@ -7,6 +7,17 @@
     <meta name="description" content="SwarmPanel React command deck for music bots, Aria, admin recovery, diagnostics, and Image Gallery operations." />
     <link rel="icon" href="/favicon.ico" />
     <title>SwarmPanel</title>
+    <script>
+      // Self-hosted FastAPI serves this exact build alongside its own API on
+      // the same origin (including via a custom domain/tunnel), so it must
+      // never fall into api.js's GitHub-Pages "remote-static" discovery path
+      // (live-config.json) — only the separately-generated GitHub Pages shell
+      // (scripts/write-root-shell.mjs) needs that. Without this, any non-
+      // localhost hostname (e.g. a custom domain behind a Cloudflare tunnel)
+      // was auto-detected as remote-static and wasted every request on a
+      // doomed live-config.json fetch instead of just using this same origin.
+      window.SWARM_PANEL_REMOTE_MODE = false;
+    </script>
   </head>
   <body>
     <div id="root"></div>
