@@ -1,0 +1,1822 @@
+-- Route wiring. Only the Bearer-token auth path is implemented (see auth.lua
+-- and the final report): frontend/src/api.js always fetches with
+-- `credentials: "omit"` and stores the token itself, so the cookie-session
+-- half of app/auth.py's model is dead code for the deployed SPA and is
+-- intentionally not ported yet.
+local httpd = require("httpd")
+local auth = require("auth")
+local db = require("db")
+local accounts = require("accounts")
+local dashboard = require("dashboard")
+local control = require("control")
+local social = require("social")
+local profiles = require("profiles")
+local audit = require("audit")
+local queues = require("queues")
+local alerts = require("alerts")
+local admin_browser = require("admin_browser")
+local gallery = require("gallery")
+local csv_export = require("csv_export")
+local lumisound = require("lumisound")
+local metrics = require("metrics")
+local discord_service = require("discord_service")
+local notify = require("notify")
+local ratelimit = require("ratelimit")
+local copas = require("copas")
+local cjson = require("cjson.safe")
+
+local M = {}
+
+function M.register(cfg)
+  local settings = cfg.settings
+  local music_bots = cfg.music_bots
+  local bot_index = cfg.bot_index
+
+  local function json_error(status, detail)
+    return status, { detail = detail }
+  end
+
+  local function get_auth(req)
+    local token = auth.extract_bearer_token(req.headers["authorization"])
+    if not token then return nil end
+    return auth.verify_api_token(settings.session_secret, token)
+  end
+
+  local function require_auth(req)
+    local a = get_auth(req)
+    if not a then return nil, json_error(401, "Authentication required") end
+    return a
+  end
+
+  local function is_site_owner(a) return a and a.site_owner == true end
+  local function is_admin_auth(a)
+    if not a or not is_site_owner(a) then return false end
+    if a.admin_mode ~= nil then return a.admin_mode end
+    return tostring(a.role or "admin"):lower() == "admin" and not a.guild_id
+  end
+
+  -- Port of auth_deps.py's _scoped_guild_id(): nil means "unrestricted /
+  -- admin", OWNER_SCOPE_SENTINEL means "authenticated but with no guild
+  -- binding at all" (sees nothing), any other string is the one guild this
+  -- caller may see.
+  local OWNER_SCOPE_SENTINEL = "__site_owner_only__"
+  local function scoped_guild_id(a)
+    if a and not is_site_owner(a) and (a.guild_id == nil or a.guild_id == "") then
+      return OWNER_SCOPE_SENTINEL
+    end
+    if is_admin_auth(a) then return nil end
+    local gid = a and a.guild_id
+    if gid ~= nil and gid ~= "" then return tostring(gid) end
+    return nil
+  end
+
+  local function require_admin(req)
+    local a, err_status, err_body = require_auth(req)
+    if not a then return nil, err_status, err_body end
+    if not is_admin_auth(a) then return nil, 403, { detail = "Admin access required" } end
+    return a
+  end
+
+  local function is_moderator_auth(a) return a and a.moderator == true end
+  local function require_admin_or_moderator(req)
+    local a, err_status, err_body = require_auth(req)
+    if not a then return nil, err_status, err_body end
+    if not (is_admin_auth(a) or is_moderator_auth(a)) then return nil, 403, { detail = "Admin or moderator access required" } end
+    return a
+  end
+
+  local function is_image_gallery_owner_auth(a) return is_admin_auth(a) and is_site_owner(a) end
+  local function require_image_gallery_owner(req)
+    local a, err_status, err_body = require_auth(req)
+    if not a then return nil, err_status, err_body end
+    if not is_image_gallery_owner_auth(a) then return nil, 403, { detail = "Image Gallery owner access required" } end
+    return a
+  end
+  local function require_gallery_admin_or_moderator(req)
+    local a, err_status, err_body = require_auth(req)
+    if not a then return nil, err_status, err_body end
+    if not (is_image_gallery_owner_auth(a) or is_moderator_auth(a)) then return nil, 403, { detail = "Image Gallery admin or moderator access required" } end
+    return a
+  end
+
+  -- Port of auth_deps.py's _account_guild_id()/_account_id_for_auth(). NOTE:
+  -- unlike the Python original's _hydrate_site_owner_auth(), this does not
+  -- re-check the DB on every request for a site-owner promotion that
+  -- happened after token issuance — the token already carries site_owner/
+  -- admin_mode computed at login/session-refresh time (see /api/session).
+  -- Accepted simplification given the 12h token TTL; see final report.
+  local function account_guild_id(a)
+    local gid = a and a.guild_id
+    if gid ~= nil and gid ~= "" then return tostring(gid) end
+    return nil
+  end
+
+  local function account_id_for_auth(a)
+    local username = tostring((a and a.username) or ""):match("^%s*(.-)%s*$")
+    local gid = account_guild_id(a)
+    if username == "" or not gid then return nil, "Guild account access required" end
+    local ok, profile = pcall(accounts.get_account_profile, username, gid)
+    if not ok or not profile then return nil, "Account profile not found" end
+    return db.toint(profile.id)
+  end
+
+  -- Port of auth_deps.py's _require_guild_scope(): returns an error tuple if
+  -- this caller is restricted to one guild and it isn't the one requested.
+  local function require_guild_scope(req, a, guild_id)
+    local scoped = scoped_guild_id(a)
+    if scoped and tostring(guild_id) ~= scoped then
+      return 403, { detail = "This account can only control its registered guild" }
+    end
+    return nil
+  end
+
+  -- ---------------------------------------------------------------- health
+  httpd.route("GET", "/healthz", function(req)
+    local ok = pcall(db.fetchone, "accountlogins", "SELECT 1 AS ok")
+    if ok then return 200, { ok = true, db = "ok" } end
+    return 503, { ok = false, db = "unavailable" }
+  end)
+
+  httpd.route("GET", "/api/health", function(req)
+    local a = get_auth(req)
+    if not a then return 401, { detail = "Authentication required" } end
+    local db_ok = pcall(db.fetchone, "accountlogins", "SELECT 1 AS ok")
+    return 200, {
+      ok = db_ok, db = db_ok and "ok" or "unavailable",
+      api_max_rows = settings.api_max_rows,
+      bot_control_source_max_chars = settings.bot_control_source_max_chars,
+    }
+  end)
+
+  -- --------------------------------------------------------------- session
+  local function resolve_account_guild_id(a)
+    if a.guild_id and a.guild_id ~= "" then return a.guild_id end
+    if a.username then
+      local ok, gid = pcall(accounts.get_account_guild_id_for_username, a.username)
+      if ok then return gid end
+    end
+    return nil
+  end
+
+  httpd.route("GET", "/api/session", function(req)
+    local a = get_auth(req)
+    if not a then return 200, { authenticated = false, pages_public_url = settings.pages_public_url } end
+    local username = a.username or settings.admin_username
+    local role = a.role or "admin"
+    local account_guild_id = resolve_account_guild_id(a)
+    local site_owner = is_site_owner(a)
+    local admin_mode = is_admin_auth(a)
+    return 200, {
+      authenticated = true,
+      mode = "token",
+      username = username,
+      role = role,
+      guild_id = (a.guild_id or account_guild_id) and tostring(a.guild_id or account_guild_id) or nil,
+      account_guild_id = account_guild_id,
+      site_owner = site_owner,
+      admin_mode = admin_mode,
+      moderator = a.moderator == true,
+      image_gallery_owner = admin_mode and site_owner,
+      token = auth.issue_api_token(settings.session_secret, username, {
+        role = role, guild_id = account_guild_id or a.guild_id, admin_mode = admin_mode,
+        site_owner = site_owner, moderator = a.moderator, ttl_seconds = settings.api_token_ttl_seconds,
+      }),
+      pages_public_url = settings.pages_public_url,
+      expires_in = settings.api_token_ttl_seconds,
+    }
+  end)
+
+  httpd.route("POST", "/api/session/login", function(req)
+    local body = req.json or {}
+    local username = tostring(body.username or "")
+    local password = tostring(body.password or "")
+    local guild_id = body.guild_id
+
+    local rl_status, rl_body = ratelimit.check(
+      ("login-api:%s:%s"):format(req.client_ip or "unknown", username:lower():sub(1, 80)), 15, 900)
+    if rl_status then return rl_status, rl_body end
+
+    local auth_result = nil
+    if auth.verify_credentials(username, password, settings.admin_username, settings.admin_password) then
+      auth_result = { username = username, role = "admin", guild_id = nil, site_owner = true, admin_mode = true, moderator = false }
+    else
+      local secret = password ~= "" and password or (guild_id and tostring(guild_id) or nil)
+      if secret then
+        local ok, account = pcall(accounts.authenticate_account_login, username, secret)
+        if ok and account then
+          -- site_owner requires the configured owner email on this account,
+          -- optionally requiring verification — mirrors auth_deps.py's
+          -- _is_site_owner_account(). Verification-tracking columns are
+          -- ported (accounts.lua), so this check is real, not a stub.
+          local site_owner = false
+          if account.email and settings.site_owner_email ~= "" and account.email:lower() == settings.site_owner_email then
+            site_owner = (not settings.owner_email_requires_verification) or account.email_verified
+          end
+          auth_result = {
+            username = account.username, role = "account", guild_id = account.guild_id,
+            site_owner = site_owner, moderator = account.panel_role == "moderator", admin_mode = site_owner,
+          }
+        end
+      end
+    end
+
+    if not auth_result then return 401, { detail = "Invalid username or password" } end
+
+    local token = auth.issue_api_token(settings.session_secret, auth_result.username, {
+      role = auth_result.role, guild_id = auth_result.guild_id, admin_mode = auth_result.admin_mode,
+      site_owner = auth_result.site_owner, moderator = auth_result.moderator, ttl_seconds = settings.api_token_ttl_seconds,
+    })
+    return 200, {
+      ok = true, token = token, username = auth_result.username, role = auth_result.role,
+      guild_id = auth_result.guild_id, account_guild_id = auth_result.guild_id,
+      site_owner = auth_result.site_owner, admin_mode = auth_result.admin_mode, moderator = auth_result.moderator,
+      image_gallery_owner = auth_result.admin_mode and auth_result.site_owner,
+      pages_public_url = settings.pages_public_url, expires_in = settings.api_token_ttl_seconds,
+    }
+  end)
+
+  httpd.route("POST", "/api/session/logout", function(req)
+    -- Stateless bearer tokens: nothing server-side to invalidate (matches
+    -- the "not implemented" cookie-session note above; a real revocation
+    -- list is future work if that's ever needed).
+    return 200, { ok = true }
+  end)
+
+  -- ------------------------------------------------------------- dashboard
+  -- Port of dashboard.py's _build_dashboard_payload(). Factored into a
+  -- standalone function (rather than inlined in the route below, as before)
+  -- because the WS /ws live-feed handler further down needs the exact same
+  -- guild-scoping + snapshot-building logic on a ~2s broadcast loop, with
+  -- enrich_discord=false (mirrors websocket.py's own enrich_discord=False on
+  -- its broadcast loop — Discord REST enrichment is too expensive to redo
+  -- for every connected client every 2 seconds, so the HTTP route is the
+  -- only caller that gets bot.discord identity/name enrichment).
+  local function build_dashboard_payload(a, enrich_discord)
+    if enrich_discord == nil then enrich_discord = true end
+    local data = dashboard.get_dashboard_data(music_bots) -- pcall'd by callers
+
+    local scoped = scoped_guild_id(a)
+    local bots = data.bots or {}
+
+    if scoped then
+      local scoped_bots = {}
+      for _, bot in ipairs(bots) do
+        local known_ids = bot.known_guild_ids or {}
+        local visible = false
+        if bot.kind == "music" and scoped ~= OWNER_SCOPE_SENTINEL then
+          for _, gid in ipairs(known_ids) do
+            if gid == scoped then visible = true break end
+          end
+        end
+        if visible then
+          local sessions = {}
+          local active_playing, queue_depth, backup_depth = 0, 0, 0
+          for _, s in ipairs(bot.sessions or {}) do
+            if tostring(s.guild_id) == scoped then
+              sessions[#sessions + 1] = s
+              if s.is_playing then active_playing = active_playing + 1 end
+              queue_depth = queue_depth + (s.queue_count or 0)
+              backup_depth = backup_depth + (s.backup_queue_count or 0)
+            end
+          end
+          bot.sessions = sessions
+          bot.known_guild_count = 1
+          bot.guild_count = 1
+          bot.active_playing_count = active_playing
+          bot.queue_depth = queue_depth
+          bot.backup_queue_depth = backup_depth
+          scoped_bots[#scoped_bots + 1] = bot
+        end
+      end
+      bots = scoped_bots
+      data.bots = bots
+    end
+
+    -- Flatten + dedupe sessions across bots (dashboard.py's flattened_sessions
+    -- / seen_session_keys), and fill per-bot/per-session defaults expected by
+    -- the frontend (bot.name, bot.guild_count, session.bot_key/bot_name/bot_display).
+    local flattened, seen = {}, {}
+    for _, bot in ipairs(bots) do
+      bot.name = bot.name or bot.display_name
+      bot.guild_count = bot.guild_count or bot.known_guild_count or 0
+      bot.known_guild_ids = nil -- internal-only field, not part of the API contract
+      for _, s in ipairs(bot.sessions or {}) do
+        s.bot_key = s.bot_key or bot.key
+        s.bot_name = s.bot_name or bot.display_name
+        s.bot_display = s.bot_display or bot.display_name
+        local key = tostring(s.bot_key or bot.key) .. "\0" .. tostring(s.guild_id or "0")
+        if not seen[key] then
+          seen[key] = true
+          flattened[#flattened + 1] = s
+        end
+      end
+    end
+    data.sessions = flattened
+
+    -- Discord identity/name enrichment (dashboard.py's enrich_discord=True
+    -- path). Best-effort per bot: a slow/unreachable Discord API for one
+    -- bot must not break the rest of the dashboard, so every lookup is
+    -- pcall-wrapped and errors surface as bot.discord.error /
+    -- bot.discord.name_resolution_error instead of failing the request.
+    for _, bot in ipairs(bots) do
+      local token = cfg.bot_tokens[bot.key]
+      bot.name = bot.name or bot.display_name
+      if not enrich_discord then
+        bot.discord = { token_configured = token ~= nil and token ~= "" }
+      elseif token and token ~= "" then
+        bot.discord = { token_configured = true }
+        local ok, identity_or_err = pcall(discord_service.fetch_identity, token)
+        if ok and identity_or_err then
+          bot.discord.identity = identity_or_err
+        else
+          bot.discord.error = tostring(identity_or_err or "Discord identity lookup failed.")
+        end
+
+        local placements = {}
+        for _, s in ipairs(bot.sessions or {}) do
+          if s.channel_id then placements[#placements + 1] = { guild_id = s.guild_id, channel_id = s.channel_id } end
+          if s.home_channel_id then placements[#placements + 1] = { guild_id = s.guild_id, channel_id = s.home_channel_id } end
+        end
+        if #placements > 0 then
+          local ok2, name_map = pcall(discord_service.resolve_guild_channel_names, token, placements)
+          if ok2 and name_map then
+            for _, s in ipairs(bot.sessions or {}) do
+              local gid = tostring(s.guild_id)
+              local channel_entry = s.channel_id and name_map[gid .. "\0" .. tostring(s.channel_id)]
+              if channel_entry then
+                s.guild_name = channel_entry.guild_name
+                s.channel_name = channel_entry.channel_name
+              end
+              local home_entry = s.home_channel_id and name_map[gid .. "\0" .. tostring(s.home_channel_id)]
+              if home_entry then
+                s.guild_name = s.guild_name or home_entry.guild_name
+                s.home_channel_name = home_entry.channel_name
+              end
+            end
+          else
+            bot.discord.name_resolution_error = tostring(name_map or "Discord channel lookup failed.")
+          end
+        end
+      else
+        bot.discord = { token_configured = false }
+      end
+    end
+
+    return data
+  end
+
+  httpd.route("GET", "/api/dashboard", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local ok, data = pcall(build_dashboard_payload, a, true)
+    if not ok then return 503, { detail = "Dashboard unavailable: " .. tostring(data) } end
+    return 200, data
+  end)
+
+  -- ------------------------------------------------------------------- ws
+  -- Port of app/routers/websocket.py's /ws live dashboard feed. Auth is
+  -- bearer-token-only in this rewrite (the session-cookie branch in the
+  -- Python original is dead code here — see this file's own header comment:
+  -- the deployed SPA always fetches with credentials:"omit" and carries its
+  -- own token, and frontend/src/hooks/useDashboardStream.js confirms the
+  -- browser really does send `{"type":"auth","token":...}` as the first WS
+  -- frame rather than relying on a cookie). Mirrors the Python original's
+  -- shape exactly: dashboard_snapshot / dashboard_snapshot_error / ping
+  -- messages out, pong (ignored) in, one shared ~2s broadcast loop across
+  -- every connected client cached per guild/admin scope so N clients in the
+  -- same scope share one build_dashboard_payload() call per tick.
+  local active_ws_connections = {} -- list of {conn=, auth=, last_digest=}
+  local broadcast_loop_running = false
+
+  local function dashboard_scope_cache_key(a)
+    local scoped = scoped_guild_id(a)
+    if scoped then return "guild:" .. scoped end
+    if is_admin_auth(a) then return "admin" end
+    return "session:" .. tostring((a and a.username) or "default")
+  end
+
+  local function remove_ws_connection(entry)
+    for i, c in ipairs(active_ws_connections) do
+      if c == entry then table.remove(active_ws_connections, i) return end
+    end
+  end
+
+  local function iso_now()
+    return os.date("!%Y-%m-%dT%H:%M:%SZ")
+  end
+
+  local function ensure_broadcast_loop()
+    if broadcast_loop_running then return end
+    broadcast_loop_running = true
+    copas.addthread(function()
+      while #active_ws_connections > 0 do
+        local payload_cache = {} -- scope_key -> serialized string
+        local dead = {}
+        for _, entry in ipairs(active_ws_connections) do
+          local scope_key = dashboard_scope_cache_key(entry.auth)
+          local serialized = payload_cache[scope_key]
+          if not serialized then
+            local ok, snapshot = pcall(build_dashboard_payload, entry.auth, false)
+            local payload
+            if ok then
+              payload = { type = "dashboard_snapshot", data = snapshot }
+            else
+              payload = { type = "dashboard_snapshot_error", error = tostring(snapshot), generated_at = iso_now() }
+            end
+            serialized = cjson.encode(payload)
+            payload_cache[scope_key] = serialized
+          end
+          if entry.last_digest ~= serialized then
+            local sent = entry.conn:send(serialized)
+            if sent then
+              entry.last_digest = serialized
+            else
+              dead[#dead + 1] = entry
+            end
+          end
+        end
+        for _, entry in ipairs(dead) do remove_ws_connection(entry) end
+        copas.sleep(2)
+      end
+      broadcast_loop_running = false
+    end)
+  end
+
+  -- Same algorithm as the installed lua-websockets rock's websocket.sync
+  -- receive() (frame reassembly across CONTINUATION frames, CLOSE
+  -- echo/cleanup), EXCEPT a socket-read timeout is returned as a distinct
+  -- ("timeout") sentinel instead of being treated as a fatal disconnect —
+  -- websocket.sync.receive() closes the connection on ANY sock_receive
+  -- error, which would turn this server's idle keepalive-ping timer into an
+  -- unwanted forced disconnect every WS_RECEIVE_TIMEOUT_SECONDS. Real
+  -- disconnects/protocol errors still close exactly like the library
+  -- function does. conn:send()/conn:close() (unmodified library functions,
+  -- from websocket.sync.extend() in httpd.lua) are unaffected by this.
+  local ws_frame = require("websocket.frame")
+  local function ws_receive_with_timeout(conn)
+    if conn.state ~= "OPEN" and not conn.is_closing then
+      return nil, nil, false, 1006, "wrong state"
+    end
+    local first_opcode, frames
+    local bytes, encoded = 3, ""
+    local function clean(was_clean, code, reason)
+      conn.state = "CLOSED"
+      conn:sock_close()
+      return nil, nil, was_clean, code, reason or "closed"
+    end
+    while true do
+      local chunk, err = conn:sock_receive(bytes)
+      if err then
+        if err == "timeout" then return nil, "timeout" end
+        return clean(false, 1006, err)
+      end
+      encoded = encoded .. chunk
+      local decoded, fin, opcode = ws_frame.decode(encoded)
+      if decoded then
+        if opcode == ws_frame.CLOSE then
+          if not conn.is_closing then
+            local code, reason = ws_frame.decode_close(decoded)
+            local close_msg = ws_frame.encode_close(code)
+            local close_encoded = ws_frame.encode(close_msg, ws_frame.CLOSE, not conn.is_server)
+            local n = conn:sock_send(close_encoded)
+            return clean(n == #close_encoded, code, reason)
+          else
+            return decoded, opcode
+          end
+        end
+        if not first_opcode then first_opcode = opcode end
+        if not fin then
+          frames = frames or {}
+          bytes, encoded = 3, ""
+          table.insert(frames, decoded)
+        elseif not frames then
+          return decoded, first_opcode
+        else
+          table.insert(frames, decoded)
+          return table.concat(frames), first_opcode
+        end
+      else
+        bytes = fin -- frame.decode's 2nd return doubles as "more bytes needed" when decode fails
+      end
+    end
+  end
+
+  httpd.ws_route("/ws", function(conn, req, sock)
+    copas.settimeout(sock, 10)
+    local raw = ws_receive_with_timeout(conn)
+    local a = nil
+    if raw then
+      local ok, msg = pcall(cjson.decode, raw)
+      if ok and type(msg) == "table" and msg.type == "auth" then
+        a = auth.verify_api_token(settings.session_secret, tostring(msg.token or ""))
+      end
+    end
+    if not a then
+      pcall(function() copas.settimeout(sock, 3); conn:close(4401) end)
+      return
+    end
+
+    local entry = { conn = conn, auth = a, last_digest = nil }
+    active_ws_connections[#active_ws_connections + 1] = entry
+    ensure_broadcast_loop()
+
+    copas.settimeout(sock, 45)
+    local keep_going = true
+    while keep_going do
+      local message, info = ws_receive_with_timeout(conn)
+      if message == nil and info == "timeout" then
+        local sent = conn:send(cjson.encode({ type = "ping", timestamp = iso_now() }))
+        if not sent then keep_going = false end
+      elseif message == nil then
+        keep_going = false -- real disconnect/close/protocol error; conn already cleaned up
+      elseif #message > 512 then
+        pcall(function() copas.settimeout(sock, 3); conn:close(4409) end)
+        keep_going = false
+      end
+      -- else: a real inbound message (pong or otherwise) — no action needed,
+      -- receiving it already reset the idle window for the next loop
+      -- iteration, matching websocket.py's "receipt resets the receive
+      -- timeout so the connection stays classified as alive" comment.
+    end
+    remove_ws_connection(entry)
+    pcall(function() conn:close() end)
+  end)
+
+  -- ------------------------------------------------------------------ bots
+  httpd.route("GET", "/api/bots", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local visible_bots = {}
+    for _, bot in ipairs(music_bots) do visible_bots[#visible_bots + 1] = bot end
+    visible_bots[#visible_bots + 1] = cfg.aria_bot
+
+    local bots_out = {}
+    for _, bot in ipairs(visible_bots) do
+      bots_out[#bots_out + 1] = {
+        key = bot.key, display_name = bot.display_name, name = bot.display_name,
+        kind = bot.kind, schema = bot.db_schema,
+        token_configured = (cfg.bot_tokens[bot.key] or "") ~= "",
+      }
+    end
+
+    -- Real invite cards: OAuth invite URL (needs only the bot's client id,
+    -- derived locally from the token — no Discord call) plus a best-effort
+    -- live identity/avatar lookup. A slow/unreachable Discord API for one
+    -- bot degrades that bot's card (identity_error set) rather than failing
+    -- the whole roster response.
+    local scoped = scoped_guild_id(a)
+    local public_scoped = (scoped ~= OWNER_SCOPE_SENTINEL) and scoped or nil
+
+    -- Mirrors _visible_music_bots_for_auth(): only worth computing when this
+    -- caller IS guild-scoped (an unscoped/admin caller's Python equivalent
+    -- short-circuits `scoped_guild_id and ...` straight to false too).
+    local visible_keys = {}
+    if public_scoped then
+      local ok, dash_data = pcall(dashboard.get_dashboard_data, music_bots)
+      if ok then
+        for _, bot in ipairs(dash_data.bots or {}) do
+          for _, gid in ipairs(bot.known_guild_ids or {}) do
+            if gid == public_scoped then visible_keys[bot.key] = true break end
+          end
+        end
+      end
+    end
+
+    local invite_bots = {}
+    for _, bot in ipairs(visible_bots) do
+      local token = cfg.bot_tokens[bot.key] or ""
+      local client_id = token ~= "" and discord_service.client_id_from_token(token) or nil
+      local identity, identity_error = {}, nil
+      if token ~= "" then
+        local ok, result = pcall(discord_service.fetch_identity, token)
+        if ok and result then
+          identity = result
+          client_id = identity.id or client_id
+        else
+          identity_error = tostring(result or "Discord identity lookup failed.")
+        end
+      end
+      local perms = (bot.kind == "orchestrator") and discord_service.ARIA_BOT_PERMISSIONS or discord_service.MUSIC_BOT_PERMISSIONS
+      local permission_integer = discord_service.permission_value(perms)
+      invite_bots[#invite_bots + 1] = {
+        key = bot.key, display_name = bot.display_name, name = bot.display_name,
+        kind = bot.kind, schema = bot.db_schema, token_configured = token ~= "",
+        client_id = client_id,
+        invite_url = client_id and discord_service.invite_url_for_bot(client_id, permission_integer, public_scoped) or nil,
+        permission_integer = string.format("%.0f", permission_integer),
+        permissions = perms,
+        capability_summary = discord_service.BOT_CAPABILITY_SUMMARIES[bot.kind] or "Discord bot with slash commands and server tools.",
+        accent = cfg.bot_accents and cfg.bot_accents[bot.key] or "#89b4fa",
+        connected_to_session_guild = (public_scoped ~= nil) and (visible_keys[bot.key] == true),
+        icon_url = identity.avatar_url,
+        identity_name = identity.global_name or identity.username,
+        identity_error = identity_error,
+      }
+    end
+
+    return 200, { bots = bots_out, invite_bots = invite_bots, scoped_guild_id = public_scoped }
+  end)
+
+  httpd.route("POST", "/api/bots/control", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local action = tostring(body.action or body.command or ""):upper()
+    if not control.VALID_ACTIONS[action] then return 400, { detail = "Unsupported action: " .. action } end
+    if action == "RESTART" and not is_admin_auth(a) then
+      return 403, { detail = "Restart is admin-only because it affects the whole bot node" }
+    end
+    local bot_key = tostring(body.bot_key or "")
+    local bot = bot_index[bot_key]
+    if not bot or bot.kind ~= "music" then return 404, { detail = "Unknown bot key" } end
+
+    local gid = action == "RESTART" and "0" or tostring(body.guild_id or "")
+    if action ~= "RESTART" and gid == "" then return 400, { detail = "guild_id is required" } end
+
+    local ok, result_or_err, maybe_err = pcall(control.control_bot, bot, gid, action, body.payload)
+    if not ok then return 500, { detail = "Bot control failed: " .. tostring(result_or_err) } end
+    local result, cerr = result_or_err, maybe_err
+    if not result then return 400, { detail = tostring(cerr) } end
+    result.ok = true
+    return 200, result
+  end)
+
+  -- ------------------------------------------------------- session/register
+  -- Port of app/routers/session.py's JSON /api/session/register, including
+  -- Discord-webhook verification enrollment (notify.lua + accounts.lua's
+  -- update this pass added): if a verification_webhook_url/
+  -- registration_proof_url is supplied, its Discord-webhook proof is
+  -- verified against the guild being registered (notify.verify_guild_registration_proof,
+  -- same public GET /webhooks/{id}/{token} lookup as the Python original —
+  -- no bot token required), then a fresh code is issued and sent through it.
+  httpd.route("POST", "/api/session/register", function(req)
+    local rl_status, rl_body = ratelimit.check(("register-api:%s"):format(req.client_ip or "unknown"), 10, 3600)
+    if rl_status then return rl_status, rl_body end
+
+    local body = req.json or {}
+    local proof_url = body.verification_webhook_url or body.registration_proof_url
+    local verification_code = auth.verification_code()
+
+    local proof = {}
+    if proof_url and tostring(proof_url) ~= "" then
+      local ok_proof, proof_or_err = pcall(notify.verify_guild_registration_proof, body.guild_id, proof_url)
+      if not ok_proof then return 400, { detail = tostring(proof_or_err):gsub("^.-:%d+:%s*", "") } end
+      proof = proof_or_err
+    end
+
+    local ok, account = pcall(
+      accounts.register_account_login, body.username, body.guild_id, body.password, body.email,
+      proof_url, proof.channel_id, proof.webhook_name, verification_code
+    )
+    if not ok then return 400, { detail = tostring(account):gsub("^.-:%d+:%s*", "") } end
+
+    local verification_sent = false
+    if proof_url and tostring(proof_url) ~= "" then
+      verification_sent = notify.send_verification_webhook_code(proof_url, verification_code, account.username, account.guild_id)
+    end
+
+    local token = auth.issue_api_token(settings.session_secret, account.username, {
+      role = "account", guild_id = account.guild_id, admin_mode = false, site_owner = false, moderator = false,
+      ttl_seconds = settings.api_token_ttl_seconds,
+    })
+    return 200, {
+      ok = true, token = token, username = account.username, role = "account",
+      guild_id = account.guild_id, account_guild_id = account.guild_id,
+      site_owner = false, admin_mode = false, moderator = false, image_gallery_owner = false,
+      verification_sent = verification_sent,
+      pages_public_url = settings.pages_public_url, expires_in = settings.api_token_ttl_seconds,
+    }
+  end)
+
+  -- --------------------------------------------- session/verification-*
+  -- Port of session.py's /api/session/resend-verification,
+  -- /api/session/verification-webhook, /api/session/verification/verify.
+  -- Rate limiting (_rate_limit_auth in the Python original) is now ported
+  -- via ratelimit.lua, with the same per-route keys/limits as session.py.
+  local function verification_is_complete(profile)
+    return profile ~= nil and (profile.webhook_verified == true or profile.email_verified == true)
+  end
+
+  httpd.route("POST", "/api/session/resend-verification", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local scoped_gid = account_guild_id(a)
+    local username = tostring(a.username or "")
+    if not scoped_gid or username == "" then return 403, { detail = "Guild account access required" } end
+    local rl_status, rl_body = ratelimit.check(
+      ("session-verification-resend:%s"):format(username:lower()), 8, 3600)
+    if rl_status then return rl_status, rl_body end
+
+    local profile = accounts.get_account_profile(username, scoped_gid)
+    if not profile then return 404, { detail = "Account profile not found" } end
+    if not profile.verification_webhook_url or profile.verification_webhook_url == "" then
+      return 400, { detail = "Set a Discord verification webhook before requesting a code." }
+    end
+    if verification_is_complete(profile) then
+      return 200, { ok = true, verification_sent = false, already_verified = true }
+    end
+    local code = auth.verification_code()
+    profile = accounts.issue_account_webhook_verification_code(username, scoped_gid, code)
+    local sent = profile ~= nil and notify.send_verification_webhook_code(profile.verification_webhook_url, code, username, scoped_gid)
+    return 200, { ok = sent and true or false, verification_sent = sent and true or false, already_verified = false }
+  end)
+
+  httpd.route("POST", "/api/session/verification-webhook", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local scoped_gid = account_guild_id(a)
+    local username = tostring(a.username or "")
+    if not scoped_gid or username == "" then return 403, { detail = "Guild account access required" } end
+    local rl_status, rl_body = ratelimit.check(
+      ("session-verification-webhook:%s"):format(username:lower()), 8, 3600)
+    if rl_status then return rl_status, rl_body end
+
+    local body = req.json or {}
+    local webhook_url = tostring(body.verification_webhook_url or ""):match("^%s*(.-)%s*$")
+    local profile = accounts.get_account_profile(username, scoped_gid)
+    if not profile then return 404, { detail = "Account profile not found" } end
+
+    if webhook_url == "" then
+      profile = accounts.update_account_verification_webhook(username, scoped_gid, nil, nil, nil)
+      return 200, { ok = true, profile = profile, verification_sent = false }
+    end
+
+    local ok_proof, proof_or_err = pcall(notify.verify_guild_registration_proof, scoped_gid, webhook_url)
+    if not ok_proof then return 400, { detail = tostring(proof_or_err):gsub("^.-:%d+:%s*", "") } end
+    profile = accounts.update_account_verification_webhook(username, scoped_gid, webhook_url, proof_or_err.channel_id, proof_or_err.webhook_name)
+
+    local code = auth.verification_code()
+    profile = accounts.issue_account_webhook_verification_code(username, scoped_gid, code)
+    local sent = profile ~= nil and notify.send_verification_webhook_code(webhook_url, code, username, scoped_gid)
+    return 200, { ok = true, profile = profile, verification_sent = sent and true or false }
+  end)
+
+  -- Port of session.py's /api/session/email (identity.email field on the
+  -- frontend's ProfilePage save flow) — email address management is
+  -- independent of the webhook-verification code paths above but the
+  -- frontend calls it from the same save button, so it's wired here too.
+  httpd.route("POST", "/api/session/email", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local scoped_gid = account_guild_id(a)
+    local username = tostring(a.username or "")
+    if not scoped_gid or username == "" then return 403, { detail = "Guild account access required" } end
+    local rl_status, rl_body = ratelimit.check(("session-email-update:%s"):format(username:lower()), 8, 3600)
+    if rl_status then return rl_status, rl_body end
+    local body = req.json or {}
+    local ok, profile = pcall(accounts.update_account_email, username, scoped_gid, body.email)
+    if not ok then return 400, { detail = tostring(profile):gsub("^.-:%d+:%s*", "") } end
+    if not profile then return 404, { detail = "Account profile not found" } end
+    return 200, { ok = true, profile = profile }
+  end)
+
+  httpd.route("POST", "/api/session/verification/verify", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local scoped_gid = account_guild_id(a)
+    local username = tostring(a.username or "")
+    if not scoped_gid or username == "" then return 403, { detail = "Guild account access required" } end
+    local rl_status, rl_body = ratelimit.check(("session-verification-verify:%s"):format(username:lower()), 20, 3600)
+    if rl_status then return rl_status, rl_body end
+    local body = req.json or {}
+    local code = tostring(body.code or ""):gsub("%D+", ""):sub(1, 16)
+    if code == "" then return 400, { detail = "Enter the verification code from your Discord webhook message." } end
+    local profile = accounts.verify_account_webhook_code(username, scoped_gid, code, settings.email_verification_ttl_seconds)
+    if not profile then return 400, { detail = "Invalid verification code." } end
+    return 200, { ok = true, profile = profile }
+  end)
+
+  -- -------------------------------------------------------------- users/me
+  local function favorite_bot_options()
+    local out = {}
+    for _, bot in ipairs(music_bots) do out[#out + 1] = { key = bot.key, display_name = bot.display_name, kind = bot.kind } end
+    out[#out + 1] = { key = cfg.aria_bot.key, display_name = cfg.aria_bot.display_name, kind = cfg.aria_bot.kind }
+    return out
+  end
+
+  httpd.route("GET", "/api/users/me", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local scoped_gid = account_guild_id(a)
+    local username = tostring(a.username or settings.admin_username)
+    if not scoped_gid then
+      return 200, {
+        editable = false,
+        profile = {
+          username = username, display_name = username, guild_id = nil, public_profile = false, has_password = false,
+          panel_preferences = profiles.default_panel_preferences(),
+          bio = "Built-in admin sessions can browse the user directory; registered accounts own public profiles.",
+        },
+        favorite_bot_options = favorite_bot_options(),
+      }
+    end
+    local profile = accounts.get_account_profile(username, scoped_gid)
+    if not profile then return 404, { detail = "Account profile not found" } end
+    local snap = social.get_account_social_snapshot(profile.id, profile.id)
+    for k, v in pairs(snap) do profile[k] = v end
+    local summaries = dashboard.get_music_activity_summary_for_guilds(music_bots, { scoped_gid })
+    profile.activity = summaries[scoped_gid] or dashboard.empty_music_activity_summary()
+    return 200, { editable = true, profile = profile, favorite_bot_options = favorite_bot_options() }
+  end)
+
+  httpd.route("POST", "/api/users/me", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local scoped_gid = account_guild_id(a)
+    local username = tostring(a.username or "")
+    if not scoped_gid or username == "" then return 403, { detail = "Guild account access required to edit a public profile" } end
+    local ok, updates_or_err = pcall(profiles.clean_profile_updates, req.json or {}, bot_index)
+    if not ok then return 400, { detail = tostring(updates_or_err):gsub("^.-:%d+:%s*", "") } end
+    local profile = accounts.update_account_profile(username, scoped_gid, updates_or_err)
+    if not profile then return 404, { detail = "Account profile not found" } end
+    local summaries = dashboard.get_music_activity_summary_for_guilds(music_bots, { scoped_gid })
+    profile.activity = summaries[scoped_gid] or dashboard.empty_music_activity_summary()
+    return 200, { ok = true, profile = profile }
+  end)
+
+  httpd.route("GET", "/api/users/preferences", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local scoped_gid = account_guild_id(a)
+    local username = tostring(a.username or "")
+    local defaults = profiles.default_panel_preferences()
+    if not scoped_gid or username == "" then return 200, { editable = false, preferences = defaults } end
+    local profile = accounts.get_account_profile(username, scoped_gid)
+    if not profile then return 404, { detail = "Account profile not found" } end
+    local stored = (type(profile.panel_preferences) == "table") and profile.panel_preferences or nil
+    local ok, prefs = pcall(profiles.clean_panel_preferences, stored, defaults)
+    if not ok then prefs = defaults end
+    return 200, { editable = true, preferences = prefs }
+  end)
+
+  httpd.route("POST", "/api/users/preferences", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local scoped_gid = account_guild_id(a)
+    local username = tostring(a.username or "")
+    if not scoped_gid or username == "" then return 403, { detail = "Guild account access required to save panel preferences" } end
+    local current_profile = accounts.get_account_profile(username, scoped_gid)
+    if not current_profile then return 404, { detail = "Account profile not found" } end
+    local defaults = profiles.default_panel_preferences()
+    local stored = (type(current_profile.panel_preferences) == "table") and current_profile.panel_preferences or nil
+    local ok1, base_prefs = pcall(profiles.clean_panel_preferences, stored, defaults)
+    if not ok1 then base_prefs = defaults end
+    local ok2, prefs = pcall(profiles.clean_panel_preferences, req.json or {}, base_prefs)
+    if not ok2 then return 400, { detail = tostring(prefs):gsub("^.-:%d+:%s*", "") } end
+    local profile = accounts.update_account_panel_preferences(username, scoped_gid, prefs)
+    if not profile then return 404, { detail = "Account profile not found" } end
+    return 200, { ok = true, preferences = (type(profile.panel_preferences) == "table" and profile.panel_preferences) or prefs }
+  end)
+
+  httpd.route("GET", "/api/users/search", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local q = tostring(req.query.q or ""):gsub("%s+", " "):sub(1, 80)
+    local limit = math.max(1, math.min(tonumber(req.query.limit) or 24, 50))
+    local viewer_id = select(1, account_id_for_auth(a))
+    local users = accounts.search_account_profiles(q, limit, viewer_id, nil)
+    return 200, { ok = true, query = q, users = users, limit = limit }
+  end)
+
+  httpd.route("GET", "/api/users/directory", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local q = tostring(req.query.q or ""):gsub("%s+", " "):sub(1, 80)
+    local limit = math.max(1, math.min(tonumber(req.query.limit) or 24, 50))
+    local viewer_id = select(1, account_id_for_auth(a))
+    -- Cross-server roster: not guild-scoped, gated only by public_profile=1
+    -- in search_account_profiles (mirrors users.py's directory route note).
+    local users = accounts.search_account_profiles(q, limit, viewer_id, nil)
+    return 200, { ok = true, query = q, users = users, limit = limit }
+  end)
+
+  local function social_permissions(profile)
+    local status = tostring((profile and profile.friend_status) or "none"):lower()
+    local mode = tostring((profile and profile.profile_social_mode) or "open"):lower()
+    if mode ~= "open" and mode ~= "friends" and mode ~= "quiet" then mode = "open" end
+    local public_profile = profile and profile.public_profile or false
+    local is_friend = status == "friends"
+
+    local function can_access(action)
+      if status == "self" then return true end
+      if not public_profile then return is_friend and (action == "message" or action == "view_friends") end
+      if mode == "quiet" then return false end
+      if mode == "friends" then
+        if action == "friend_request" then
+          return not (status == "friends" or status == "pending_out" or status == "pending_in" or status == "self")
+        end
+        return is_friend
+      end
+      return true
+    end
+
+    return {
+      can_follow = can_access("follow") and status ~= "self" and status ~= "pending_out",
+      can_friend = can_access("friend_request"),
+      can_message = can_access("message") and status ~= "self",
+      can_view_friends = can_access("view_friends"),
+    }
+  end
+
+  httpd.route("GET", "/api/users/:account_id/profile", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local viewer_id = select(1, account_id_for_auth(a))
+    local ok, profile = pcall(social.get_public_account_profile, req.params.account_id, viewer_id)
+    if not ok or not profile then return 404, { detail = "Profile not found" } end
+    local permissions = social_permissions(profile)
+    local friends = {}
+    if permissions.can_view_friends then
+      local all_friends = social.list_account_friends(db.toint(profile.id))
+      for i = 1, math.min(12, #all_friends) do friends[i] = all_friends[i] end
+    end
+    return 200, { ok = true, profile = profile, friends = friends, social_permissions = permissions, favorite_bot_options = favorite_bot_options() }
+  end)
+
+  httpd.route("POST", "/api/users/:account_id/follow", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local actor_id, aerr = account_id_for_auth(a)
+    if not actor_id then return 403, { detail = aerr } end
+    local following = (req.json or {}).following and true or false
+    local ok, target = pcall(social.get_public_account_profile, req.params.account_id, actor_id)
+    if not ok or not target then
+      -- get_public_account_profile hides non-public/non-self profiles; fall
+      -- back to a permission-agnostic lookup so the can_follow gate below
+      -- still sees real social state (mirrors _load_social_target_profile).
+      target = accounts.get_account_by_id(req.params.account_id)
+      if target then
+        local snap = social.get_account_social_snapshot(target.id, actor_id)
+        for k, v in pairs(snap) do target[k] = v end
+      end
+    end
+    if not target then return 404, { detail = "Profile not found" } end
+    if following and not social_permissions(target).can_follow then
+      return 403, { detail = "This profile is not accepting follows." }
+    end
+    local ok2, result = pcall(social.set_account_follow, actor_id, req.params.account_id, following)
+    if not ok2 then return 400, { detail = tostring(result):gsub("^.-:%d+:%s*", "") } end
+    if following then
+      social.create_notification(req.params.account_id, "follow", tostring(a.username) .. " started following you", nil, "/users/" .. tostring(actor_id))
+    end
+    result.ok = true
+    return 200, result
+  end)
+
+  httpd.route("POST", "/api/users/:account_id/friend-request", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local actor_id, aerr = account_id_for_auth(a)
+    if not actor_id then return 403, { detail = aerr } end
+    local target = accounts.get_account_by_id(req.params.account_id)
+    if target then
+      local snap = social.get_account_social_snapshot(target.id, actor_id)
+      for k, v in pairs(snap) do target[k] = v end
+    end
+    if not target then return 404, { detail = "Profile not found" } end
+    if not social_permissions(target).can_friend then return 403, { detail = "This profile is not accepting friend requests." } end
+    local ok, result = pcall(social.send_account_friend_request, actor_id, req.params.account_id)
+    if not ok then return 400, { detail = tostring(result):gsub("^.-:%d+:%s*", "") } end
+    if result.status == "pending_out" then
+      social.create_notification(req.params.account_id, "friend_request", tostring(a.username) .. " sent you a friend request", nil, "/friends")
+    elseif result.status == "friends" then
+      social.create_notification(req.params.account_id, "friend_accept", "You and " .. tostring(a.username) .. " are now friends", nil, "/friends")
+    end
+    result.ok = true
+    return 200, result
+  end)
+
+  httpd.route("GET", "/api/friends/requests", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local actor_id, aerr = account_id_for_auth(a)
+    if not actor_id then return 403, { detail = aerr } end
+    return 200, {
+      ok = true,
+      incoming = social.list_account_friend_requests(actor_id, "incoming"),
+      outgoing = social.list_account_friend_requests(actor_id, "outgoing"),
+    }
+  end)
+
+  httpd.route("POST", "/api/friends/requests/:request_id", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local actor_id, aerr = account_id_for_auth(a)
+    if not actor_id then return 403, { detail = aerr } end
+    local ok, result = pcall(social.respond_account_friend_request, actor_id, req.params.request_id, (req.json or {}).action)
+    if not ok then return 400, { detail = tostring(result):gsub("^.-:%d+:%s*", "") } end
+    if not result then return 404, { detail = "Friend request not found" } end
+    if result.status == "accepted" then
+      local requester_id = db.toint(result.requester_account_id)
+      if requester_id and requester_id ~= actor_id then
+        social.create_notification(requester_id, "friend_accept", tostring(a.username) .. " accepted your friend request", nil, "/friends")
+      end
+    end
+    return 200, { ok = true, request = result }
+  end)
+
+  httpd.route("GET", "/api/me/friends", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local actor_id, aerr = account_id_for_auth(a)
+    if not actor_id then return 403, { detail = aerr } end
+    return 200, { ok = true, friends = social.list_account_friends(actor_id) }
+  end)
+
+  httpd.route("GET", "/api/messages/threads", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local actor_id, aerr = account_id_for_auth(a)
+    if not actor_id then return 403, { detail = aerr } end
+    return 200, { ok = true, threads = social.list_account_message_threads(actor_id) }
+  end)
+
+  httpd.route("GET", "/api/messages/:account_id", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local actor_id, aerr = account_id_for_auth(a)
+    if not actor_id then return 403, { detail = aerr } end
+    local target = accounts.get_account_by_id(req.params.account_id)
+    if target then
+      local snap = social.get_account_social_snapshot(target.id, actor_id)
+      for k, v in pairs(snap) do target[k] = v end
+    end
+    if not target or not social_permissions(target).can_message then
+      return 403, { detail = "This profile is not accepting direct messages." }
+    end
+    local limit = tonumber(req.query.limit) or 80
+    local ok, messages = pcall(social.list_account_messages, actor_id, req.params.account_id, limit)
+    if not ok then return 400, { detail = tostring(messages):gsub("^.-:%d+:%s*", "") } end
+    return 200, { ok = true, messages = messages }
+  end)
+
+  httpd.route("POST", "/api/messages/:account_id", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local actor_id, aerr = account_id_for_auth(a)
+    if not actor_id then return 403, { detail = aerr } end
+    local target = accounts.get_account_by_id(req.params.account_id)
+    if target then
+      local snap = social.get_account_social_snapshot(target.id, actor_id)
+      for k, v in pairs(snap) do target[k] = v end
+    end
+    if not target or not social_permissions(target).can_message then
+      return 403, { detail = "This profile is not accepting direct messages." }
+    end
+    local body_text = tostring((req.json or {}).body or "")
+    local ok, message = pcall(social.send_account_message, actor_id, req.params.account_id, body_text)
+    if not ok then return 400, { detail = tostring(message):gsub("^.-:%d+:%s*", "") } end
+    social.create_notification(req.params.account_id, "message", "New message from " .. tostring(a.username), body_text:sub(1, 200), "/messages/" .. tostring(actor_id))
+    return 200, { ok = true, message = message }
+  end)
+
+  httpd.route("GET", "/api/notifications", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local actor_id, aerr = account_id_for_auth(a)
+    if not actor_id then return 403, { detail = aerr } end
+    local limit = math.max(1, math.min(tonumber(req.query.limit) or 30, 100))
+    return 200, { ok = true, notifications = social.list_notifications(actor_id, limit) }
+  end)
+
+  httpd.route("GET", "/api/notifications/unread-count", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local actor_id, aerr = account_id_for_auth(a)
+    if not actor_id then return 403, { detail = aerr } end
+    return 200, { ok = true, unread_count = social.unread_notification_count(actor_id) }
+  end)
+
+  httpd.route("POST", "/api/notifications/:notification_id/read", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local actor_id, aerr = account_id_for_auth(a)
+    if not actor_id then return 403, { detail = aerr } end
+    social.mark_notification_read(req.params.notification_id, actor_id)
+    return 200, { ok = true }
+  end)
+
+  httpd.route("POST", "/api/notifications/read-all", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local actor_id, aerr = account_id_for_auth(a)
+    if not actor_id then return 403, { detail = aerr } end
+    social.mark_all_notifications_read(actor_id)
+    return 200, { ok = true }
+  end)
+
+  -- ------------------------------------------------------- swarm-accounts
+  -- Admin CRUD over registered SwarmPanel accounts. Port of
+  -- app/routers/swarm_accounts.py, now including /resend-verification (see
+  -- notify.lua for the Discord-webhook client this needed).
+  httpd.route("POST", "/api/swarm-accounts/resend-verification", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local account = accounts.get_account_admin(body.account_id)
+    if not account then return 404, { detail = "SwarmPanel account not found" } end
+    if not account.verification_webhook_url or account.verification_webhook_url == "" then
+      return 400, { detail = "This SwarmPanel account does not have a Discord verification webhook configured." }
+    end
+    if account.webhook_verified == true or account.email_verified == true then
+      return 200, { ok = true, verification_sent = false, already_verified = true }
+    end
+    local code = auth.verification_code()
+    account = accounts.issue_account_webhook_verification_code_by_id(body.account_id, code)
+    local sent = account ~= nil and notify.send_verification_webhook_code(account.verification_webhook_url, code, account.username, account.guild_id)
+    audit.record_audit_log(a.username, "swarm_account_resend_verification", { target_type = "account", target_id = body.account_id, details = "sent=" .. tostring(sent and true or false) })
+    return 200, { ok = sent and true or false, verification_sent = sent and true or false, already_verified = false }
+  end)
+
+  httpd.route("GET", "/api/swarm-accounts/admin", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local limit = math.max(1, math.min(tonumber(req.query.limit) or 100, 500))
+    local q = tostring(req.query.query or ""):gsub("%s+", " "):sub(1, 120)
+    local ok, data = pcall(accounts.get_account_admin_data, q, limit)
+    if not ok then return 503, { detail = "SwarmPanel account database unavailable: " .. tostring(data) } end
+    return 200, { ok = true, data = data }
+  end)
+
+  httpd.route("POST", "/api/swarm-accounts/update", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local account_id = body.account_id
+    if not account_id then return 400, { detail = "account_id is required" } end
+    local updates = {}
+    for _, key in ipairs({ "username", "guild_id", "email", "display_name", "public_profile", "server_name" }) do
+      if body[key] ~= nil then updates[key] = body[key] end
+    end
+    local before = accounts.get_account_admin(account_id)
+    local account, err = accounts.update_account_admin(account_id, updates)
+    if err then return 400, { detail = err } end
+    if not account then return 404, { detail = "SwarmPanel account not found" } end
+    local keys = {}
+    for k in pairs(updates) do keys[#keys + 1] = k end
+    table.sort(keys)
+    local details = before and audit.diff_details(before, account) or table.concat(keys, ",")
+    audit.record_audit_log(a.username, "swarm_account_update", { target_type = "account", target_id = account_id, details = (details ~= "" and details) or nil })
+    return 200, { ok = true, account = account }
+  end)
+
+  httpd.route("POST", "/api/swarm-accounts/email-verified", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local account = accounts.set_account_webhook_verified_admin(body.account_id, body.verified and true or false)
+    if not account then return 404, { detail = "SwarmPanel account not found" } end
+    return 200, { ok = true, account = account }
+  end)
+
+  httpd.route("POST", "/api/swarm-accounts/reset-password", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local account, err = accounts.reset_account_password_admin(body.account_id, body.new_password)
+    if err then return 400, { detail = err } end
+    if not account then return 404, { detail = "SwarmPanel account not found" } end
+    audit.record_audit_log(a.username, "swarm_account_reset_password", { target_type = "account", target_id = body.account_id })
+    return 200, { ok = true, account = account }
+  end)
+
+  httpd.route("POST", "/api/swarm-accounts/moderator", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local account = accounts.set_account_panel_role(body.account_id, body.moderator and true or false)
+    if not account then return 404, { detail = "SwarmPanel account not found" } end
+    audit.record_audit_log(a.username, "swarm_account_set_moderator", { target_type = "account", target_id = body.account_id, details = "moderator=" .. tostring(body.moderator and true or false) })
+    return 200, { ok = true, account = account }
+  end)
+
+  httpd.route("POST", "/api/swarm-accounts/delete", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local ok, err = accounts.delete_account_admin(body.account_id)
+    if not ok then return 400, { detail = err } end
+    audit.record_audit_log(a.username, "swarm_account_delete", { target_type = "account", target_id = body.account_id })
+    return 200, { ok = true }
+  end)
+
+  local MAX_BULK_IDS = 200
+  local function run_bulk_op(ids, run_one)
+    local seen, unique = {}, {}
+    for _, id in ipairs(ids or {}) do
+      local key = tostring(id)
+      if not seen[key] and #unique < MAX_BULK_IDS then
+        seen[key] = true
+        unique[#unique + 1] = id
+      end
+    end
+    local succeeded, failed = {}, {}
+    for _, id in ipairs(unique) do
+      local ok, err = pcall(run_one, id)
+      if ok and err ~= false then
+        succeeded[#succeeded + 1] = id
+      else
+        failed[#failed + 1] = { id = id, error = tostring(err):sub(1, 240) }
+      end
+    end
+    return { succeeded = succeeded, failed = failed }
+  end
+
+  httpd.route("POST", "/api/swarm-accounts/bulk-delete", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local result = run_bulk_op(body.ids, function(id)
+      local ok, err = accounts.delete_account_admin(id)
+      if not ok then error(err, 0) end
+    end)
+    audit.record_audit_log(a.username, "swarm_account_bulk_delete", { target_type = "account", details = string.format("succeeded_ids=%d failed=%d", #result.succeeded, #result.failed) })
+    result.ok = true
+    return 200, result
+  end)
+
+  httpd.route("POST", "/api/swarm-accounts/bulk-verify", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local verified = body.verified and true or false
+    local result = run_bulk_op(body.ids, function(id)
+      local account = accounts.set_account_webhook_verified_admin(id, verified)
+      if not account then error("Account not found", 0) end
+    end)
+    audit.record_audit_log(a.username, "swarm_account_bulk_verify", { target_type = "account", details = string.format("verified=%s succeeded_ids=%d failed=%d", tostring(verified), #result.succeeded, #result.failed) })
+    result.ok = true
+    return 200, result
+  end)
+
+  -- ------------------------------------------------------------- queues
+  httpd.route("GET", "/api/queues", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local gid = req.query.guild_id
+    if not gid or gid == "" then return 400, { detail = "guild_id is required" } end
+    local gerr_status, gerr_body = require_guild_scope(req, a, gid)
+    if gerr_status then return gerr_status, gerr_body end
+    local ok, result = pcall(queues.list_saved_queues, gid, req.query.bot_key)
+    if not ok then return 503, { detail = "Saved queues unavailable: " .. tostring(result) } end
+    return 200, { ok = true, queues = result }
+  end)
+
+  httpd.route("POST", "/api/queues", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    if not body.guild_id or tostring(body.guild_id) == "" then return 400, { detail = "guild_id is required" } end
+    local gerr_status, gerr_body = require_guild_scope(req, a, body.guild_id)
+    if gerr_status then return gerr_status, gerr_body end
+    local ok, queue = pcall(queues.create_saved_queue, body.guild_id, body.bot_key, body.name, a.username, body.items)
+    if not ok then return 400, { detail = tostring(queue):gsub("^.-:%d+:%s*", "") } end
+    audit.record_audit_log(a.username, "saved_queue_create", {
+      target_type = "saved_queue", target_id = queue.id,
+      details = string.format("guild=%s bot=%s name=%s", tostring(body.guild_id), tostring(body.bot_key), tostring(body.name)),
+    })
+    return 200, { ok = true, queue = queue }
+  end)
+
+  httpd.route("POST", "/api/queues/:queue_id/delete", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    if not body.guild_id or tostring(body.guild_id) == "" then return 400, { detail = "guild_id is required" } end
+    local gerr_status, gerr_body = require_guild_scope(req, a, body.guild_id)
+    if gerr_status then return gerr_status, gerr_body end
+    queues.delete_saved_queue(req.params.queue_id, body.guild_id)
+    audit.record_audit_log(a.username, "saved_queue_delete", { target_type = "saved_queue", target_id = req.params.queue_id })
+    return 200, { ok = true }
+  end)
+
+  -- ---------------------------------------------------------- alert-rules
+  httpd.route("GET", "/api/alert-rules", function(req)
+    local a, status, err_body = require_admin_or_moderator(req)
+    if not a then return status, err_body end
+    local ok, rules = pcall(alerts.list_alert_rules)
+    if not ok then return 503, { detail = "Alert rules unavailable: " .. tostring(rules) } end
+    return 200, { ok = true, rules = rules }
+  end)
+
+  httpd.route("POST", "/api/alert-rules", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local ok, rule = pcall(alerts.create_alert_rule, body.rule_type, body.threshold_minutes, body.enabled == nil or body.enabled, body.escalation_minutes, body.escalate_email)
+    if not ok then return 400, { detail = tostring(rule):gsub("^.-:%d+:%s*", "") } end
+    audit.record_audit_log(a.username, "alert_rule_create", { target_type = "alert_rule", target_id = rule.id })
+    return 200, { ok = true, rule = rule }
+  end)
+
+  httpd.route("POST", "/api/alert-rules/:rule_id/update", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local before = alerts.get_alert_rule(req.params.rule_id)
+    local ok, rule = pcall(alerts.update_alert_rule, req.params.rule_id, body)
+    if not ok then return 400, { detail = tostring(rule):gsub("^.-:%d+:%s*", "") } end
+    if not rule then return 404, { detail = "Alert rule not found" } end
+    local keys = {}
+    for k in pairs(body) do keys[#keys + 1] = k end
+    table.sort(keys)
+    local details = before and audit.diff_details(before, rule) or table.concat(keys, ",")
+    audit.record_audit_log(a.username, "alert_rule_update", { target_type = "alert_rule", target_id = req.params.rule_id, details = (details ~= "" and details) or nil })
+    return 200, { ok = true, rule = rule }
+  end)
+
+  httpd.route("POST", "/api/alert-rules/:rule_id/delete", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    alerts.delete_alert_rule(req.params.rule_id)
+    audit.record_audit_log(a.username, "alert_rule_delete", { target_type = "alert_rule", target_id = req.params.rule_id })
+    return 200, { ok = true }
+  end)
+
+  -- --------------------------------------------------------- image-gallery
+  httpd.route("GET", "/api/image-gallery/admin", function(req)
+    local a, status, err_body = require_image_gallery_owner(req)
+    if not a then return status, err_body end
+    local limit = math.max(1, math.min(tonumber(req.query.limit) or 50, 200))
+    local ok, data = pcall(gallery.get_image_gallery_admin_data, limit)
+    if not ok then return 503, { detail = "Image Gallery database unavailable: " .. tostring(data) } end
+    return 200, { ok = true, data = data }
+  end)
+
+  httpd.route("GET", "/api/image-gallery/admin/media/export.csv", function(req)
+    local a, status, err_body = require_image_gallery_owner(req)
+    if not a then return status, err_body end
+    local limit = math.max(1, math.min(tonumber(req.query.limit) or 200, 500))
+    local ok, data = pcall(gallery.get_image_gallery_admin_data, limit)
+    if not ok then return 503, { detail = "Image Gallery database unavailable: " .. tostring(data) } end
+    audit.record_audit_log(a.username, "image_gallery_export_media_csv", { target_type = "gallery_media" })
+    return csv_export.csv_response(data.media, "image_gallery_media")
+  end)
+
+  httpd.route("GET", "/api/image-gallery/admin/users/export.csv", function(req)
+    local a, status, err_body = require_image_gallery_owner(req)
+    if not a then return status, err_body end
+    local limit = math.max(1, math.min(tonumber(req.query.limit) or 200, 500))
+    local ok, data = pcall(gallery.get_image_gallery_admin_data, limit)
+    if not ok then return 503, { detail = "Image Gallery database unavailable: " .. tostring(data) } end
+    audit.record_audit_log(a.username, "image_gallery_export_users_csv", { target_type = "gallery_user" })
+    -- csv_export.lua's rows_to_csv_text already strips any *password* column,
+    -- matching the extra explicit filter the Python route applies on top.
+    return csv_export.csv_response(data.users, "image_gallery_users")
+  end)
+
+  httpd.route("GET", "/api/image-gallery/tables", function(req)
+    local a, status, err_body = require_image_gallery_owner(req)
+    if not a then return status, err_body end
+    local ok, tables = pcall(admin_browser.list_tables, "image_gallery")
+    if not ok then return 503, { detail = "Image Gallery database unavailable: " .. tostring(tables) } end
+    return 200, { ok = true, schema = "image_gallery", tables = tables }
+  end)
+
+  httpd.route("GET", "/api/image-gallery/table-data", function(req)
+    local a, status, err_body = require_image_gallery_owner(req)
+    if not a then return status, err_body end
+    local limit = math.max(1, math.min(tonumber(req.query.limit) or 100, 500))
+    local ok, data = pcall(admin_browser.get_table_data, "image_gallery", req.query.table_name, limit)
+    if not ok then return 400, { detail = tostring(data):gsub("^.-:%d+:%s*", "") } end
+    return 200, { ok = true, data = data, rows = data.rows, count = data.count }
+  end)
+
+  httpd.route("POST", "/api/image-gallery/users/delete", function(req)
+    local a, status, err_body = require_image_gallery_owner(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    gallery.delete_image_gallery_user(body.user_id)
+    audit.record_audit_log(a.username, "image_gallery_delete_user", { target_type = "gallery_user", target_id = body.user_id })
+    return 200, { ok = true }
+  end)
+
+  httpd.route("POST", "/api/image-gallery/comments/delete", function(req)
+    local a, status, err_body = require_gallery_admin_or_moderator(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    gallery.delete_image_gallery_comment(body.comment_id)
+    audit.record_audit_log(a.username, "image_gallery_delete_comment", { target_type = "gallery_comment", target_id = body.comment_id })
+    return 200, { ok = true }
+  end)
+
+  httpd.route("POST", "/api/image-gallery/users/reset-password", function(req)
+    local a, status, err_body = require_image_gallery_owner(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local ok, err = pcall(gallery.reset_image_gallery_user_password, body.user_id, body.new_password)
+    if not ok then return 400, { detail = tostring(err):gsub("^.-:%d+:%s*", "") } end
+    return 200, { ok = true }
+  end)
+
+  httpd.route("POST", "/api/image-gallery/users/update", function(req)
+    local a, status, err_body = require_image_gallery_owner(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local updates = {}
+    for _, key in ipairs({ "username", "display_name", "email", "public_profile", "show_liked_count", "adult_content_consent" }) do
+      if body[key] ~= nil then updates[key] = body[key] end
+    end
+    local ok, user = pcall(gallery.update_image_gallery_user, body.user_id, updates)
+    if not ok then return 400, { detail = tostring(user):gsub("^.-:%d+:%s*", "") } end
+    return 200, { ok = true, user = user }
+  end)
+
+  httpd.route("POST", "/api/image-gallery/users/email-verified", function(req)
+    local a, status, err_body = require_image_gallery_owner(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local user = gallery.set_image_gallery_email_verified(body.user_id, body.verified and true or false)
+    return 200, { ok = true, user = user }
+  end)
+
+  httpd.route("POST", "/api/image-gallery/users/age-verified", function(req)
+    local a, status, err_body = require_image_gallery_owner(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local user = gallery.set_image_gallery_age_verified(body.user_id, body.verified and true or false)
+    return 200, { ok = true, user = user }
+  end)
+
+  httpd.route("POST", "/api/image-gallery/users/resend-verification", function(req)
+    local a, status, err_body = require_image_gallery_owner(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local user = gallery.get_image_gallery_user_admin(body.user_id)
+    if not user then return 404, { detail = "Image Gallery user not found" } end
+    if not user.email then return 400, { detail = "This Image Gallery user does not have an email address." } end
+    if user.email_verified_at then return 200, { ok = true, email_verification_sent = false, already_verified = true } end
+    -- Real end-to-end send now (notify.lua's hand-rolled STARTTLS SMTP
+    -- client — see its doc comment for why the bundled socket.smtp module
+    -- couldn't be reused as-is). The raw token is used both as the ?token=
+    -- link parameter and the displayed code, matching gallery.py's
+    -- email_token reuse; only its hash is ever persisted.
+    local email_token = auth.verification_code()
+    gallery.issue_image_gallery_email_verification_token(body.user_id, auth.verification_token_hash(email_token))
+    local verify_url = notify.image_gallery_verification_url(settings, email_token)
+    local sent, send_err = notify.send_image_gallery_verification_email(settings, user.email, verify_url, email_token)
+    if not sent then
+      print("[swarmpanel-lua] image gallery verification email send failed: " .. tostring(send_err))
+    end
+    return 200, { ok = sent and true or false, email_verification_sent = sent and true or false, already_verified = false }
+  end)
+
+  httpd.route("POST", "/api/image-gallery/media/update", function(req)
+    local a, status, err_body = require_image_gallery_owner(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local updates = {}
+    for _, key in ipairs({ "title", "is_adult", "moderation_status", "moderation_reason" }) do
+      if body[key] ~= nil then updates[key] = body[key] end
+    end
+    local ok, media = pcall(gallery.update_image_gallery_media, body.media_id, updates)
+    if not ok then return 400, { detail = tostring(media):gsub("^.-:%d+:%s*", "") } end
+    return 200, { ok = true, media = media }
+  end)
+
+  httpd.route("POST", "/api/image-gallery/media/delete", function(req)
+    local a, status, err_body = require_image_gallery_owner(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    gallery.delete_image_gallery_media(body.media_id)
+    audit.record_audit_log(a.username, "image_gallery_delete_media", { target_type = "gallery_media", target_id = body.media_id })
+    return 200, { ok = true }
+  end)
+
+  httpd.route("POST", "/api/image-gallery/admin/media/bulk-delete", function(req)
+    local a, status, err_body = require_image_gallery_owner(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local result = run_bulk_op(body.ids, function(id) gallery.delete_image_gallery_media(id) end)
+    audit.record_audit_log(a.username, "image_gallery_bulk_delete_media", { target_type = "gallery_media", details = string.format("succeeded_ids=%d failed=%d", #result.succeeded, #result.failed) })
+    result.ok = true
+    return 200, result
+  end)
+
+  httpd.route("POST", "/api/image-gallery/admin/comments/bulk-delete", function(req)
+    local a, status, err_body = require_image_gallery_owner(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local result = run_bulk_op(body.ids, function(id) gallery.delete_image_gallery_comment(id) end)
+    audit.record_audit_log(a.username, "image_gallery_bulk_delete_comments", { target_type = "gallery_comment", details = string.format("succeeded_ids=%d failed=%d", #result.succeeded, #result.failed) })
+    result.ok = true
+    return 200, result
+  end)
+
+  httpd.route("POST", "/api/image-gallery/admin/users/bulk-delete", function(req)
+    local a, status, err_body = require_image_gallery_owner(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local result = run_bulk_op(body.ids, function(id) gallery.delete_image_gallery_user(id) end)
+    audit.record_audit_log(a.username, "image_gallery_bulk_delete_users", { target_type = "gallery_user", details = string.format("succeeded_ids=%d failed=%d", #result.succeeded, #result.failed) })
+    result.ok = true
+    return 200, result
+  end)
+
+  httpd.route("POST", "/api/image-gallery/reports/status", function(req)
+    local a, status, err_body = require_gallery_admin_or_moderator(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local ok, err = pcall(gallery.update_image_gallery_report_status, body.report_id, body.status)
+    if not ok then return 400, { detail = tostring(err):gsub("^.-:%d+:%s*", "") } end
+    return 200, { ok = true }
+  end)
+
+  -- ------------------------------------------------------------ monitoring
+  -- NOTE: /api/events below only surfaces the two DB-backed event sources
+  -- (per-bot *_error_events tables + Aria medic/infra history). The Python
+  -- original also merges an in-process `recent_feed_events` ring buffer fed
+  -- by push_feed_event() calls scattered across every router's exception
+  -- handlers — wiring that throughout this whole rewrite was out of scope
+  -- for this pass (see final report).
+  httpd.route("GET", "/api/stability", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local ok, data = pcall(metrics.get_stability_snapshot, music_bots)
+    if not ok then return 500, { detail = "Stability snapshot unavailable: " .. tostring(data) } end
+    return 200, data
+  end)
+
+  httpd.route("GET", "/api/metrics", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local ok, data = pcall(metrics.get_metrics_snapshot, music_bots)
+    if not ok then
+      return 503, { generated_at = os.date("!%Y-%m-%dT%H:%M:%SZ"), db_error = tostring(data), totals = {}, bots = {} }
+    end
+    return 200, data
+  end)
+
+  httpd.route("GET", "/api/metrics/history", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local metric = req.query.metric or "queued_tracks"
+    local hours = math.max(1, math.min(tonumber(req.query.hours) or 24, 24 * 30))
+    local ok, points = pcall(metrics.get_metrics_history, metric, hours)
+    if not ok then return 503, { detail = "Metrics history unavailable: " .. tostring(points) } end
+    return 200, { ok = true, metric = metric, hours = hours, points = points }
+  end)
+
+  httpd.route("GET", "/api/metrics/anomalies", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local metric = req.query.metric or "queued_tracks"
+    local hours = math.max(1, math.min(tonumber(req.query.hours) or 24, 24 * 30))
+    local ok, anomalies = pcall(metrics.get_metric_anomalies, metric, hours)
+    if not ok then return 503, { detail = "Metric anomalies unavailable: " .. tostring(anomalies) } end
+    return 200, { ok = true, metric = metric, hours = hours, anomalies = anomalies }
+  end)
+
+  httpd.route("GET", "/api/events", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local bounded_limit = math.max(1, math.min(tonumber(req.query.limit) or 50, 100))
+    local ok1, bot_error_events = pcall(metrics.get_recent_bot_error_events, music_bots, bounded_limit)
+    if not ok1 then bot_error_events = {} end
+    local ok2, aria_medic_events = pcall(metrics.get_recent_aria_medic_events, math.max(5, math.floor(bounded_limit / 2)))
+    if not ok2 then aria_medic_events = {} end
+    local combined = {}
+    for _, e in ipairs(bot_error_events) do combined[#combined + 1] = e end
+    for _, e in ipairs(aria_medic_events) do combined[#combined + 1] = e end
+    table.sort(combined, function(x, y) return tostring(x.timestamp) < tostring(y.timestamp) end)
+    local seen, deduped = {}, {}
+    for _, event in ipairs(combined) do
+      local key = table.concat({
+        tostring(event.timestamp or ""), tostring(event.source or ""),
+        tostring(event.title or ""), tostring(event.description or ""), tostring(event.type or "feed_event"),
+      }, "\0")
+      if not seen[key] then
+        seen[key] = true
+        deduped[#deduped + 1] = event
+      end
+    end
+    local out = {}
+    local start_idx = math.max(1, #deduped - bounded_limit + 1)
+    for i = start_idx, #deduped do out[#out + 1] = deduped[i] end
+    return 200, { events = out }
+  end)
+
+  -- ------------------------------------------------------------ lumisound
+  httpd.route("GET", "/api/lumisound/admin", function(req)
+    local a, status, err_body = require_admin_or_moderator(req)
+    if not a then return status, err_body end
+    local limit = math.max(1, math.min(tonumber(req.query.limit) or 50, 200))
+    local ok, data = pcall(lumisound.get_lumisound_admin_data, settings, limit)
+    if not ok then return 503, { detail = "Lumisound database unavailable: " .. tostring(data) } end
+    return 200, { ok = true, data = data }
+  end)
+
+  httpd.route("POST", "/api/lumisound/uploads/delete", function(req)
+    local a, status, err_body = require_admin_or_moderator(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    lumisound.delete_lumisound_upload(settings, body.upload_id)
+    audit.record_audit_log(a.username, "lumisound_delete_upload", { target_type = "lumisound_upload", target_id = body.upload_id })
+    return 200, { ok = true }
+  end)
+
+  httpd.route("POST", "/api/lumisound/users/active", function(req)
+    local a, status, err_body = require_admin_or_moderator(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local user = lumisound.set_lumisound_user_active(settings, body.user_id, body.active and true or false)
+    if not user then return 404, { detail = "Lumisound user not found" } end
+    audit.record_audit_log(a.username, body.active and "lumisound_user_active" or "lumisound_user_suspend", { target_type = "lumisound_user", target_id = body.user_id })
+    return 200, { ok = true, user = user }
+  end)
+
+  httpd.route("POST", "/api/lumisound/bug-reports/status", function(req)
+    local a, status, err_body = require_admin_or_moderator(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local ok, err = pcall(lumisound.update_lumisound_bug_report_status, settings, body.report_id, body.status)
+    if not ok then return 400, { detail = tostring(err):gsub("^.-:%d+:%s*", "") } end
+    audit.record_audit_log(a.username, "lumisound_bug_report_status", { target_type = "lumisound_bug_report", target_id = body.report_id, details = body.status })
+    return 200, { ok = true }
+  end)
+
+  -- ----------------------------------------------------------- databases
+  httpd.route("GET", "/api/databases", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local ok, schemas = pcall(admin_browser.list_schemas)
+    if not ok then return 503, { detail = "Database unavailable: " .. tostring(schemas) } end
+    if tostring(req.query.include_tables or "false"):lower() ~= "true" then
+      return 200, { schemas = schemas }
+    end
+    local output = {}
+    for _, schema in ipairs(schemas) do
+      local ok2, tables = pcall(admin_browser.list_tables, schema)
+      output[#output + 1] = { schema = schema, tables = ok2 and tables or {} }
+    end
+    return 200, { schemas = output }
+  end)
+
+  httpd.route("GET", "/api/databases/:schema/tables", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local ok, tables = pcall(admin_browser.list_tables, req.params.schema)
+    if not ok then return 503, { detail = "Database unavailable: " .. tostring(tables) } end
+    return 200, { schema = req.params.schema, tables = tables }
+  end)
+
+  httpd.route("POST", "/api/database/truncate-table", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local expected = string.format("TRUNCATE %s.%s", tostring(body.schema_name), tostring(body.table_name))
+    if tostring(body.confirm_text or ""):match("^%s*(.-)%s*$") ~= expected then
+      return 400, { detail = "Confirmation mismatch. Expected exact text: " .. expected }
+    end
+    local expected_owner = tostring(settings.destructive_confirmation_phrase or ""):match("^%s*(.-)%s*$")
+    if expected_owner ~= "" and tostring(body.owner_confirm_text or ""):match("^%s*(.-)%s*$") ~= expected_owner then
+      return 400, { detail = "Owner confirmation mismatch. Expected exact text: " .. expected_owner }
+    end
+    local ok, err = pcall(admin_browser.truncate_table, body.schema_name, body.table_name)
+    if not ok then return 503, { detail = "Database unavailable: " .. tostring(err) } end
+    audit.record_audit_log(a.username, "truncate_table", { target_type = "table", target_id = tostring(body.schema_name) .. "." .. tostring(body.table_name) })
+    return 200, { ok = true, message = "Truncated " .. tostring(body.schema_name) .. "." .. tostring(body.table_name) }
+  end)
+
+  httpd.route("POST", "/api/database/truncate-schema", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    local expected = "TRUNCATE ALL " .. tostring(body.schema_name)
+    if tostring(body.confirm_text or ""):match("^%s*(.-)%s*$") ~= expected then
+      return 400, { detail = "Confirmation mismatch. Expected exact text: " .. expected }
+    end
+    local expected_owner = tostring(settings.destructive_confirmation_phrase or ""):match("^%s*(.-)%s*$")
+    if expected_owner ~= "" and tostring(body.owner_confirm_text or ""):match("^%s*(.-)%s*$") ~= expected_owner then
+      return 400, { detail = "Owner confirmation mismatch. Expected exact text: " .. expected_owner }
+    end
+    local ok, result = pcall(admin_browser.truncate_schema, body.schema_name)
+    if not ok then return 503, { detail = "Database unavailable: " .. tostring(result) } end
+    audit.record_audit_log(a.username, "truncate_schema", { target_type = "schema", target_id = body.schema_name, details = "truncated_tables=" .. tostring(result.truncated_tables) })
+    result.ok = true
+    return 200, result
+  end)
+
+  httpd.route("GET", "/api/database/data", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local limit = math.max(1, math.min(tonumber(req.query.limit) or 100, 500))
+    local ok, data = pcall(admin_browser.get_table_data, req.query.schema_name, req.query.table_name, limit)
+    if not ok then return 400, { detail = tostring(data):gsub("^.-:%d+:%s*", "") } end
+    if tostring(req.query.format or "json"):lower() == "csv" then
+      audit.record_audit_log(a.username, "database_export_csv", { target_type = "table", target_id = tostring(req.query.schema_name) .. "." .. tostring(req.query.table_name) })
+      return csv_export.csv_response(data.rows, tostring(req.query.schema_name) .. "_" .. tostring(req.query.table_name))
+    end
+    return 200, { ok = true, data = data, rows = data.rows, count = data.count }
+  end)
+
+  -- ------------------------------------------------------------- exports
+  -- Port of app/routers/exports.py's read side only — the writer
+  -- (app/main.py's _scheduled_export_loop background task) is not ported,
+  -- so this will report `enabled` from settings but the directory will
+  -- normally be empty unless something else populates it. Path-traversal
+  -- guards (date/filename regex + resolved-path containment check) are
+  -- ported as-is since that's the actual security-relevant part.
+  local EXPORTS_DIR = (settings.scheduled_exports_dir and settings.scheduled_exports_dir ~= "")
+    and settings.scheduled_exports_dir or "./.runtime/exports"
+
+  httpd.route("GET", "/api/exports", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local snapshots = {}
+    local p = io.popen and io.popen('ls -1 "' .. EXPORTS_DIR:gsub('"', '') .. '" 2>/dev/null')
+    if p then
+      for date_dir in p:lines() do
+        if date_dir:match("^%d%d%d%d%-%d%d%-%d%d$") then
+          local files = {}
+          local p2 = io.popen('ls -1 "' .. EXPORTS_DIR:gsub('"', '') .. "/" .. date_dir:gsub('"', '') .. '" 2>/dev/null')
+          if p2 then
+            for fname in p2:lines() do
+              if fname:match("^[%w_.%-]+%.csv$") then
+                local f = io.open(EXPORTS_DIR .. "/" .. date_dir .. "/" .. fname, "rb")
+                local size = 0
+                if f then size = f:seek("end") or 0; f:close() end
+                files[#files + 1] = { name = fname, size_bytes = size }
+              end
+            end
+            p2:close()
+          end
+          if #files > 0 then snapshots[#snapshots + 1] = { date = date_dir, files = files } end
+        end
+      end
+      p:close()
+    end
+    table.sort(snapshots, function(x, y) return x.date > y.date end)
+    return 200, { ok = true, enabled = settings.scheduled_exports_enabled or false, snapshots = snapshots }
+  end)
+
+  httpd.route("GET", "/api/exports/:date/:filename", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local date, filename = req.params.date, req.params.filename
+    if not date:match("^%d%d%d%d%-%d%d%-%d%d$") or not filename:match("^[%w_.%-]+%.csv$") then
+      return 400, { detail = "Invalid export path" }
+    end
+    local path = EXPORTS_DIR .. "/" .. date .. "/" .. filename
+    local f = io.open(path, "rb")
+    if not f then return 404, { detail = "Export file not found" } end
+    local content = f:read("*a")
+    f:close()
+    return 200, content, {
+      ["Content-Type"] = "text/csv",
+      ["Content-Disposition"] = string.format('attachment; filename="%s_%s"', date, filename),
+    }
+  end)
+
+  -- ------------------------------------------------------------ audit-log
+  httpd.route("GET", "/api/audit-log", function(req)
+    local a, status, err_body = require_admin_or_moderator(req)
+    if not a then return status, err_body end
+    local limit = math.max(1, math.min(tonumber(req.query.limit) or 100, 500))
+    local offset = math.max(0, tonumber(req.query.offset) or 0)
+    local action_filter = tostring(req.query.action or ""):sub(1, 80)
+    if action_filter == "" then action_filter = nil end
+    local ok, data = pcall(audit.list_audit_log, limit, offset, action_filter)
+    if not ok then return 503, { detail = "Audit log unavailable: " .. tostring(data) } end
+    return 200, { ok = true, data = data }
+  end)
+
+  local REVERTIBLE_ACTIONS = {
+    swarm_account_update = function(target_id, before)
+      local filtered = {}
+      for _, key in ipairs({ "username", "guild_id", "email", "display_name", "public_profile", "server_name" }) do
+        if before[key] ~= nil then filtered[key] = before[key] end
+      end
+      return accounts.update_account_admin(target_id, filtered)
+    end,
+    alert_rule_update = function(target_id, before)
+      local filtered = {}
+      for _, key in ipairs({ "rule_type", "threshold_minutes", "enabled", "escalation_minutes", "escalate_email" }) do
+        if before[key] ~= nil then filtered[key] = before[key] end
+      end
+      return alerts.update_alert_rule(target_id, filtered)
+    end,
+  }
+
+  httpd.route("POST", "/api/audit-log/:entry_id/revert", function(req)
+    local a, status, err_body = require_admin(req)
+    if not a then return status, err_body end
+    local entry = audit.get_audit_log_entry(req.params.entry_id)
+    if not entry then return 404, { detail = "Audit log entry not found" } end
+    local action = tostring(entry.action or "")
+    local revert_fn = REVERTIBLE_ACTIONS[action]
+    if not revert_fn then return 400, { detail = "Action '" .. action .. "' cannot be reverted." } end
+    local cjson_safe = require("cjson.safe")
+    local decoded = entry.details and cjson_safe.decode(entry.details)
+    local before = decoded and decoded.before
+    if not before then return 400, { detail = "This entry has no recorded before-state to revert to." } end
+    local ok, result, err = pcall(revert_fn, entry.target_id, before)
+    if not ok then return 400, { detail = tostring(result):gsub("^.-:%d+:%s*", "") } end
+    if err then return 400, { detail = err } end
+    if not result then return 404, { detail = "Revert target no longer exists." } end
+    audit.record_audit_log(a.username, action .. "_revert", { target_type = entry.target_type, target_id = entry.target_id, details = "reverted_from_entry=" .. tostring(entry.id) })
+    return 200, { ok = true, result = result }
+  end)
+end
+
+return M
