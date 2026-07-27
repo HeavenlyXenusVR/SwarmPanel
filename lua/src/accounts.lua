@@ -537,6 +537,28 @@ function M.set_account_webhook_verified_admin(account_id, verified)
   return M.get_account_admin(account_id)
 end
 
+-- Self-service password change: unlike reset_account_password_admin (no
+-- current-password check, admin-only), this verifies current_password
+-- against the stored hash first. Mirrors app/db's update_account_password.
+function M.update_account_password(username, guild_id, current_password, new_password)
+  local uname = normalize_username(username)
+  if not uname then return nil, "Invalid username." end
+  local row = db.fetchone(
+    SCHEMA,
+    "SELECT id, password_hash FROM " .. TABLE .. " WHERE username = %s AND guild_id = %s LIMIT 1",
+    uname, guild_id
+  )
+  if not row then return nil end
+  local current_ok = row.password_hash and auth.verify_password_hash(tostring(current_password or ""), row.password_hash) or false
+  if not current_ok then
+    error("Current password is incorrect.", 0)
+  end
+  local password, err = normalize_password(new_password, "New password")
+  if not password then error(err, 0) end
+  db.execute(SCHEMA, "UPDATE " .. TABLE .. " SET password_hash = %s WHERE id = %s", auth.password_hash(password), row.id)
+  return M.get_account_profile(uname, guild_id)
+end
+
 function M.reset_account_password_admin(account_id, new_password)
   local password, err = normalize_password(new_password, "Password")
   if not password then return nil, err end

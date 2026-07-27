@@ -28,6 +28,14 @@
 local socket = require("socket")
 local copas = require("copas")
 local cjson = require("cjson.safe")
+-- lua-cjson can't tell an empty Lua table meant as a JSON array (e.g. an
+-- account with zero profile_tags) from one meant as an empty object -- it
+-- defaults to encoding `{}`, which breaks every frontend call expecting an
+-- array (e.g. `(i.profile_tags || []).join(...)` throws "is not a function"
+-- since `{}` deserializes to a JS object, not `[]`). Nearly everything this
+-- API calls "empty" is a list, not a dict, so flip the process-wide default
+-- rather than annotate dozens of individual call sites with array_mt.
+cjson.encode_empty_table_as_object(false)
 local ws_handshake = require("websocket.handshake")
 local ws_sync = require("websocket.sync")
 

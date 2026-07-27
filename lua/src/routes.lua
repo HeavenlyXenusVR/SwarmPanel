@@ -186,6 +186,33 @@ function M.register(cfg)
     }
   end)
 
+  -- Port of app/routers/session.py's POST /api/session/admin-mode: lets a
+  -- verified site-owner account flip between its normal guild-scoped view
+  -- and the unrestricted admin view, re-issuing the token with the new flag.
+  httpd.route("POST", "/api/session/admin-mode", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    if not is_site_owner(a) then return 403, { detail = "Admin mode is locked to the verified owner account." } end
+    local username = tostring(a.username or settings.admin_username)
+    local linked_guild_id = resolve_account_guild_id(a)
+    if not linked_guild_id then return 400, { detail = "This owner account is not linked to a registered guild." } end
+    local body = req.json or {}
+    local admin_mode = body.enabled == true
+    local role = a.role or "account"
+    return 200, {
+      ok = true, username = username, role = role,
+      guild_id = linked_guild_id, account_guild_id = linked_guild_id,
+      site_owner = true, admin_mode = admin_mode,
+      image_gallery_owner = admin_mode and true or false,
+      token = auth.issue_api_token(settings.session_secret, username, {
+        role = role, guild_id = linked_guild_id, admin_mode = admin_mode,
+        site_owner = true, moderator = a.moderator, ttl_seconds = settings.api_token_ttl_seconds,
+      }),
+      pages_public_url = settings.pages_public_url,
+      expires_in = settings.api_token_ttl_seconds,
+    }
+  end)
+
   httpd.route("POST", "/api/session/login", function(req)
     local body = req.json or {}
     local username = tostring(body.username or "")
@@ -240,6 +267,26 @@ function M.register(cfg)
     -- the "not implemented" cookie-session note above; a real revocation
     -- list is future work if that's ever needed).
     return 200, { ok = true }
+  end)
+
+  -- Port of app/routers/session.py's POST /api/session/password: self-service
+  -- password change, verifying current_password before writing new_password.
+  httpd.route("POST", "/api/session/password", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local scoped_gid = account_guild_id(a)
+    local username = tostring(a.username or "")
+    if not scoped_gid or username == "" then return 403, { detail = "Guild account access required" } end
+    local rl_status, rl_body = ratelimit.check(("password-change:%s"):format(username:lower()), 3, 600)
+    if rl_status then return rl_status, rl_body end
+    local body = req.json or {}
+    local ok, profile_or_err = pcall(
+      accounts.update_account_password, username, scoped_gid,
+      body.current_password, body.new_password
+    )
+    if not ok then return 400, { detail = tostring(profile_or_err):gsub("^.-:%d+:%s*", "") } end
+    if not profile_or_err then return 404, { detail = "Account profile not found" } end
+    return 200, { ok = true, profile = profile_or_err }
   end)
 
   -- ------------------------------------------------------------- dashboard
@@ -1288,6 +1335,59 @@ function M.register(cfg)
     queues.delete_saved_queue(req.params.queue_id, body.guild_id)
     audit.record_audit_log(a.username, "saved_queue_delete", { target_type = "saved_queue", target_id = req.params.queue_id })
     return 200, { ok = true }
+  end)
+
+  -- --------------------------------------------------- guild control/intel
+  -- Port of app/routers/bots.py's GET /api/guilds/{guild_id}/control-matrix:
+  -- every music bot's live control state for one guild.
+  httpd.route("GET", "/api/guilds/:guild_id/control-matrix", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local gid = req.params.guild_id
+    local gerr_status, gerr_body = require_guild_scope(req, a, gid)
+    if gerr_status then return gerr_status, gerr_body end
+    local bots = {}
+    for _, bot in ipairs(music_bots) do
+      if bot.kind == "music" then
+        local ok, state = pcall(dashboard.get_bot_control_state, bot, gid)
+        bots[#bots + 1] = ok and state or { bot_key = bot.key, bot_display = bot.display_name, error = tostring(state) }
+      end
+    end
+    return 200, { generated_at = os.date("!%Y-%m-%dT%H:%M:%SZ"), guild_id = tostring(gid), bots = bots }
+  end)
+
+  -- Port of GET /api/guilds/{guild_id}/leaderboard.
+  httpd.route("GET", "/api/guilds/:guild_id/leaderboard", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local gid = req.params.guild_id
+    local gerr_status, gerr_body = require_guild_scope(req, a, gid)
+    if gerr_status then return gerr_status, gerr_body end
+    local bot_key = req.query.bot_key
+    local bot = bot_key and bot_index[bot_key]
+    if not bot or bot.kind ~= "music" then return 400, { detail = "This action is only supported for music bots" } end
+    local ok, result = pcall(dashboard.get_guild_leaderboard, bot, gid, tonumber(req.query.limit))
+    if not ok then return 503, { detail = "Leaderboard unavailable: " .. tostring(result) } end
+    return 200, { ok = true, data = result }
+  end)
+
+  -- Port of GET /api/music-intelligence.
+  httpd.route("GET", "/api/music-intelligence", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local gid = req.query.guild_id
+    local scoped = scoped_guild_id(a)
+    if scoped and scoped ~= OWNER_SCOPE_SENTINEL then
+      gid = scoped
+    elseif gid and gid ~= "" then
+      local gerr_status, gerr_body = require_guild_scope(req, a, gid)
+      if gerr_status then return gerr_status, gerr_body end
+    elseif not is_admin_auth(a) then
+      return 403, { detail = "Admin access required" }
+    end
+    local ok, result = pcall(dashboard.get_music_intelligence_summary, music_bots, gid, req.query.bot_key, tonumber(req.query.limit))
+    if not ok then return 503, { detail = "Music intelligence unavailable: " .. tostring(result) } end
+    return 200, { ok = true, data = result }
   end)
 
   -- ---------------------------------------------------------- alert-rules

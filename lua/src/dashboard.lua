@@ -305,6 +305,194 @@ end
 
 M.music_bot_snapshot = music_bot_snapshot
 
+-- Port of app/db/bots.py's get_bot_control_state(): single-guild control
+-- panel state for one bot. Rather than duplicate music_bot_snapshot's ~9
+-- table queries, just take its per-guild session out of the batch -- the
+-- Python original queried per-guild directly, but this schema is small
+-- enough (a handful of guilds per bot) that the extra rows fetched here are
+-- negligible, and reusing tested logic beats a second, divergent code path.
+function M.get_bot_control_state(bot, guild_id)
+  local snap = music_bot_snapshot(bot)
+  local gid = tostring(guild_id)
+  for _, session in ipairs(snap.sessions or {}) do
+    if session.guild_id == gid then
+      local state = {}
+      for k, v in pairs(session) do state[k] = v end
+      state.bot_key = bot.key
+      state.bot_display = bot.display_name
+      state.status = snap.status
+      state.heartbeat_age_seconds = snap.heartbeat_age_seconds
+      state.heartbeat_status = snap.heartbeat_status
+      return state
+    end
+  end
+  -- Never seen this guild in any of the bot's tables -- an idle/unconfigured
+  -- default, matching Python's all-zero fallback rather than 404ing (a music
+  -- bot simply not yet used in this guild is a normal, common case).
+  return {
+    bot_key = bot.key, bot_display = bot.display_name, guild_id = gid,
+    status = snap.status, heartbeat_age_seconds = snap.heartbeat_age_seconds, heartbeat_status = snap.heartbeat_status,
+    session_state = "idle", session_state_label = "Idle", is_playing = false, is_paused = false,
+    queue_count = 0, backup_queue_count = 0, backup_restore_ready = false,
+    filter_mode = "none", loop_mode = "queue", transition_mode = "off", fade_seconds = 5.0, fade_curve = "linear",
+  }
+end
+
+-- Port of app/db/bots.py's get_guild_leaderboard(): top tracks/listeners for
+-- one bot+guild, built from the existing track_intelligence/
+-- user_track_affinity tables (no new tables, matching the Python original).
+function M.get_guild_leaderboard(bot, guild_id, limit)
+  local schema = bot.db_schema
+  local prefix = bot.table_prefix
+  local intelligence_table = prefix .. "_track_intelligence"
+  local affinity_table = prefix .. "_user_track_affinity"
+  local safe_limit = math.max(1, math.min(tonumber(limit) or 10, 50))
+  local exists = db.batch_table_exists(schema, { intelligence_table, affinity_table })
+
+  local top_tracks = {}
+  if exists[intelligence_table] then
+    top_tracks = db.fetchall(
+      schema,
+      [[SELECT title, video_url, play_count, finish_count, skip_count, like_count, dislike_count,
+               ((finish_count * 3) + (like_count * 5) + play_count - (skip_count * 2) - (dislike_count * 5)) AS smart_score
+        FROM ]] .. intelligence_table .. [[
+        WHERE guild_id = %s
+        ORDER BY smart_score DESC, play_count DESC
+        LIMIT %s]],
+      guild_id, safe_limit
+    )
+  end
+
+  local top_listeners = {}
+  if exists[affinity_table] then
+    top_listeners = db.fetchall(
+      schema,
+      [[SELECT user_id, COUNT(*) AS track_count, COALESCE(SUM(play_count), 0) AS play_count,
+               COALESCE(SUM(score), 0) AS taste_score
+        FROM ]] .. affinity_table .. [[
+        WHERE guild_id = %s
+        GROUP BY user_id
+        ORDER BY taste_score DESC, play_count DESC
+        LIMIT %s]],
+      guild_id, safe_limit
+    )
+  end
+
+  return { guild_id = tostring(guild_id), bot_key = bot.key, top_tracks = top_tracks, top_listeners = top_listeners }
+end
+
+-- Port of app/db/bots.py's get_music_intelligence_summary(), simplified to
+-- the single-optional-guild_id shape routes.lua's /api/music-intelligence
+-- actually receives (the Python version's list-of-guild_ids parameter is
+-- only ever called with zero or one guild in this codebase).
+function M.get_music_intelligence_summary(music_bots, guild_id, bot_key, limit)
+  local safe_limit = math.max(1, math.min(tonumber(limit) or 8, 25))
+  local bots = music_bots
+  if bot_key and bot_key ~= "" then
+    bots = {}
+    for _, bot in ipairs(music_bots) do
+      if bot.key == bot_key then bots[1] = bot end
+    end
+    if #bots == 0 then error("Unknown bot key", 0) end
+  end
+
+  local totals = { learned_tracks = 0, plays = 0, finishes = 0, skips = 0, likes = 0, dislikes = 0, recommendations = 0 }
+  local result_bots = {}
+
+  for _, bot in ipairs(bots) do
+    if bot.kind == "music" and bot.db_schema and bot.table_prefix then
+      local schema, prefix = bot.db_schema, bot.table_prefix
+      local intelligence_table = prefix .. "_track_intelligence"
+      local affinity_table = prefix .. "_user_track_affinity"
+      local recommendations_table = prefix .. "_smart_recommendations"
+      local exists = db.batch_table_exists(schema, { intelligence_table, affinity_table, recommendations_table })
+
+      if exists[intelligence_table] then
+        local where, param = "", nil
+        if guild_id and tostring(guild_id) ~= "" then
+          where = "WHERE guild_id = %s"
+          param = guild_id
+        end
+
+        local summary
+        if param then
+          summary = db.fetchone(
+            schema,
+            [[SELECT COUNT(*) AS learned_tracks, COALESCE(SUM(play_count), 0) AS plays,
+                     COALESCE(SUM(finish_count), 0) AS finishes, COALESCE(SUM(skip_count), 0) AS skips,
+                     COALESCE(SUM(like_count), 0) AS likes, COALESCE(SUM(dislike_count), 0) AS dislikes
+              FROM ]] .. intelligence_table .. " " .. where,
+            param
+          ) or {}
+        else
+          summary = db.fetchone(
+            schema,
+            [[SELECT COUNT(*) AS learned_tracks, COALESCE(SUM(play_count), 0) AS plays,
+                     COALESCE(SUM(finish_count), 0) AS finishes, COALESCE(SUM(skip_count), 0) AS skips,
+                     COALESCE(SUM(like_count), 0) AS likes, COALESCE(SUM(dislike_count), 0) AS dislikes
+              FROM ]] .. intelligence_table
+          ) or {}
+        end
+
+        local top_tracks
+        if param then
+          top_tracks = db.fetchall(
+            schema,
+            [[SELECT guild_id, title, video_url, play_count, finish_count, skip_count, like_count, dislike_count,
+                     ((finish_count * 3) + (like_count * 5) + play_count - (skip_count * 2) - (dislike_count * 5)) AS smart_score,
+                     updated_at
+              FROM ]] .. intelligence_table .. " " .. where .. [[
+              ORDER BY smart_score DESC, updated_at DESC
+              LIMIT %s]],
+            param, safe_limit
+          )
+        else
+          top_tracks = db.fetchall(
+            schema,
+            [[SELECT guild_id, title, video_url, play_count, finish_count, skip_count, like_count, dislike_count,
+                     ((finish_count * 3) + (like_count * 5) + play_count - (skip_count * 2) - (dislike_count * 5)) AS smart_score,
+                     updated_at
+              FROM ]] .. intelligence_table .. [[
+              ORDER BY smart_score DESC, updated_at DESC
+              LIMIT %s]],
+            safe_limit
+          )
+        end
+
+        local recommendation_count = 0
+        if exists[recommendations_table] then
+          local rec_row
+          if param then
+            rec_row = db.fetchone(schema, "SELECT COUNT(*) AS recommendations FROM " .. recommendations_table .. " " .. where, param) or {}
+          else
+            rec_row = db.fetchone(schema, "SELECT COUNT(*) AS recommendations FROM " .. recommendations_table) or {}
+          end
+          recommendation_count = db.toint(rec_row.recommendations, 0)
+        end
+
+        local learned_tracks = db.toint(summary.learned_tracks, 0)
+        totals.learned_tracks = totals.learned_tracks + learned_tracks
+        totals.plays = totals.plays + db.toint(summary.plays, 0)
+        totals.finishes = totals.finishes + db.toint(summary.finishes, 0)
+        totals.skips = totals.skips + db.toint(summary.skips, 0)
+        totals.likes = totals.likes + db.toint(summary.likes, 0)
+        totals.dislikes = totals.dislikes + db.toint(summary.dislikes, 0)
+        totals.recommendations = totals.recommendations + recommendation_count
+
+        result_bots[#result_bots + 1] = {
+          bot_key = bot.key, bot_display = bot.display_name, schema = schema,
+          learned_tracks = learned_tracks, plays = db.toint(summary.plays, 0),
+          finishes = db.toint(summary.finishes, 0), skips = db.toint(summary.skips, 0),
+          likes = db.toint(summary.likes, 0), dislikes = db.toint(summary.dislikes, 0),
+          recommendations = recommendation_count, top_tracks = top_tracks,
+        }
+      end
+    end
+  end
+
+  return { totals = totals, bots = result_bots }
+end
+
 function M.get_dashboard_data(music_bots)
   local bots = {}
   local total_active = 0
