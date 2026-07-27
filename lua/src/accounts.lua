@@ -230,20 +230,36 @@ end
 function M.update_account_profile(username, guild_id, updates)
   local uname = normalize_username(username)
   if not uname then return nil end
-  local assignments, values = {}, {}
+  local profiles = require("profiles")
+  local assignments, values, n = {}, {}, 0
   for key, value in pairs(updates or {}) do
     if ACCOUNT_PROFILE_FIELDS[key] and key ~= "updated_at" then
       assignments[#assignments + 1] = key .. " = %s"
-      values[#values + 1] = value
+      n = n + 1
+      -- profiles.NULL means "explicitly clear to SQL NULL" -- convert back
+      -- to a real nil here (not earlier: a nil table value is indistinguishable
+      -- from an absent key, which is exactly the bug this sentinel exists to
+      -- avoid). A nil here is safe: it's a positional vararg element, not a
+      -- table-key assignment, so it survives into db.execute/pg.lua's NULL
+      -- binding. NOTE: can't write this as `x and nil or value` -- that Lua
+      -- idiom breaks whenever the "true" branch is nil/false, since `or`
+      -- then falls through to the second operand; needs a real if/else.
+      if value == profiles.NULL then
+        values[n] = nil
+      else
+        values[n] = value
+      end
     end
   end
   if #assignments > 0 then
-    values[#values + 1] = uname
-    values[#values + 1] = guild_id
+    n = n + 1
+    values[n] = uname
+    n = n + 1
+    values[n] = guild_id
     db.execute(
       SCHEMA,
       "UPDATE " .. TABLE .. " SET " .. table.concat(assignments, ", ") .. " WHERE username = %s AND guild_id = %s",
-      unpack(values)
+      unpack(values, 1, n)
     )
   end
   return M.get_account_profile(uname, guild_id)
@@ -423,31 +439,44 @@ function M.update_account_admin(account_id, updates)
   if updates.guild_id ~= nil then
     cleaned.guild_id = tostring(updates.guild_id)
   end
+  local profiles = require("profiles")
   if updates.email ~= nil then
     local email, err = normalize_email(updates.email)
     if err then return nil, err end
-    cleaned.email = email
+    cleaned.email = email or profiles.NULL
     reset_email_verification = true
   end
   if updates.display_name ~= nil then
     local dn = tostring(updates.display_name or ""):match("^%s*(.-)%s*$")
-    cleaned.display_name = (dn ~= "" and dn:sub(1, 80)) or nil
+    cleaned.display_name = (dn ~= "" and dn:sub(1, 80)) or profiles.NULL
   end
   if updates.public_profile ~= nil then
     cleaned.public_profile = updates.public_profile and true or false
   end
   if updates.server_name ~= nil then
     local sn = tostring(updates.server_name or ""):match("^%s*(.-)%s*$")
-    cleaned.server_name = (sn ~= "" and sn:sub(1, 120)) or nil
+    cleaned.server_name = (sn ~= "" and sn:sub(1, 120)) or profiles.NULL
   end
 
-  if reset_email_verification and (current.email or nil) == cleaned.email then
+  -- cleaned.email may be profiles.NULL (explicit clear) -- resolve to a real
+  -- nil for every comparison/query below; only the `cleaned` table itself
+  -- keeps the sentinel, so update_account_admin's own assignment loop further
+  -- down can still tell "clear" apart from "not touched".
+  local next_email = current.email
+  if updates.email ~= nil then
+    if cleaned.email == profiles.NULL then
+      next_email = nil
+    else
+      next_email = cleaned.email
+    end
+  end
+
+  if reset_email_verification and (current.email or nil) == next_email then
     reset_email_verification = false -- email unchanged, don't clobber verification state
   end
 
   local next_username = cleaned.username or current.username
   local next_guild_id = cleaned.guild_id or tostring(current.guild_id)
-  local next_email = updates.email ~= nil and cleaned.email or current.email
 
   local conflict = db.fetchone(
     SCHEMA,
@@ -462,10 +491,17 @@ function M.update_account_admin(account_id, updates)
     return nil, "That guild ID is already registered to another account."
   end
 
-  local assignments, values = {}, {}
+  local assignments, values, n = {}, {}, 0
   for key, value in pairs(cleaned) do
     assignments[#assignments + 1] = key .. " = %s"
-    values[#values + 1] = value
+    n = n + 1
+    -- see update_account_profile's comment: `x and nil or value` is broken
+    -- Lua here, needs a real if/else.
+    if value == profiles.NULL then
+      values[n] = nil
+    else
+      values[n] = value
+    end
   end
   if reset_email_verification then
     for _, col in ipairs({ "email_verified_at", "email_verification_token_hash", "email_verification_code_hash", "email_verification_sent_at" }) do
@@ -473,8 +509,9 @@ function M.update_account_admin(account_id, updates)
     end
   end
   if #assignments > 0 then
-    values[#values + 1] = safe_id
-    db.execute(SCHEMA, "UPDATE " .. TABLE .. " SET " .. table.concat(assignments, ", ") .. " WHERE id = %s", unpack(values))
+    n = n + 1
+    values[n] = safe_id
+    db.execute(SCHEMA, "UPDATE " .. TABLE .. " SET " .. table.concat(assignments, ", ") .. " WHERE id = %s", unpack(values, 1, n))
   end
 
   if cleaned.guild_id and cleaned.guild_id ~= tostring(current.guild_id) then

@@ -17,6 +17,17 @@ local cjson = require("cjson.safe")
 
 local M = {}
 
+-- Distinguishes "explicitly clear this column to SQL NULL" from "field not
+-- present in the request" in clean_profile_updates's returned table. Plain
+-- Lua nil can't do this: `updates.bio = nil` removes the key entirely, so
+-- accounts.update_account_profile's `pairs(updates)` loop never sees it and
+-- silently leaves the old value untouched -- a real bug found live (clearing
+-- bio/display_name/etc via an empty string in the UI appeared to save but
+-- didn't). accounts.lua converts this sentinel back to a real nil (bound as
+-- SQL NULL) only when building the positional query args, where a nil in
+-- the middle of the array is safe.
+M.NULL = setmetatable({}, { __tostring = function() return "<clear>" end })
+
 local PROFILE_SOCIAL_MODES = { open = true, friends = true, quiet = true }
 local PROFILE_BANNER_MODES = { gradient = true, image = true, signal = true, quiet = true, contrast = true }
 local PROFILE_CARD_STYLES = { solid = true, glass = true, outline = true, terminal = true }
@@ -89,10 +100,10 @@ M.normalize_choice = normalize_choice
 -- payload are included (exclude_unset semantics).
 function M.clean_profile_updates(payload, bot_index)
   local updates = {}
-  if payload.display_name ~= nil then updates.display_name = normalize_optional_text(payload.display_name, "Display name", 80) end
-  if payload.avatar_url ~= nil then updates.avatar_url = normalize_public_url(payload.avatar_url, "Avatar URL") end
-  if payload.bio ~= nil then updates.bio = normalize_optional_text(payload.bio, "Bio", 280) end
-  if payload.profile_headline ~= nil then updates.profile_headline = normalize_optional_text(payload.profile_headline, "Profile headline", 140) end
+  if payload.display_name ~= nil then updates.display_name = normalize_optional_text(payload.display_name, "Display name", 80) or M.NULL end
+  if payload.avatar_url ~= nil then updates.avatar_url = normalize_public_url(payload.avatar_url, "Avatar URL") or M.NULL end
+  if payload.bio ~= nil then updates.bio = normalize_optional_text(payload.bio, "Bio", 280) or M.NULL end
+  if payload.profile_headline ~= nil then updates.profile_headline = normalize_optional_text(payload.profile_headline, "Profile headline", 140) or M.NULL end
   if payload.profile_tags ~= nil then
     local clean_tags, seen = {}, {}
     for _, raw_tag in ipairs(payload.profile_tags or {}) do
@@ -119,21 +130,21 @@ function M.clean_profile_updates(payload, bot_index)
     end
     updates.profile_links = cjson.encode(clean_links)
   end
-  if payload.profile_banner_url ~= nil then updates.profile_banner_url = normalize_public_url(payload.profile_banner_url, "Profile banner URL") end
+  if payload.profile_banner_url ~= nil then updates.profile_banner_url = normalize_public_url(payload.profile_banner_url, "Profile banner URL") or M.NULL end
   if payload.profile_banner_mode ~= nil then updates.profile_banner_mode = normalize_choice(payload.profile_banner_mode, "Profile banner", PROFILE_BANNER_MODES, "gradient") end
   if payload.profile_card_style ~= nil then updates.profile_card_style = normalize_choice(payload.profile_card_style, "Profile card style", PROFILE_CARD_STYLES, "solid") end
   if payload.profile_social_mode ~= nil then updates.profile_social_mode = normalize_choice(payload.profile_social_mode, "Profile social mode", PROFILE_SOCIAL_MODES, "open") end
   if payload.favorite_bot ~= nil then
     local favorite = normalize_optional_text(payload.favorite_bot, "Favorite bot", 50)
     if favorite and bot_index and not bot_index[favorite] then error("Favorite bot must be one of the known swarm bots", 0) end
-    updates.favorite_bot = favorite
+    updates.favorite_bot = favorite or M.NULL
   end
-  if payload.theme_accent ~= nil then updates.theme_accent = normalize_profile_accent(payload.theme_accent) end
+  if payload.theme_accent ~= nil then updates.theme_accent = normalize_profile_accent(payload.theme_accent) or M.NULL end
   if payload.public_profile ~= nil then updates.public_profile = payload.public_profile and true or false end
-  if payload.server_invite_url ~= nil then updates.server_invite_url = normalize_server_invite_url(payload.server_invite_url) end
-  if payload.server_name ~= nil then updates.server_name = normalize_optional_text(payload.server_name, "Server name", 120) end
-  if payload.server_icon_url ~= nil then updates.server_icon_url = normalize_public_url(payload.server_icon_url, "Server icon URL") end
-  if payload.profile_quote ~= nil then updates.profile_quote = normalize_optional_text(payload.profile_quote, "Profile quote", 160) end
+  if payload.server_invite_url ~= nil then updates.server_invite_url = normalize_server_invite_url(payload.server_invite_url) or M.NULL end
+  if payload.server_name ~= nil then updates.server_name = normalize_optional_text(payload.server_name, "Server name", 120) or M.NULL end
+  if payload.server_icon_url ~= nil then updates.server_icon_url = normalize_public_url(payload.server_icon_url, "Server icon URL") or M.NULL end
+  if payload.profile_quote ~= nil then updates.profile_quote = normalize_optional_text(payload.profile_quote, "Profile quote", 160) or M.NULL end
   if payload.profile_layout_mode ~= nil then updates.profile_layout_mode = normalize_choice(payload.profile_layout_mode, "Profile layout", PROFILE_LAYOUT_MODES, "default") end
   if payload.profile_header_style ~= nil then updates.profile_header_style = normalize_choice(payload.profile_header_style, "Profile header style", PROFILE_HEADER_STYLES, "solid") end
   if payload.profile_border_accent ~= nil then updates.profile_border_accent = normalize_choice(payload.profile_border_accent, "Profile border accent", PROFILE_BORDER_ACCENTS, "none") end
