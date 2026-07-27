@@ -34,6 +34,37 @@ local YOUTUBE_HOSTS = {
   ["music.youtube.com"] = true, ["youtu.be"] = true, ["www.youtu.be"] = true,
 }
 
+-- Port of app/db/helpers.py's _extract_youtube_video_id() + _derive_thumbnail_url().
+-- Was never ported to this Lua rewrite at all -- sessions never got a
+-- thumbnail/thumbnail_url field, so BotCard's `session?.thumbnail ||
+-- session?.thumbnail_url` was always empty and every bot card fell back to
+-- the plain Music2 icon instead of a real video thumbnail.
+local function extract_youtube_video_id(video_url)
+  video_url = tostring(video_url or ""):match("^%s*(.-)%s*$")
+  if video_url == "" then return nil end
+  local host, path_and_query = video_url:match("^https?://([^/]+)(/?.*)$")
+  if not host or not YOUTUBE_HOSTS[host:lower()] then return nil end
+  local path, query = path_and_query:match("^([^?]*)%??(.*)$")
+  if host:lower():match("youtu%.be$") then
+    return path:match("^/([^/]+)") or nil
+  end
+  if path == "/watch" then
+    local v = query:match("[?&]?v=([^&]+)")
+    return v ~= "" and v or nil
+  end
+  local first, second = path:match("^/([^/]+)/([^/]+)")
+  if first == "shorts" or first == "embed" or first == "live" then
+    return second ~= "" and second or nil
+  end
+  return nil
+end
+
+local function derive_thumbnail_url(video_url)
+  local video_id = extract_youtube_video_id(video_url)
+  if not video_id then return nil end
+  return "https://i.ytimg.com/vi/" .. video_id .. "/hqdefault.jpg"
+end
+
 local function detect_media_source(video_url)
   video_url = video_url or ""
   if video_url == "" then return { key = "unknown", label = "Unknown" } end
@@ -234,6 +265,7 @@ local function music_bot_snapshot(bot)
       video_url = playback.video_url,
       media_source = source_info.key,
       media_source_label = source_info.label,
+      thumbnail = derive_thumbnail_url(playback.video_url),
       position_seconds = effective_position,
       duration_seconds = effective_duration,
       position_observed_at = observed_at,
