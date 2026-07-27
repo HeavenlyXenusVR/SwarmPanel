@@ -97,17 +97,40 @@ function isNumericColumn(column, value) {
   return /count|plays|skips|likes|dislikes|followers|friends|guilds|queued|backup|finishes|position|seconds|duration|score|health/i.test(column);
 }
 
+// track_intelligence/smart_recommendations rows (e.g. top_smart_tracks) are
+// objects with title/play_count/smart_score fields, not flat scalars -- the
+// generic formatCell() JSON.stringify() fallback below dumped raw JSON blobs
+// into table cells for these (see the music-intelligence screenshot this was
+// found from). Render anything with a recognizable label field as a short
+// "Title — N plays" chip instead.
+function formatArrayItem(item) {
+  if (item !== null && typeof item === "object" && !Array.isArray(item)) {
+    const label = item.title || item.name || item.display_name || item.label;
+    if (label) {
+      const detail = item.play_count !== undefined
+        ? `${number(item.play_count)} plays`
+        : item.smart_score !== undefined
+          ? `score ${number(item.smart_score)}`
+          : null;
+      return detail ? `${label} — ${detail}` : String(label);
+    }
+  }
+  return formatCell(item);
+}
+
 function renderTableCell(column, value) {
   if (value === null || value === undefined || value === "") return <span className="muted">-</span>;
   if (Array.isArray(value)) {
     return (
       <div className="chip-row table-chip-row">
-        {value.slice(0, 4).map((item, index) => <span key={`${column}-${index}`}>{formatCell(item)}</span>)}
+        {value.slice(0, 4).map((item, index) => <span key={`${column}-${index}`}>{formatArrayItem(item)}</span>)}
         {value.length > 4 ? <span>+{value.length - 4}</span> : null}
       </div>
     );
   }
   if (typeof value === "object") {
+    const label = value.title || value.name || value.display_name || value.label;
+    if (label) return <span>{formatArrayItem(value)}</span>;
     return <pre className="table-code">{JSON.stringify(value, null, 2)}</pre>;
   }
   if (typeof value === "boolean" || column.startsWith("is_")) {
@@ -475,8 +498,13 @@ export function ControlState({ state, compact = false }) {
   if (state.error) return <Notice tone="error">{state.error}</Notice>;
   const session = state.session || {};
   const backupPreview = Array.isArray(session.backup_queue_preview) ? session.backup_queue_preview : [];
+  // dashboard.lua's derive_session_state() flags a bot with saved
+  // queue/track state but no live playback as "recovering" -- previously
+  // this only showed up as the plain text label "Recovery Pending", easy to
+  // miss in a busy Guild Matrix grid. Give it a real visual signal.
+  const isRecovering = session.session_state === "recovering";
   return (
-    <article className={`control-state ${compact ? "compact" : ""}`}>
+    <article className={`control-state ${compact ? "compact" : ""} ${isRecovering ? "state-recovering" : ""}`}>
       <div><strong>{state.display_name || state.key}</strong><small>{state.discord?.status || state.db?.status || "unknown"}</small></div>
       <p>{session.title || session.session_state_label || state.discord?.message || "Idle"}</p>
       {session.title || Number(session.position_seconds || 0) > 0 ? <PlaybackCounter session={session} compact /> : null}

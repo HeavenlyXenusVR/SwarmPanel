@@ -145,6 +145,18 @@ export default function AppearancePage({ ctx }) {
   const [draft, setDraft] = useState(() => ({ ...DEFAULT_PREFERENCES, ...(ctx.preferences || {}) }));
   const [previewMode, setPreviewMode] = useState("live");
   const [saving, setSaving] = useState(false);
+  // Server-owned presets (looks.lua) extend the 3 hardcoded LOOK_PRESETS
+  // above rather than replacing them, so new bundles can ship without a
+  // frontend redeploy while still working if the fetch fails.
+  const [serverPresets, setServerPresets] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch("/api/appearance/presets")
+      .then((data) => { if (!cancelled) setServerPresets(Array.isArray(data.panel) ? data.panel : []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+  const presets = [...LOOK_PRESETS, ...serverPresets.filter((p) => !LOOK_PRESETS.some((local) => local.id === p.id))];
   // Tracks whether the user has made any manual edits since the last save/revert.
   // Used to prevent a background useLiveRefresh preferences reload from clobbering
   // unsaved draft changes while the user is mid-edit.
@@ -242,7 +254,7 @@ export default function AppearancePage({ ctx }) {
           <div className="appearance-cluster">
             <div className="appearance-cluster-head"><h3>Quick Presets</h3><p>Start from a fully wired look recipe, then fine-tune the controls below.</p></div>
             <div className="appearance-preset-grid">
-              {LOOK_PRESETS.map((preset) => (
+              {presets.map((preset) => (
                 <button className="appearance-preset-card" key={preset.id} onClick={() => applyPatch(preset.patch)} type="button">
                   <strong>{preset.title}</strong>
                   <span>{preset.note}</span>

@@ -6,7 +6,7 @@ import { EmptyState, Notice, Page, SkeletonGrid } from "../components/ui.jsx";
 import { IdentityAvatar, PresencePill } from "../components/swarm.jsx";
 import { useLiveRefresh } from "../hooks/useLiveRefresh.js";
 import { pick } from "../utils/format.js";
-import { profileLayoutClass, profileSurfaceStyle } from "../utils/control.js";
+import { profileBorderAccentClass, profileLayoutClass, profileSurfaceStyle } from "../utils/control.js";
 
 function profileToForm(profile = {}) {
   const links = Array.isArray(profile.profile_links) ? profile.profile_links : [];
@@ -57,6 +57,15 @@ export default function ProfilePage({ ctx }) {
   const [form, setForm] = useState({});
   const [identity, setIdentity] = useState({ email: "", verification_webhook_url: "", code: "", current_password: "", new_password: "" });
   const [busy, setBusy] = useState("");
+  const [profilePresets, setProfilePresets] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch("/api/appearance/presets")
+      .then((res) => { if (!cancelled) setProfilePresets(Array.isArray(res.profile) ? res.profile : []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   const load = useCallback(async ({ background = false } = {}) => {
     const payload = publicMode
@@ -208,7 +217,7 @@ export default function ProfilePage({ ctx }) {
   const profilePreferences = { ...ctx.preferences, ...storedProfilePreferences };
   const profileAccent = profile.theme_accent || profilePreferences.accent_color || ctx.preferences.accent_color || "#89b4fa";
   const layoutClass = profileLayoutClass(profilePreferences);
-  const profileClasses = `${layoutClass} public-profile-card-${profile.profile_card_style || "solid"} public-profile-banner-${profile.profile_banner_mode || "gradient"}`;
+  const profileClasses = `${layoutClass} public-profile-card-${profile.profile_card_style || "solid"} public-profile-banner-${profile.profile_banner_mode || "gradient"} ${profileBorderAccentClass(profile)}`;
   const profileSurface = profileSurfaceStyle({ ...profilePreferences, accent_color: profileAccent }, profileAccent);
   const previewSurface = profileSurfaceStyle(
     { ...profilePreferences, accent_color: form.theme_accent || profileAccent },
@@ -286,7 +295,7 @@ export default function ProfilePage({ ctx }) {
                   {!publicMode && profile.id ? <Link className="button-link" to={`/users/${profile.id}`}><Eye size={16} />Open Public View</Link> : null}
                 </div>
                 <article
-                  className={`panel public-profile-hero public-profile-preview-card public-profile-card-${previewProfile.profile_card_style || "solid"} public-profile-banner-${previewProfile.profile_banner_mode || "gradient"}`}
+                  className={`panel public-profile-hero public-profile-preview-card public-profile-card-${previewProfile.profile_card_style || "solid"} public-profile-banner-${previewProfile.profile_banner_mode || "gradient"} ${profileBorderAccentClass(previewProfile)}`}
                   style={previewBannerStyle}
                 >
                   <ProfileAvatar profile={previewProfile} />
@@ -313,6 +322,22 @@ export default function ProfilePage({ ctx }) {
                 </div>
               </div>
               {!profile.verification_verified && identity.verification_webhook_url ? <Notice>Profile owner features stay limited until your Discord webhook code is verified.</Notice> : null}
+              {editable && profilePresets.length ? (
+                <div className="appearance-cluster">
+                  <div className="appearance-cluster-head"><h3>Quick Looks</h3><p>Apply a preset combination of banner, card, and accent choices, then fine-tune below.</p></div>
+                  <div className="appearance-preset-grid">
+                    {profilePresets.map((preset) => (
+                      <button
+                        className="appearance-preset-card" key={preset.id} type="button"
+                        onClick={() => setForm((current) => ({ ...current, ...preset.patch }))}
+                      >
+                        <strong>{preset.title}</strong>
+                        <span>{preset.note}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <label className="field"><span>Display Name</span><input value={form.display_name || ""} onChange={(event) => setForm((current) => ({ ...current, display_name: event.target.value }))} disabled={!editable} /></label>
               <label className="field"><span>Headline</span><input value={form.profile_headline || ""} onChange={(event) => setForm((current) => ({ ...current, profile_headline: event.target.value }))} disabled={!editable} /></label>
               <label className="field"><span>Bio</span><textarea value={form.bio || ""} onChange={(event) => setForm((current) => ({ ...current, bio: event.target.value }))} disabled={!editable} /></label>

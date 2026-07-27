@@ -114,6 +114,76 @@ function M.fetch_guild_channels(token, guild_id)
   return out
 end
 
+-- Port of app/discord_api.py's DiscordInventoryService.fetch_inventory():
+-- the full per-bot guild+channel tree used by the Controls page's
+-- guild/channel pickers. Previously NOT ported (see this file's header
+-- comment) -- ControlsPage.jsx's GET /api/bots/:bot_key/inventory call was
+-- 404ing against httpd's generic not-found handler, which is what surfaced
+-- to users as "not found" for guilds/voice/text channels.
+--
+-- guild_hints: known guild ids to fall back to (from db-known-guilds) when
+-- /users/@me/guilds itself fails or a hinted guild isn't in that list --
+-- mirrors the Python original's guild_hints handling, simplified since Lua's
+-- rest.lua doesn't distinguish a 404 DiscordAPIError from other failures at
+-- this call site (cached_get just returns nil, err for any non-2xx).
+function M.fetch_inventory(token, opts)
+  opts = opts or {}
+  local include_channels = opts.include_channels
+  if include_channels == nil then include_channels = true end
+  local guild_hints = opts.guild_hints or {}
+
+  local payload = { identity = nil, guilds = {}, errors = {} }
+
+  local identity, ident_err = M.fetch_identity(token)
+  if identity then
+    payload.identity = identity
+  else
+    payload.errors[#payload.errors + 1] = "identity: " .. tostring(ident_err)
+  end
+
+  local guilds, guilds_err = M.fetch_guilds(token)
+  local seen_guild_ids = {}
+  local deduped = {}
+  if guilds_err then
+    payload.errors[#payload.errors + 1] = "guilds: " .. tostring(guilds_err)
+  end
+  for _, g in ipairs(guilds or {}) do
+    local gid = tostring(g.id)
+    if not seen_guild_ids[gid] then
+      seen_guild_ids[gid] = true
+      deduped[#deduped + 1] = g
+    end
+  end
+
+  -- Only resolve hinted guilds not already returned by /users/@me/guilds --
+  -- avoids N redundant Discord API calls on every inventory refresh.
+  for _, guild_id in ipairs(guild_hints) do
+    local gid_str = tostring(guild_id)
+    if not seen_guild_ids[gid_str] then
+      local guild = M.fetch_guild(token, guild_id)
+      deduped[#deduped + 1] = guild
+      seen_guild_ids[tostring(guild.id or gid_str)] = true
+    end
+  end
+
+  for _, guild in ipairs(deduped) do
+    if include_channels then
+      local channels = M.fetch_guild_channels(token, guild.id)
+      guild.channels = channels
+      if #channels == 0 then
+        -- fetch_guild_channels swallows errors into an empty list (see its
+        -- own comment); surface a hint instead of a silently-empty channel
+        -- picker, matching the Python original's channels_error field.
+        guild.channels_error = "No channels visible to this bot in this guild."
+      end
+    else
+      guild.channels = {}
+    end
+  end
+  payload.guilds = deduped
+  return payload
+end
+
 -- placements: array of {guild_id=, channel_id=} (channel_id may be nil).
 -- Returns map keyed by "guild_id\0channel_id_or_empty" -> {guild_name=, channel_name=}.
 function M.resolve_guild_channel_names(token, placements)

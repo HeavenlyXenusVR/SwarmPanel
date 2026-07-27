@@ -35,6 +35,43 @@ local PROFILE_LAYOUT_MODES = { default = true, sidebar = true, stacked = true, s
 local PROFILE_HEADER_STYLES = { solid = true, glass = true, blur = true, transparent = true, gradient = true }
 local PROFILE_BORDER_ACCENTS = { none = true, glow = true, pulse = true, neon = true, solid = true }
 
+-- Port of app/validators.py's PANEL_* enum sets -- these were previously NOT
+-- enforced here at all (see this file's original header comment), so a
+-- client could POST any string for theme_mode/layout_mode/etc and have it
+-- stored as-is. Closing that gap: every PANEL_* choice below now goes
+-- through M.normalize_choice / M.normalize_panel_look_choice exactly like
+-- the Python original.
+local PANEL_THEME_MODES = { dark = true, light = true, system = true }
+local PANEL_BACKGROUND_MODES = { default = true, midnight = true, aurora = true, ember = true, custom_color = true, custom_image = true }
+local PANEL_LAYOUT_MODES = { standard = true, focused = true, wide = true }
+local PANEL_DENSITY_MODES = { comfortable = true, compact = true }
+local PANEL_SHAPE_MODES = { soft = true, crisp = true }
+local PANEL_FONT_MODES = { normal = true, large = true, dense = true }
+local PANEL_MOTION_MODES = { standard = true, reduced = true }
+local PANEL_OPERATOR_LAYOUT_MODES = { command = true, console = true, compact = true }
+local PANEL_ROSTER_LAYOUT_MODES = { cards = true, signals = true, ledger = true }
+local PANEL_TAB_STYLE_MODES = { rail = true, underline = true, minimal = true }
+local PANEL_STREAM_CARD_MODES = { telemetry = true, compact = true, cinematic = true }
+local PANEL_DASHBOARD_DENSITY_MODES = { command = true, dense = true }
+local PANEL_SIDEBAR_STYLES = { full = true, icons = true, minimal = true }
+local PANEL_FONT_FAMILIES = { system = true, mono = true, rounded = true }
+local PANEL_CARD_HOVER_EFFECTS = { lift = true, glow = true, border = true, none = true }
+local PANEL_NOTIFICATION_POSITIONS = { br = true, bl = true, tr = true, tc = true }
+local PANEL_BOT_CARD_DETAILS = { full = true, compact = true, minimal = true }
+local PANEL_RADIUS_MODES = { none = true, small = true, medium = true, large = true, pill = true }
+
+-- Port of app/validators.py's PANEL_LOOK_ALIASES: a handful of preset/legacy
+-- names get remapped onto the current canonical choice before validation,
+-- so older stored preferences (or preset payloads using the friendlier
+-- names) don't hard-fail.
+local PANEL_LOOK_ALIASES = {
+  operator_layout = { spotlight = "command", studio = "console" },
+  roster_layout = { grid = "cards", magazine = "signals", stack = "ledger" },
+  tab_style = { pills = "rail" },
+  stream_card_style = { editorial = "telemetry" },
+  dashboard_density = { comfortable = "command", compact = "dense" },
+}
+
 local function trim(s) return tostring(s or ""):match("^%s*(.-)%s*$") end
 
 local function normalize_optional_text(value, field_name, max_length)
@@ -93,6 +130,25 @@ local function normalize_choice(value, field_name, allowed, default)
   return choice
 end
 M.normalize_choice = normalize_choice
+
+-- Port of app/validators.py's _normalize_panel_look_choice(): same as
+-- normalize_choice, but first remaps through PANEL_LOOK_ALIASES[key] so a
+-- legacy/preset-friendly name resolves to the canonical choice before the
+-- allowed-set check.
+local function normalize_panel_look_choice(value, field_name, key, allowed, default)
+  local choice = trim(value ~= nil and value or default):lower()
+  if choice == "" then choice = default end
+  local aliases = PANEL_LOOK_ALIASES[key]
+  if aliases and aliases[choice] then choice = aliases[choice] end
+  if not allowed[choice] then
+    local names = {}
+    for k in pairs(allowed) do names[#names + 1] = k end
+    table.sort(names)
+    error(field_name .. " must be one of: " .. table.concat(names, ", "), 0)
+  end
+  return choice
+end
+M.normalize_panel_look_choice = normalize_panel_look_choice
 
 -- payload: decoded JSON body table (from req.json). Returns a table of
 -- column -> normalized value, matching ACCOUNT_PROFILE_FIELDS column names,
@@ -161,30 +217,70 @@ local PANEL_PREFERENCE_DEFAULTS = {
 
 -- Merges `raw` (a decoded JSON request body, exclude-unset semantics assumed
 -- already applied by the caller passing only keys it wants to change) onto
--- `base` (previously-stored preferences or the defaults above), with light
--- type coercion/clamping for the numeric fields. See module doc comment for
--- what's intentionally NOT enum-validated here.
+-- `base` (previously-stored preferences or the defaults above), validating
+-- every PANEL_* enum choice against the sets above (previously accepted as-
+-- is -- see this file's original header comment) plus clamping/coercion for
+-- the numeric and boolean fields, mirroring app/routers/users.py's
+-- _clean_panel_preferences field-by-field.
 function M.clean_panel_preferences(raw, base)
+  raw = raw or {}
   local prefs = {}
   for k, v in pairs(base or PANEL_PREFERENCE_DEFAULTS) do prefs[k] = v end
-  for k, v in pairs(raw or {}) do prefs[k] = v end
-  if prefs.profile_backdrop_strength ~= nil then
-    local n = tonumber(prefs.profile_backdrop_strength)
+
+  if raw.theme_mode ~= nil then prefs.theme_mode = normalize_choice(raw.theme_mode, "Theme mode", PANEL_THEME_MODES, "dark") end
+  if raw.accent_color ~= nil then prefs.accent_color = normalize_profile_accent(raw.accent_color) or "#89b4fa" end
+  if raw.background_mode ~= nil then prefs.background_mode = normalize_choice(raw.background_mode, "Background mode", PANEL_BACKGROUND_MODES, "default") end
+  if raw.background_color ~= nil then prefs.background_color = normalize_profile_accent(raw.background_color) or "#0b0e18" end
+  if raw.background_image_url ~= nil then prefs.background_image_url = M.normalize_public_url(raw.background_image_url, "Background image URL") end
+  if raw.profile_backdrop_image_url ~= nil then prefs.profile_backdrop_image_url = M.normalize_public_url(raw.profile_backdrop_image_url, "Profile backdrop image URL") end
+  if raw.profile_backdrop_strength ~= nil then
+    local n = tonumber(raw.profile_backdrop_strength)
     if not n then error("Profile backdrop strength must be a number between 0.0 and 0.55", 0) end
     prefs.profile_backdrop_strength = math.max(0.0, math.min(n, 0.55))
   end
-  if prefs.surface_opacity ~= nil then
-    local n = tonumber(prefs.surface_opacity)
+  if raw.layout_mode ~= nil then prefs.layout_mode = normalize_choice(raw.layout_mode, "Layout mode", PANEL_LAYOUT_MODES, "standard") end
+  if raw.density ~= nil then prefs.density = normalize_choice(raw.density, "Density", PANEL_DENSITY_MODES, "comfortable") end
+  if raw.card_shape ~= nil then prefs.card_shape = normalize_choice(raw.card_shape, "Card shape", PANEL_SHAPE_MODES, "soft") end
+  if raw.font_scale ~= nil then prefs.font_scale = normalize_choice(raw.font_scale, "Font scale", PANEL_FONT_MODES, "normal") end
+  if raw.motion ~= nil then prefs.motion = normalize_choice(raw.motion, "Motion", PANEL_MOTION_MODES, "standard") end
+  if raw.operator_layout ~= nil or raw.profile_layout ~= nil then
+    prefs.operator_layout = normalize_panel_look_choice(
+      raw.operator_layout ~= nil and raw.operator_layout or raw.profile_layout,
+      "Operator layout", "operator_layout", PANEL_OPERATOR_LAYOUT_MODES, "command"
+    )
+  end
+  if raw.roster_layout ~= nil or raw.directory_layout ~= nil then
+    prefs.roster_layout = normalize_panel_look_choice(
+      raw.roster_layout ~= nil and raw.roster_layout or raw.directory_layout,
+      "Roster layout", "roster_layout", PANEL_ROSTER_LAYOUT_MODES, "cards"
+    )
+  end
+  if raw.tab_style ~= nil then prefs.tab_style = normalize_panel_look_choice(raw.tab_style, "Tab style", "tab_style", PANEL_TAB_STYLE_MODES, "rail") end
+  if raw.surface_opacity ~= nil then
+    local n = tonumber(raw.surface_opacity)
     if not n then error("Surface opacity must be a number between 0.35 and 1.0", 0) end
     prefs.surface_opacity = math.max(0.35, math.min(n, 1.0))
   end
-  if prefs.surface_blur ~= nil then
-    local n = tonumber(prefs.surface_blur)
+  if raw.surface_blur ~= nil then
+    local n = tonumber(raw.surface_blur)
     if not n then error("Surface blur must be an integer between 0 and 36", 0) end
     prefs.surface_blur = math.max(0, math.min(math.floor(n), 36))
   end
+  if raw.stream_card_style ~= nil then
+    prefs.stream_card_style = normalize_panel_look_choice(raw.stream_card_style, "Bot card style", "stream_card_style", PANEL_STREAM_CARD_MODES, "telemetry")
+  end
+  if raw.dashboard_density ~= nil then
+    prefs.dashboard_density = normalize_panel_look_choice(raw.dashboard_density, "Dashboard density", "dashboard_density", PANEL_DASHBOARD_DENSITY_MODES, "command")
+  end
+  if raw.sidebar_style ~= nil then prefs.sidebar_style = normalize_choice(raw.sidebar_style, "Sidebar style", PANEL_SIDEBAR_STYLES, "full") end
+  if raw.panel_font_family ~= nil then prefs.panel_font_family = normalize_choice(raw.panel_font_family, "Panel font", PANEL_FONT_FAMILIES, "system") end
+  if raw.card_hover_effect ~= nil then prefs.card_hover_effect = normalize_choice(raw.card_hover_effect, "Card hover", PANEL_CARD_HOVER_EFFECTS, "lift") end
+  if raw.notification_position ~= nil then prefs.notification_position = normalize_choice(raw.notification_position, "Notification position", PANEL_NOTIFICATION_POSITIONS, "br") end
+  if raw.bot_card_detail ~= nil then prefs.bot_card_detail = normalize_choice(raw.bot_card_detail, "Bot card detail", PANEL_BOT_CARD_DETAILS, "full") end
+  if raw.panel_radius ~= nil then prefs.panel_radius = normalize_choice(raw.panel_radius, "Panel radius", PANEL_RADIUS_MODES, "medium") end
+  if raw.accent_secondary ~= nil then prefs.accent_secondary = normalize_profile_accent(raw.accent_secondary) end
   for _, key in ipairs({ "show_bot_uptime", "show_queue_pressure", "compact_sidebar" }) do
-    if prefs[key] ~= nil then prefs[key] = prefs[key] and true or false end
+    if raw[key] ~= nil then prefs[key] = raw[key] and true or false end
   end
   return prefs
 end

@@ -20,6 +20,7 @@ const SAFE_CHOICES = {
   tab_style: new Set(["rail", "underline", "minimal"]),
   stream_card_style: new Set(["telemetry", "compact", "cinematic"]),
   dashboard_density: new Set(["command", "dense"]),
+  card_hover_effect: new Set(["lift", "glow", "border", "none"]),
 };
 
 const CHOICE_ALIASES = {
@@ -79,21 +80,30 @@ export function panelStyle(preferences) {
   const imageUrl = String(preferences?.background_image_url || "").trim();
   const useImage = mode === "custom_image" && /^https?:\/\//i.test(imageUrl);
   const baseBackground = mode === "custom_color" ? background : BACKGROUND_PRESETS[mode] || BACKGROUND_PRESETS.default;
-  return {
+  const style = {
     "--accent": accent,
     "--bg": baseBackground,
     "--panel-bg-image": useImage ? `url("${imageUrl.replace(/["\\]/g, "\\$&")}")` : "none",
     "--surface-opacity": clampNumber(preferences?.surface_opacity, 0.92, 0.35, 1),
     "--surface-blur": `${clampNumber(preferences?.surface_blur, 18, 0, 36)}px`,
   };
+  // Server-computed (colorutil.lua, see routes.lua's with_derived_accent) --
+  // real WCAG contrast-ratio comparison and an auto-derived gradient partner
+  // when the user hasn't picked accent_secondary themselves.
+  if (preferences?.accent_contrast_text) style["--accent-contrast-text"] = safeHex(preferences.accent_contrast_text, "#ffffff");
+  if (preferences?.accent_gradient) style["--accent-gradient"] = preferences.accent_gradient;
+  return style;
 }
 
 export function profileSurfaceStyle(preferences, fallbackAccent = "#89b4fa") {
-  return {
+  const style = {
     "--accent": safeHex(preferences?.accent_color, fallbackAccent),
     "--profile-backdrop": safeImage(preferences?.profile_backdrop_image_url),
     "--profile-backdrop-strength": `${Math.round(clampNumber(preferences?.profile_backdrop_strength, 0.18, 0, 0.55) * 100)}%`,
   };
+  if (preferences?.accent_contrast_text) style["--accent-contrast-text"] = safeHex(preferences.accent_contrast_text, "#ffffff");
+  if (preferences?.accent_gradient) style["--accent-gradient"] = preferences.accent_gradient;
+  return style;
 }
 
 export function panelClassName(preferences) {
@@ -110,6 +120,7 @@ export function panelClassName(preferences) {
     tabs: choice(preferences, "tab_style", "rail"),
     stream: choice(preferences, "stream_card_style", "telemetry"),
     dashboard: choice(preferences, "dashboard_density", "command"),
+    hover: choice(preferences, "card_hover_effect", "lift"),
   };
   return [
     "app-shell",
@@ -125,6 +136,7 @@ export function panelClassName(preferences) {
     `panel-tabs-${values.tabs}`,
     `panel-stream-${values.stream}`,
     `panel-dashboard-${values.dashboard}`,
+    `panel-hover-${values.hover}`,
   ].join(" ");
 }
 
@@ -134,4 +146,16 @@ export function profileLayoutClass(preferences) {
 
 export function directoryLayoutClass(preferences) {
   return `roster-layout-${choice(preferences, "roster_layout", "cards", "directory_layout")}`;
+}
+
+const PROFILE_BORDER_ACCENTS = new Set(["none", "glow", "pulse", "neon", "solid"]);
+
+// profile_border_accent was validated server-side (profiles.lua) and
+// editable in the Profile page's form, but had no CSS class anywhere in the
+// frontend -- picking "Neon" or "Pulse" saved successfully and changed
+// nothing visually. This is the missing wiring; see styles.css's
+// .profile-border-* rules for the actual keyframes/effects.
+export function profileBorderAccentClass(profile) {
+  const raw = String(profile?.profile_border_accent || "none").trim().toLowerCase();
+  return `profile-border-${PROFILE_BORDER_ACCENTS.has(raw) ? raw : "none"}`;
 }

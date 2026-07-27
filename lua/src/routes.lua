@@ -20,6 +20,25 @@ local csv_export = require("csv_export")
 local lumisound = require("lumisound")
 local metrics = require("metrics")
 local discord_service = require("discord_service")
+local looks = require("looks")
+local colorutil = require("colorutil")
+
+-- Attaches computed --accent-contrast-text / --accent-gradient / a derived
+-- accent_secondary (when the caller hasn't picked one) onto a preferences-
+-- or profile-shaped table that has an accent_color/theme_accent field.
+-- Shared by the panel-preferences and profile-preferences response paths so
+-- the frontend never has to guess at readable text color again.
+local function with_derived_accent(prefs, accent_key, secondary_key)
+  accent_key = accent_key or "accent_color"
+  secondary_key = secondary_key or "accent_secondary"
+  local accent = prefs[accent_key]
+  if not accent or accent == "" then return prefs end
+  local secondary = prefs[secondary_key]
+  if not secondary or secondary == "" then secondary = colorutil.auto_secondary(accent) end
+  prefs.accent_contrast_text = colorutil.contrast_text(accent)
+  prefs.accent_gradient = colorutil.gradient(accent, secondary)
+  return prefs
+end
 local notify = require("notify")
 local ratelimit = require("ratelimit")
 local copas = require("copas")
@@ -128,6 +147,100 @@ function M.register(cfg)
       return 403, { detail = "This account can only control its registered guild" }
     end
     return nil
+  end
+
+  -- Port of dashboard.py's _bot_has_registered_guild()/_require_bot_guild_access().
+  -- Reuses music_bot_snapshot's already-tested known_guild_ids computation
+  -- rather than a second bespoke query, then falls back to a live Discord
+  -- guild-membership check exactly like the Python original.
+  local function bot_has_registered_guild(bot, guild_id)
+    if not bot or bot.kind ~= "music" then return false end
+    local ok, snapshot = pcall(dashboard.music_bot_snapshot, bot)
+    if ok and snapshot and snapshot.known_guild_ids then
+      for _, gid in ipairs(snapshot.known_guild_ids) do
+        if gid == tostring(guild_id) then return true end
+      end
+    end
+    local token = cfg.bot_tokens[bot.key]
+    if not token or token == "" then return false end
+    local ok2, guilds = pcall(discord_service.fetch_guilds, token)
+    if not ok2 or not guilds then return false end
+    for _, g in ipairs(guilds) do
+      if tostring(g.id) == tostring(guild_id) then return true end
+    end
+    return false
+  end
+
+  local function require_bot_guild_access(req, a, bot_key, guild_id)
+    local gerr_status, gerr_body = require_guild_scope(req, a, guild_id)
+    if gerr_status then return gerr_status, gerr_body end
+    local scoped = scoped_guild_id(a)
+    if scoped and not bot_has_registered_guild(bot_index[bot_key], scoped) then
+      return 403, { detail = "This bot is not registered with your guild" }
+    end
+    return nil
+  end
+
+  -- Port of app/routers/bots.py's _enrich_control_state_with_discord() +
+  -- _control_state_error_payload()'s nested shape. CRITICAL SHAPE BUG found
+  -- while wiring this up: dashboard.get_bot_control_state() returns a FLAT
+  -- table (bot_key, bot_display, guild_id, channel_id, ... all top-level),
+  -- but ControlsPage.jsx / components/swarm.jsx's ControlState always read
+  -- `state.session.channel_name` / `state.session.home_channel_name` etc
+  -- (matching the Python original's nested {key, display_name, guild_id,
+  -- db, discord, session:{...}} response shape). The already-shipped
+  -- /api/guilds/:guild_id/control-matrix route returned the flat shape
+  -- directly, so `bot.session` was always undefined on the frontend --
+  -- THIS, not just the missing routes, is why guild/voice/text channel
+  -- names never rendered ("not found"/blank) even when the bot/guild data
+  -- was actually available. Fixed here by reshaping flat -> nested before
+  -- Discord enrichment, for both this route and control-matrix below.
+  --
+  -- NOTE: feedback_channel_id/feedback_channel_name aren't in this Lua
+  -- port's session shape at all yet (see dashboard.lua's music_bot_snapshot
+  -- -- feedback_channel_id was never queried), so only guild/channel/home
+  -- are enriched here; a real follow-up, not silently worked around.
+  local function enrich_control_state_with_discord(flat)
+    local session = {}
+    for k, v in pairs(flat) do session[k] = v end
+    local state = {
+      key = flat.bot_key, display_name = flat.bot_display, guild_id = flat.guild_id,
+      db = { status = flat.status, reachable = flat.status == "online", message = flat.heartbeat_status },
+      session = session,
+    }
+
+    local token = cfg.bot_tokens[state.key] or ""
+    local guild_id = tostring(state.guild_id)
+    if token == "" then
+      state.discord = { status = "missing", reachable = false, message = "Panel token is not configured for Discord inventory access.", token_configured = false }
+      return state
+    end
+
+    local ok, err = pcall(function()
+      local guild = discord_service.fetch_guild(token, guild_id)
+      local placements = { { guild_id = guild_id, channel_id = nil } }
+      if session.channel_id then placements[#placements + 1] = { guild_id = guild_id, channel_id = session.channel_id } end
+      if session.home_channel_id then placements[#placements + 1] = { guild_id = guild_id, channel_id = session.home_channel_id } end
+
+      local name_map = discord_service.resolve_guild_channel_names(token, placements)
+      local guild_meta = name_map[guild_id .. "\0"] or {}
+      session.guild_name = guild_meta.guild_name or guild.name or ("Guild " .. guild_id)
+
+      if session.channel_id then
+        local m = name_map[guild_id .. "\0" .. tostring(session.channel_id)]
+        session.channel_name = m and m.channel_name or nil
+      end
+      if session.home_channel_id then
+        local m = name_map[guild_id .. "\0" .. tostring(session.home_channel_id)]
+        session.home_channel_name = m and m.channel_name or nil
+      end
+    end)
+    if ok then
+      state.discord = { status = "online", reachable = true, message = "Live Discord route is valid in " .. tostring(session.guild_name) .. ".", token_configured = true }
+    else
+      state.discord = { status = "error", reachable = false, message = tostring(err):sub(1, 240), token_configured = true }
+    end
+    return state
   end
 
   -- ---------------------------------------------------------------- health
@@ -664,6 +777,69 @@ function M.register(cfg)
     return 200, { bots = bots_out, invite_bots = invite_bots, scoped_guild_id = public_scoped }
   end)
 
+  -- Port of app/routers/bots.py's GET /api/bots/{bot_key}/inventory: the
+  -- guild+channel tree the Controls page's guild/voice/text-channel pickers
+  -- populate from. Was entirely missing before (see discord_service.lua's
+  -- fetch_inventory doc comment) -- ControlsPage.jsx's fetch against this
+  -- path 404'd against httpd's generic handler, which is what surfaced to
+  -- users as "not found" errors for guilds/voice/text channels.
+  httpd.route("GET", "/api/bots/:bot_key/inventory", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local bot = bot_index[req.params.bot_key]
+    if not bot then return 404, { detail = "Unknown bot key" } end
+    local scoped = scoped_guild_id(a)
+    if scoped then
+      local gerr_status, gerr_body = require_bot_guild_access(req, a, req.params.bot_key, scoped)
+      if gerr_status then return gerr_status, gerr_body end
+    end
+
+    local token = cfg.bot_tokens[bot.key] or ""
+    if token == "" then return 400, { detail = "Missing token env for " .. bot.display_name } end
+
+    local guild_hints = {}
+    if bot.kind == "music" then
+      local ok, snapshot = pcall(dashboard.music_bot_snapshot, bot)
+      if ok and snapshot and snapshot.known_guild_ids then guild_hints = snapshot.known_guild_ids end
+    end
+    local include_channels = req.query.include_channels ~= "false"
+    local ok, inventory = pcall(discord_service.fetch_inventory, token, {
+      include_channels = include_channels,
+      guild_hints = scoped and { scoped } or guild_hints,
+    })
+    if not ok then return 503, { detail = "Discord inventory unavailable: " .. tostring(inventory) } end
+    if scoped then
+      local filtered = {}
+      for _, guild in ipairs(inventory.guilds or {}) do
+        if tostring(guild.id) == scoped then filtered[#filtered + 1] = guild end
+      end
+      inventory.guilds = filtered
+    end
+    inventory.bot = { key = bot.key, display_name = bot.display_name, kind = bot.kind }
+    return 200, inventory
+  end)
+
+  -- Port of app/routers/bots.py's GET /api/bots/{bot_key}/control-state:
+  -- single bot+guild control panel state, Discord-name-enriched. Also
+  -- previously missing (only the multi-bot /control-matrix variant below was
+  -- ported) -- ControlsPage.jsx calls this one directly when a single bot is
+  -- selected, so it also 404'd.
+  httpd.route("GET", "/api/bots/:bot_key/control-state", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local gid = req.query.guild_id
+    if not gid or gid == "" then return 400, { detail = "guild_id is required" } end
+    local gerr_status, gerr_body = require_bot_guild_access(req, a, req.params.bot_key, gid)
+    if gerr_status then return gerr_status, gerr_body end
+    local bot = bot_index[req.params.bot_key]
+    if not bot or bot.kind ~= "music" then return 404, { detail = "Unknown music bot key" } end
+
+    local ok, state = pcall(dashboard.get_bot_control_state, bot, gid)
+    if not ok then return 503, { detail = "Control state unavailable: " .. tostring(state) } end
+    local ok2, enriched = pcall(enrich_control_state_with_discord, state)
+    return 200, ok2 and enriched or state
+  end)
+
   httpd.route("POST", "/api/bots/control", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
@@ -863,7 +1039,7 @@ function M.register(cfg)
     for k, v in pairs(snap) do profile[k] = v end
     local summaries = dashboard.get_music_activity_summary_for_guilds(music_bots, { scoped_gid })
     profile.activity = summaries[scoped_gid] or dashboard.empty_music_activity_summary()
-    return 200, { editable = true, profile = profile, favorite_bot_options = favorite_bot_options() }
+    return 200, { editable = true, profile = with_derived_accent(profile, "theme_accent"), favorite_bot_options = favorite_bot_options() }
   end)
 
   httpd.route("POST", "/api/users/me", function(req)
@@ -878,7 +1054,7 @@ function M.register(cfg)
     if not profile then return 404, { detail = "Account profile not found" } end
     local summaries = dashboard.get_music_activity_summary_for_guilds(music_bots, { scoped_gid })
     profile.activity = summaries[scoped_gid] or dashboard.empty_music_activity_summary()
-    return 200, { ok = true, profile = profile }
+    return 200, { ok = true, profile = with_derived_accent(profile, "theme_accent") }
   end)
 
   httpd.route("GET", "/api/users/preferences", function(req)
@@ -887,13 +1063,13 @@ function M.register(cfg)
     local scoped_gid = account_guild_id(a)
     local username = tostring(a.username or "")
     local defaults = profiles.default_panel_preferences()
-    if not scoped_gid or username == "" then return 200, { editable = false, preferences = defaults } end
+    if not scoped_gid or username == "" then return 200, { editable = false, preferences = with_derived_accent(defaults) } end
     local profile = accounts.get_account_profile(username, scoped_gid)
     if not profile then return 404, { detail = "Account profile not found" } end
     local stored = (type(profile.panel_preferences) == "table") and profile.panel_preferences or nil
     local ok, prefs = pcall(profiles.clean_panel_preferences, stored, defaults)
     if not ok then prefs = defaults end
-    return 200, { editable = true, preferences = prefs }
+    return 200, { editable = true, preferences = with_derived_accent(prefs) }
   end)
 
   httpd.route("POST", "/api/users/preferences", function(req)
@@ -912,7 +1088,17 @@ function M.register(cfg)
     if not ok2 then return 400, { detail = tostring(prefs):gsub("^.-:%d+:%s*", "") } end
     local profile = accounts.update_account_panel_preferences(username, scoped_gid, prefs)
     if not profile then return 404, { detail = "Account profile not found" } end
-    return 200, { ok = true, preferences = (type(profile.panel_preferences) == "table" and profile.panel_preferences) or prefs }
+    return 200, { ok = true, preferences = with_derived_accent((type(profile.panel_preferences) == "table" and profile.panel_preferences) or prefs) }
+  end)
+
+  -- Server-owned appearance presets (see looks.lua): lets new panel/profile
+  -- look bundles ship without a frontend redeploy. Auth-gated like the rest
+  -- of /api/users/* even though the content isn't guild-scoped, for
+  -- consistency with every other authenticated-only route in this file.
+  httpd.route("GET", "/api/appearance/presets", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    return 200, { panel = looks.PANEL_LOOKS, profile = looks.PROFILE_LOOKS }
   end)
 
   httpd.route("GET", "/api/users/search", function(req)
@@ -1350,7 +1536,12 @@ function M.register(cfg)
     for _, bot in ipairs(music_bots) do
       if bot.kind == "music" then
         local ok, state = pcall(dashboard.get_bot_control_state, bot, gid)
-        bots[#bots + 1] = ok and state or { bot_key = bot.key, bot_display = bot.display_name, error = tostring(state) }
+        if ok then
+          local ok2, enriched = pcall(enrich_control_state_with_discord, state)
+          bots[#bots + 1] = ok2 and enriched or state
+        else
+          bots[#bots + 1] = { bot_key = bot.key, bot_display = bot.display_name, error = tostring(state) }
+        end
       end
     end
     return 200, { generated_at = os.date("!%Y-%m-%dT%H:%M:%SZ"), guild_id = tostring(gid), bots = bots }

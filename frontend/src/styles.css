@@ -710,7 +710,7 @@ a {
   padding: 0 3px;
   border-radius: 999px;
   background: var(--accent);
-  color: #071018;
+  color: var(--accent-contrast-text, #071018);
   font-size: 0.62rem;
   font-weight: 800;
   display: grid;
@@ -1621,6 +1621,19 @@ input[type="range"]::-moz-range-thumb {
   box-shadow: none;
 }
 
+/* "recovering" session state (dashboard.lua's derive_session_state): saved
+   queue/track state but no live playback. Previously just plain text
+   ("Recovery Pending"), easy to miss in a busy Guild Matrix grid. */
+.control-state.state-recovering {
+  border-color: color-mix(in srgb, #f9e2af 45%, var(--line));
+  animation: recovering-pulse 2.2s ease-in-out infinite;
+}
+
+@keyframes recovering-pulse {
+  0%, 100% { box-shadow: 0 0 0 color-mix(in srgb, #f9e2af 0%, transparent); }
+  50% { box-shadow: 0 0 20px color-mix(in srgb, #f9e2af 40%, transparent); }
+}
+
 .backup-preview {
   display: grid;
   gap: 5px;
@@ -1992,6 +2005,37 @@ input[type="range"]::-moz-range-thumb {
   background-size: cover;
   background-position: center;
   padding: 22px;
+}
+
+/* profile_border_accent (profiles.lua's PROFILE_BORDER_ACCENTS): validated
+   server-side and editable in ProfilePage.jsx, but had no CSS at all --
+   picking "Glow"/"Pulse"/"Neon" changed nothing visually. See
+   profileBorderAccentClass() in utils/control.js for the class wiring. */
+.profile-border-solid {
+  border: 2px solid var(--accent);
+}
+
+.profile-border-glow {
+  border: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 28px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.profile-border-neon {
+  border: 2px solid var(--accent);
+  box-shadow:
+    0 0 6px var(--accent),
+    0 0 18px color-mix(in srgb, var(--accent) 70%, transparent),
+    0 0 36px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.profile-border-pulse {
+  border: 2px solid var(--accent);
+  animation: profile-border-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes profile-border-pulse {
+  0%, 100% { box-shadow: 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
+  50% { box-shadow: 0 0 24px color-mix(in srgb, var(--accent) 55%, transparent); }
 }
 
 .public-profile-banner-image {
@@ -3399,15 +3443,55 @@ tbody tr.is-selected td {
   }
 
   .panel:hover,
-  .metric:hover,
-  .bot-card:hover,
-  .invite-card:hover,
-  .user-card:hover,
-  .control-state:hover,
-  .event:hover,
-  .auth-card:hover {
+  .metric:hover {
     border-color: var(--line-strong);
     transform: translateY(-2px);
+  }
+
+  /* card_hover_effect preference (profiles.lua's PANEL_CARD_HOVER_EFFECTS)
+     -- previously validated server-side and editable in AppearancePage.jsx
+     but with no CSS backing it at all: every card always got the same
+     hardcoded lift, regardless of what the user picked. "lift" below
+     reproduces that old always-on behavior as one explicit choice among
+     several real ones. */
+  .panel-hover-lift .bot-card:hover,
+  .panel-hover-lift .invite-card:hover,
+  .panel-hover-lift .user-card:hover,
+  .panel-hover-lift .control-state:hover,
+  .panel-hover-lift .event:hover,
+  .panel-hover-lift .auth-card:hover {
+    border-color: var(--line-strong);
+    transform: translateY(-2px);
+  }
+
+  .panel-hover-glow .bot-card:hover,
+  .panel-hover-glow .invite-card:hover,
+  .panel-hover-glow .user-card:hover,
+  .panel-hover-glow .control-state:hover,
+  .panel-hover-glow .event:hover,
+  .panel-hover-glow .auth-card:hover {
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--line-strong));
+    box-shadow: 0 0 22px color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+
+  .panel-hover-border .bot-card:hover,
+  .panel-hover-border .invite-card:hover,
+  .panel-hover-border .user-card:hover,
+  .panel-hover-border .control-state:hover,
+  .panel-hover-border .event:hover,
+  .panel-hover-border .auth-card:hover {
+    border-color: var(--accent);
+  }
+
+  .panel-hover-none .bot-card:hover,
+  .panel-hover-none .invite-card:hover,
+  .panel-hover-none .user-card:hover,
+  .panel-hover-none .control-state:hover,
+  .panel-hover-none .event:hover,
+  .panel-hover-none .auth-card:hover {
+    border-color: inherit;
+    transform: none;
+    box-shadow: none;
   }
 }
 
