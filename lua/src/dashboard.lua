@@ -808,4 +808,82 @@ function M.get_music_activity_summary_for_guilds(music_bots, guild_ids)
   return summaries
 end
 
+-- Swarm-wide leaderboard ("most played track across all N bots this week"):
+-- item #2 from the Postgres-migration feature brainstorm. Every bot got its
+-- own dedicated Postgres database in the MariaDB->Postgres migration this
+-- panel just got fully wired up for (see config.lua/control.lua), so this
+-- was previously impossible without either a shared MariaDB schema (item #2
+-- calls out the old per-bot-MariaDB-silo problem directly) or 13 manual
+-- per-bot queries -- now it's 13 same-shaped Postgres queries fanned out and
+-- merged in application code (Postgres connections are per-database, see
+-- db.lua's own header comment, so a single cross-bot SQL query still isn't
+-- possible -- this is the "combined in application code" approach that
+-- comment already anticipated). Deliberately does NOT try to de-duplicate
+-- the same song across different bots/guilds (title/url_key formatting
+-- isn't guaranteed consistent swarm-wide) -- each row is tagged with which
+-- bot it came from instead, which is more honest than a merge that might be
+-- silently wrong.
+function M.get_swarm_leaderboard(music_bots, opts)
+  opts = opts or {}
+  local days = math.max(1, math.min(math.floor(tonumber(opts.days) or 7), 365))
+  local limit = math.max(1, math.min(math.floor(tonumber(opts.limit) or 20), 100))
+  local per_bot_fetch = math.min(limit, 50) -- cap what we pull per bot before the final merge/sort
+
+  local rows = {}
+  local bots_queried, bots_errored = 0, 0
+  for _, bot in ipairs(music_bots) do
+    if bot.kind == "music" then
+      local schema = bot.db_schema
+      local prefix = bot.table_prefix
+      local table_name = prefix .. "_track_intelligence"
+      local ok_exists, exists = pcall(db.table_exists, schema, table_name)
+      if ok_exists and exists then
+        bots_queried = bots_queried + 1
+        local ok_rows, bot_rows = pcall(
+          db.fetchall,
+          schema,
+          [[SELECT title, video_url, play_count, finish_count, skip_count, like_count, dislike_count, last_played,
+                   ((finish_count * 3) + (like_count * 5) + play_count - (skip_count * 2) - (dislike_count * 5)) AS smart_score
+            FROM ]] .. table_name .. [[
+            WHERE last_played IS NOT NULL AND last_played >= NOW() - (%s || ' days')::interval
+            ORDER BY play_count DESC
+            LIMIT %s]],
+          tostring(days), per_bot_fetch
+        )
+        if ok_rows and bot_rows then
+          for _, r in ipairs(bot_rows) do
+            r.bot_key = bot.key
+            r.bot_display = bot.display_name
+            r.play_count = db.toint(r.play_count, 0)
+            r.finish_count = db.toint(r.finish_count, 0)
+            r.skip_count = db.toint(r.skip_count, 0)
+            r.like_count = db.toint(r.like_count, 0)
+            r.dislike_count = db.toint(r.dislike_count, 0)
+            r.smart_score = db.toint(r.smart_score, 0)
+            rows[#rows + 1] = r
+          end
+        else
+          bots_errored = bots_errored + 1
+        end
+      end
+    end
+  end
+
+  table.sort(rows, function(a, b)
+    if a.play_count ~= b.play_count then return a.play_count > b.play_count end
+    return (a.smart_score or 0) > (b.smart_score or 0)
+  end)
+
+  local tracks = {}
+  for i = 1, math.min(limit, #rows) do tracks[i] = rows[i] end
+
+  return {
+    window_days = days,
+    generated_at = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+    bots_queried = bots_queried,
+    bots_errored = bots_errored,
+    tracks = tracks,
+  }
+end
+
 return M

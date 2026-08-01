@@ -5,16 +5,21 @@
 --   2. SwarmPanel/.env
 --   3. Music/.env  (shared bot-swarm env; only fills in what's still missing)
 --
--- IMPORTANT DB-schema finding from the Phase 1 audit: STRIFE and LOCKHART do
--- NOT get their own `discord_music_strife` / `discord_music_lockhart`
--- database. SwarmPanel's own .env sets STRIFE_DB_NAME=discord_music and
--- LOCKHART_DB_NAME=discord_music, so both bots' tables (strife_*, lockhart_*)
--- live inside the shared `discord_music` Postgres database. Verified this is
--- where the live data actually is (row counts matched 1:1 there, while the
--- dedicated discord_music_strife/discord_music_lockhart databases are stale
--- leftovers from an earlier per-bot migration pass). Getting this wrong
--- would make every Strife/Lockhart control-panel query silently read/write
--- the wrong, empty database.
+-- DB-schema finding, corrected 2026-08-01: the Phase 1 audit's conclusion
+-- above (STRIFE/LOCKHART share the `discord_music` database) is now WRONG
+-- and was actively causing "bots don't listen to the panel" for these two.
+-- Both bots' own Postgres connections (Music/.env's STRIFE_DB_HOST/
+-- STRIFE_DB_NAME etc.) target their own dedicated `discord_music_strife` /
+-- `discord_music_lockhart` databases -- confirmed live via `docker exec
+-- music_bot_strife env` and the bot's own startup log ("Postgres schema
+-- verified/created (discord_music_strife)"). The shared `discord_music`
+-- database now only holds a stale row from 2026-07-25, predating whatever
+-- migration moved these two bots onto their own databases; the Phase-1
+-- audit just ran before that migration and is now out of date.
+-- SwarmPanel/.env's STRIFE_DB_NAME/LOCKHART_DB_NAME are fixed to
+-- discord_music_strife/discord_music_lockhart accordingly. If this ever
+-- flips back, verify with a fresh row-count/updated_at check before trusting
+-- either audit blindly -- don't just take the comment's word for it.
 
 local function read_dotenv_file(path, out)
   local f = io.open(path, "r")

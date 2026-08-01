@@ -35,7 +35,25 @@ local function ensure_overrides_table(schema, prefix)
   pcall(db.execute, schema, string.format(
     [[CREATE TABLE IF NOT EXISTS %s_swarm_overrides (
         guild_id BIGINT, bot_name VARCHAR(50), command VARCHAR(20),
+        attempts INT NOT NULL DEFAULT 0, last_error TEXT NULL,
         PRIMARY KEY(guild_id, bot_name))]], prefix))
+  -- BUGFIX: several bots' _swarm_overrides tables predate this DDL and were
+  -- created (by an earlier Python-era schema) with `attempts INT NOT NULL`
+  -- and no default. CREATE TABLE IF NOT EXISTS is a no-op against those, so
+  -- set_override()'s INSERT -- which never supplied `attempts` -- violated
+  -- the not-null constraint on every single call, aborting the transaction.
+  -- Because nothing here checked db.execute()'s return value, that failure
+  -- was invisible: control_bot() always reported success while the override
+  -- row was never actually written, so bots silently never received any
+  -- panel command. Some other bots' tables (created directly by the Lua bot
+  -- code, e.g. strife/lockhart) instead have NEITHER column at all, so
+  -- ADD COLUMN IF NOT EXISTS (not ALTER COLUMN ... SET DEFAULT, which
+  -- errors outright if the column is simply missing) is required to
+  -- self-heal both cases. Cheap metadata-only change, safe on every call.
+  pcall(db.execute, schema, string.format(
+    "ALTER TABLE %s_swarm_overrides ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0", prefix))
+  pcall(db.execute, schema, string.format(
+    "ALTER TABLE %s_swarm_overrides ADD COLUMN IF NOT EXISTS last_error TEXT NULL", prefix))
 end
 
 local function ensure_direct_orders_table(schema, prefix)
@@ -63,15 +81,19 @@ end
 
 local function set_override(schema, prefix, gid, bot_key, command)
   ensure_overrides_table(schema, prefix)
-  db.execute(
+  local ok, err = db.execute(
     schema,
     string.format(
-      [[INSERT INTO %s_swarm_overrides (guild_id, bot_name, command) VALUES (%%s, %%s, %%s)
+      [[INSERT INTO %s_swarm_overrides (guild_id, bot_name, command, attempts) VALUES (%%s, %%s, %%s, 0)
         ON CONFLICT (guild_id, bot_name) DO UPDATE SET command = EXCLUDED.command]],
       prefix
     ),
     gid, bot_key, command
   )
+  -- Previously unchecked: a failed write here (e.g. the not-null-without-
+  -- default bug above) left the panel reporting success while the bot never
+  -- saw the command. Surface it as a real error instead.
+  if not ok then error("failed to write swarm override: " .. tostring(err), 0) end
 end
 
 local function clear_pending_orders(schema, prefix, gid, bot_key)

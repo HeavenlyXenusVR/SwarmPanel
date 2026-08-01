@@ -533,6 +533,20 @@ function M.register(cfg)
     return 200, data
   end)
 
+  -- Swarm-wide "top tracks across all N bots this N days" leaderboard, admin
+  -- only (fans out to every bot's own Postgres database, so it's a heavier
+  -- query than anything guild-scoped -- see dashboard.lua's
+  -- get_swarm_leaderboard for why this needed the Postgres migration to be
+  -- possible at all). ?days=7&limit=20 by default.
+  httpd.route("GET", "/api/swarm-leaderboard", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    if not is_admin_auth(a) then return 403, { detail = "Swarm-wide leaderboard is admin-only (it queries every bot's database)." } end
+    local ok, data = pcall(dashboard.get_swarm_leaderboard, music_bots, { days = req.query.days, limit = req.query.limit })
+    if not ok then return 503, { detail = "Swarm leaderboard unavailable: " .. tostring(data) } end
+    return 200, data
+  end)
+
   -- ------------------------------------------------------------------- ws
   -- Port of app/routers/websocket.py's /ws live dashboard feed. Auth is
   -- bearer-token-only in this rewrite (the session-cookie branch in the
