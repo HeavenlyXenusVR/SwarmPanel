@@ -63,6 +63,18 @@ local function ensure_direct_orders_table(schema, prefix)
         text_channel_id BIGINT, command VARCHAR(50), data TEXT,
         attempts INT NOT NULL DEFAULT 0, last_error TEXT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)]], prefix))
+  -- Same class of bug as ensure_overrides_table's BUGFIX above: several
+  -- bots' _swarm_direct_orders tables already existed (created without a
+  -- DEFAULT on `attempts`) before this DDL gained `DEFAULT 0`, so CREATE
+  -- TABLE IF NOT EXISTS was a no-op against them and insert_direct_order's
+  -- INSERT -- which never supplies `attempts` -- violated the not-null
+  -- constraint on every call. That failure was invisible because nothing
+  -- checked db.execute()'s return value, so every PLAY/RECOVER/LEAVE/SEEK
+  -- order silently vanished while the panel still reported success.
+  pcall(db.execute, schema, string.format(
+    "ALTER TABLE %s_swarm_direct_orders ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0", prefix))
+  pcall(db.execute, schema, string.format(
+    "ALTER TABLE %s_swarm_direct_orders ADD COLUMN IF NOT EXISTS last_error TEXT NULL", prefix))
 end
 
 local function ensure_queue_table(schema, prefix)
@@ -103,7 +115,7 @@ end
 
 local function insert_direct_order(schema, prefix, bot_key, gid, vc_id, text_channel_id, command, data)
   ensure_direct_orders_table(schema, prefix)
-  db.execute(
+  local ok, err = db.execute(
     schema,
     string.format(
       "INSERT INTO %s_swarm_direct_orders (bot_name, guild_id, vc_id, text_channel_id, command, data) VALUES (%%s, %%s, %%s, %%s, %%s, %%s)",
@@ -111,6 +123,10 @@ local function insert_direct_order(schema, prefix, bot_key, gid, vc_id, text_cha
     ),
     bot_key, gid, vc_id, text_channel_id, command, data
   )
+  -- Previously unchecked, same as set_override()'s earlier fix -- a failed
+  -- write here left the panel reporting success while the bot never saw
+  -- the order.
+  if not ok then error("failed to write swarm direct order: " .. tostring(err), 0) end
 end
 
 -- shuffle: pull the live queue, keep the first (now-playing/head) row fixed,
@@ -134,8 +150,8 @@ local function shuffle_live_queue(schema, prefix, gid, bot_key)
   for _, row in ipairs(rows) do
     db.execute(
       schema,
-      string.format("INSERT INTO %s_queue (guild_id, bot_name, video_url, title, requester_id) VALUES (%%s, %%s, %%s, %%s, %%s)", prefix),
-      row.guild_id, row.bot_name, row.video_url, row.title, row.requester_id
+      string.format("INSERT INTO %s_queue (guild_id, bot_name, video_url, title, requester_id, track_uid) VALUES (%%s, %%s, %%s, %%s, %%s, %%s)", prefix),
+      row.guild_id, row.bot_name, row.video_url, row.title, row.requester_id, row.track_uid
     )
   end
 
