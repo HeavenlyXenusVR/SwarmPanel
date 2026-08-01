@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AuditLogView: View {
     @StateObject private var viewModel = AuditLogViewModel()
+    @State private var revertTarget: AuditLogEntry?
 
     var body: some View {
         ScrollView {
@@ -28,6 +29,9 @@ struct AuditLogView: View {
                 if let error = viewModel.errorMessage {
                     ErrorBanner(message: error).padding(.horizontal)
                 }
+                if let status = viewModel.statusMessage {
+                    Text(status).foregroundStyle(SwarmTheme.ok).padding(.horizontal)
+                }
                 if viewModel.entries.isEmpty && viewModel.isLoading {
                     SkeletonList(rowCount: 5).padding(.horizontal)
                 } else if viewModel.entries.isEmpty {
@@ -38,7 +42,11 @@ struct AuditLogView: View {
                         VStack(spacing: 0) {
                             ForEach(Array(viewModel.entries.enumerated()), id: \.element.id) { index, entry in
                                 if index > 0 { Divider().overlay(SwarmTheme.line) }
-                                AuditLogRow(entry: entry)
+                                AuditLogRow(
+                                    entry: entry,
+                                    isReverting: viewModel.revertingId == entry.id,
+                                    onRevert: { revertTarget = entry }
+                                )
                             }
                         }
                     }
@@ -55,11 +63,26 @@ struct AuditLogView: View {
             await viewModel.load()
         }
         .refreshOnForeground { await viewModel.load() }
+        .confirmationDialog(
+            "Revert \"\(revertTarget?.action ?? "")\"?",
+            isPresented: Binding(get: { revertTarget != nil }, set: { if !$0 { revertTarget = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Revert", role: .destructive) {
+                if let target = revertTarget { Task { await viewModel.revert(target) } }
+                revertTarget = nil
+            }
+            Button("Cancel", role: .cancel) { revertTarget = nil }
+        } message: {
+            Text("Restores this entry's target to its state before this action. Not every action can be reverted — the server will say so if this one can't.")
+        }
     }
 }
 
 private struct AuditLogRow: View {
     let entry: AuditLogEntry
+    var isReverting: Bool = false
+    var onRevert: (() -> Void)? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -87,6 +110,21 @@ private struct AuditLogRow: View {
                         .font(.caption2)
                         .foregroundStyle(SwarmTheme.textMuted)
                         .lineLimit(3)
+                }
+                if let onRevert {
+                    Button {
+                        onRevert()
+                    } label: {
+                        if isReverting {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label("Revert", systemImage: "arrow.uturn.backward")
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                    .tint(SwarmTheme.warn)
+                    .disabled(isReverting)
                 }
             }
         }

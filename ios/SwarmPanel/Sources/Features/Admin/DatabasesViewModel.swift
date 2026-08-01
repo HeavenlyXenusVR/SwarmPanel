@@ -51,6 +51,61 @@ final class DatabasesViewModel: ObservableObject {
         }
     }
 
+    @Published var isTruncating = false
+
+    /// Server-side text the admin must type verbatim for a single-table
+    /// truncate — mirrors routes.lua's `"TRUNCATE %s.%s"` format exactly.
+    func expectedTableConfirmText(schema: String, table: String) -> String {
+        "TRUNCATE \(schema).\(table)"
+    }
+
+    /// Same, for the whole-schema variant — routes.lua's `"TRUNCATE ALL " .. schema_name`.
+    func expectedSchemaConfirmText(schema: String) -> String {
+        "TRUNCATE ALL \(schema)"
+    }
+
+    @discardableResult
+    func truncateTable(schema: String, table: String, confirmText: String, ownerConfirmText: String) async -> Bool {
+        isTruncating = true
+        defer { isTruncating = false }
+        do {
+            let response: TruncateResponse = try await api.post(
+                "/api/database/truncate-table",
+                body: TruncateTableBody(schemaName: schema, tableName: table, confirmText: confirmText, ownerConfirmText: ownerConfirmText)
+            )
+            errorMessage = nil
+            Haptics.warning()
+            if response.ok == true { await loadRows() }
+            return response.ok == true
+        } catch {
+            guard !error.isCancellation else { return false }
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to truncate table."
+            Haptics.error()
+            return false
+        }
+    }
+
+    @discardableResult
+    func truncateSchema(schema: String, confirmText: String, ownerConfirmText: String) async -> Bool {
+        isTruncating = true
+        defer { isTruncating = false }
+        do {
+            let response: TruncateResponse = try await api.post(
+                "/api/database/truncate-schema",
+                body: TruncateSchemaBody(schemaName: schema, confirmText: confirmText, ownerConfirmText: ownerConfirmText)
+            )
+            errorMessage = nil
+            Haptics.warning()
+            if response.ok == true { await loadSchemas() }
+            return response.ok == true
+        } catch {
+            guard !error.isCancellation else { return false }
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to truncate schema."
+            Haptics.error()
+            return false
+        }
+    }
+
     func exportCSV() async -> URL? {
         guard !selectedSchema.isEmpty, !selectedTable.isEmpty else { return nil }
         let allowed = CharacterSet.urlQueryAllowed

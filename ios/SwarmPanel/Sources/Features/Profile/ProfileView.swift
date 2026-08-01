@@ -45,6 +45,42 @@ struct ProfileView: View {
                 }
                 .listRowBackground(SwarmTheme.panel)
 
+                // Moved up from below Discover — for an admin/moderator, this
+                // is the reason they're in this app; burying it at the
+                // bottom of a long Form scroll under Account/Appearance/
+                // Discover made it easy to miss it was even there.
+                if appState.isAdmin || appState.isModerator || appState.canGallery {
+                    Section {
+                        if appState.isAdmin || appState.isModerator {
+                            NavigationLink { AuditLogView() } label: { IconRow(icon: "list.bullet.clipboard", tint: .indigo, title: "Audit Log") }
+                            NavigationLink { AlertRulesView() } label: { IconRow(icon: "bell.badge", tint: .red, title: "Alert Rules") }
+                            NavigationLink { LumisoundAdminView() } label: { IconRow(icon: "waveform", tint: .pink, title: "Lumisound Moderation") }
+                        }
+                        if appState.canGallery {
+                            NavigationLink { GalleryModerationView() } label: { IconRow(icon: "photo.on.rectangle", tint: .teal, title: "Gallery Moderation") }
+                        }
+                        if appState.isAdmin {
+                            NavigationLink { AccountsAdminView() } label: { IconRow(icon: "person.2.badge.gearshape", tint: .blue, title: "Accounts") }
+                            NavigationLink { DiagnosticsView() } label: { IconRow(icon: "heart.text.square", tint: .green, title: "Fleet Health") }
+                            NavigationLink { FleetTopologyView() } label: { IconRow(icon: "point.3.filled.connected.trianglepath.dotted", tint: .cyan, title: "Fleet Topology") }
+                            NavigationLink { ExportsView() } label: { IconRow(icon: "square.and.arrow.down", tint: .orange, title: "Scheduled Exports") }
+                            NavigationLink { DatabasesView() } label: { IconRow(icon: "cylinder.split.1x2", tint: .brown, title: "Database Viewer") }
+                        }
+                    } header: {
+                        HStack(spacing: 6) {
+                            SwarmPulseRings(color: SwarmTheme.accent, ringCount: 2)
+                                .frame(width: 10, height: 10)
+                            Text("COMMAND CENTER")
+                                .font(.caption.bold())
+                                .foregroundStyle(SwarmTheme.accent)
+                                .tracking(0.6)
+                        }
+                    } footer: {
+                        Text("Visible because your account has owner or moderator access on this guild.")
+                    }
+                    .listRowBackground(SwarmTheme.panel)
+                }
+
                 Section {
                     TextField("Display Name", text: $viewModel.displayName)
                     TextField("Bio", text: $viewModel.bio, axis: .vertical)
@@ -128,31 +164,6 @@ struct ProfileView: View {
                     SectionLabel(title: "Discover")
                 }
                 .listRowBackground(SwarmTheme.panel)
-
-                if appState.isAdmin || appState.isModerator || appState.canGallery {
-                    Section {
-                        if appState.isAdmin || appState.isModerator {
-                            NavigationLink { AuditLogView() } label: { IconRow(icon: "list.bullet.clipboard", tint: .indigo, title: "Audit Log") }
-                            NavigationLink { AlertRulesView() } label: { IconRow(icon: "bell.badge", tint: .red, title: "Alert Rules") }
-                            NavigationLink { LumisoundAdminView() } label: { IconRow(icon: "waveform", tint: .pink, title: "Lumisound Moderation") }
-                        }
-                        if appState.canGallery {
-                            NavigationLink { GalleryModerationView() } label: { IconRow(icon: "photo.on.rectangle", tint: .teal, title: "Gallery Moderation") }
-                        }
-                        if appState.isAdmin {
-                            NavigationLink { AccountsAdminView() } label: { IconRow(icon: "person.2.badge.gearshape", tint: .blue, title: "Accounts") }
-                            NavigationLink { DiagnosticsView() } label: { IconRow(icon: "heart.text.square", tint: .green, title: "Fleet Health") }
-                            NavigationLink { FleetTopologyView() } label: { IconRow(icon: "point.3.filled.connected.trianglepath.dotted", tint: .cyan, title: "Fleet Topology") }
-                            NavigationLink { ExportsView() } label: { IconRow(icon: "square.and.arrow.down", tint: .orange, title: "Scheduled Exports") }
-                            NavigationLink { DatabasesView() } label: { IconRow(icon: "cylinder.split.1x2", tint: .brown, title: "Database Viewer") }
-                        }
-                    } header: {
-                        SectionLabel(title: "Admin Tools")
-                    } footer: {
-                        Text("Visible because your account has owner or moderator access on this guild.")
-                    }
-                    .listRowBackground(SwarmTheme.panel)
-                }
 
                 Section {
                     HStack {

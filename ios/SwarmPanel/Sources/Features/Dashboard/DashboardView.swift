@@ -55,7 +55,7 @@ struct DashboardView: View {
                         }
                         .padding(.vertical)
                     }
-                    .background(SwarmTheme.background)
+                    .swarmBackdrop()
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 18) {
@@ -75,11 +75,19 @@ struct DashboardView: View {
                                         }
                                     }
                                 }
-                                PanelCard {
-                                    HStack(spacing: 0) {
-                                        MetricTile(icon: "server.rack", label: "Bots", value: "\(allBots.count)", tint: .blue)
-                                        MetricTile(icon: "dot.radiowaves.left.and.right", label: "Live", value: "\(allSessions.filter { $0.isPlaying == true }.count)", tint: SwarmTheme.ok)
-                                        MetricTile(icon: "music.note.list", label: "Queued", value: "\(allSessions.reduce(0) { $0 + ($1.queueCount ?? 0) })", tint: .purple)
+                                let liveCount = allSessions.filter { $0.isPlaying == true }.count
+                                SwarmHeroCard {
+                                    HStack(alignment: .top) {
+                                        HStack(spacing: 22) {
+                                            SwarmStatBadge(value: "\(allBots.count)", label: "Bots", tint: .blue)
+                                            SwarmStatBadge(value: "\(liveCount)", label: "Live", tint: SwarmTheme.ok)
+                                            SwarmStatBadge(value: "\(allSessions.reduce(0) { $0 + ($1.queueCount ?? 0) })", label: "Queued", tint: SwarmTheme.accent)
+                                        }
+                                        Spacer()
+                                        if liveCount > 0 {
+                                            SwarmPulseRings(color: SwarmTheme.ok, ringCount: 2)
+                                                .frame(width: 22, height: 22)
+                                        }
                                     }
                                 }
                             }
@@ -189,7 +197,7 @@ struct DashboardView: View {
                         }
                         .padding(.vertical)
                     }
-                    .background(SwarmTheme.background)
+                    .swarmBackdrop()
                     .refreshable {
                         Haptics.light()
                         await viewModel.refresh()

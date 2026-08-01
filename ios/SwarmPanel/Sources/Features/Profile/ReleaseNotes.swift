@@ -16,6 +16,14 @@ let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"
 /// Static changelog shown on the "What's New" screen — updated by hand
 /// alongside each ios/vX.Y.Z tag, mirroring the tag's own release notes.
 let releaseNotes: [ReleaseNote] = [
+    ReleaseNote(version: "0.10.0", highlights: [
+        "New Swarm-Wide Leaderboard (admin): a scope toggle on Leaderboard shows top tracks across every bot's own database instead of one guild at a time",
+        "Accounts admin: bulk select to verify/unverify or delete multiple accounts at once, plus Resend Verification for a single account",
+        "Audit Log entries can now be reverted directly (where the server supports it), not just viewed",
+        "Database Viewer: Truncate Table and Truncate Schema, gated behind the same double-confirmation the web panel requires",
+        "New \"Swarm Pulse\" visual direction: a duotone accent gradient, pulsing live-status rings, and a hero-card treatment — starting on Dashboard's fleet summary",
+        "Profile's admin tools moved from the bottom of a long scroll to a \"Command Center\" section right at the top",
+    ]),
     ReleaseNote(version: "0.9.2", highlights: [
         "Fixed \"Missing trusted browser origin\" sometimes blocking logging back in after logging out, and fixed data not loading afterward — caused by a leftover cookie the app never actually needed",
     ]),

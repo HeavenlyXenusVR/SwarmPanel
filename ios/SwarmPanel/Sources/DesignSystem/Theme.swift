@@ -32,10 +32,69 @@ enum SwarmTheme {
 
     static let cardRadius: CGFloat = 16
 
+    /// "Swarm Pulse" redesign accents — additive, not replacing anything
+    /// above (32 files already depend on those exact tokens). A second hue,
+    /// offset from the user's chosen accent, turns every flat `accent` fill
+    /// into a duotone gradient for hero/live elements — Dashboard's fleet
+    /// cards, NowPlayingCard, and the new Command Center header — instead of
+    /// a single flat swatch. Computed (not stored) so it always tracks
+    /// whatever accent color the user picks in Profile.
+    static var accentSecondary: Color {
+        accent.hueShifted(by: 34)
+    }
+
+    static var accentGradient: LinearGradient {
+        LinearGradient(colors: [accent, accentSecondary], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+
+    /// Faint radial glow anchored top-trailing, meant as a screen-level
+    /// background layer (behind SwarmTheme.background, not replacing it) —
+    /// gives Dashboard/Controls a "control room" depth instead of a flat
+    /// fill, while staying subtle enough not to fight card content or hurt
+    /// text contrast. Opt-in per screen via `.swarmBackdrop()`.
+    static var backdropGlow: RadialGradient {
+        RadialGradient(
+            colors: [accent.opacity(0.16), .clear],
+            center: .topTrailing,
+            startRadius: 10,
+            endRadius: 420
+        )
+    }
+
     private static func dynamic(dark: UInt32, light: UInt32) -> Color {
         Color(uiColor: UIColor { traits in
             traits.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light)
         })
+    }
+}
+
+extension View {
+    /// Layers SwarmTheme.background + backdropGlow behind the view — the
+    /// "Swarm Pulse" screen backdrop. Applied per-screen (Dashboard,
+    /// Controls, Profile's Command Center) rather than globally so
+    /// list-heavy screens that already set `.scrollContentBackground(.hidden)`
+    /// + `.background(SwarmTheme.background)` aren't forced to change.
+    func swarmBackdrop() -> some View {
+        background(
+            ZStack {
+                SwarmTheme.background
+                SwarmTheme.backdropGlow
+            }
+            .ignoresSafeArea()
+        )
+    }
+}
+
+extension Color {
+    /// Rotates this color's hue by `degrees` (0-360) at fixed saturation/
+    /// brightness — used to derive accentSecondary from whatever single
+    /// accent hex the user picked, without asking them to choose two colors.
+    func hueShifted(by degrees: Double) -> Color {
+        let ui = UIColor(self)
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard ui.getHue(&h, saturation: &s, brightness: &b, alpha: &a) else { return self }
+        let shifted = (h * 360 + degrees).truncatingRemainder(dividingBy: 360) / 360
+        return Color(hue: Double(shifted), saturation: Double(max(s, 0.55)), brightness: Double(max(b, 0.75)), opacity: Double(a))
     }
 }
 
@@ -246,6 +305,90 @@ struct SectionLabel: View {
                     .foregroundStyle(SwarmTheme.textMuted)
             }
             Spacer()
+        }
+    }
+}
+
+// MARK: - "Swarm Pulse" redesign components (additive to the design system
+// above — existing screens/components are untouched, these are opted into
+// screen-by-screen: Dashboard's fleet cards, NowPlayingCard, and Profile's
+// new Command Center header).
+
+/// Concentric expanding rings behind a live indicator — the signature "swarm
+/// pulse" motif standing in for StatusPill's single pulsing dot wherever a
+/// screen wants a bigger, more ambient sense of "this bot is alive right
+/// now" (a fleet card's corner badge, the Command Center header). Purely
+/// decorative — layer it behind other content, it doesn't affect layout.
+struct SwarmPulseRings: View {
+    var color: Color = SwarmTheme.accent
+    var ringCount: Int = 3
+    @State private var animate = false
+
+    var body: some View {
+        ZStack {
+            ForEach(0..<ringCount, id: \.self) { i in
+                Circle()
+                    .stroke(color.opacity(0.5), lineWidth: 1.5)
+                    .scaleEffect(animate ? 2.2 : 0.4)
+                    .opacity(animate ? 0 : 0.7)
+                    .animation(
+                        .easeOut(duration: 1.8)
+                        .repeatForever(autoreverses: false)
+                        .delay(Double(i) * (1.8 / Double(ringCount))),
+                        value: animate
+                    )
+            }
+            Circle().fill(color).frame(width: 8, height: 8)
+        }
+        .onAppear { animate = true }
+    }
+}
+
+/// Elevated alternative to PanelCard for hero/marquee content (a fleet
+/// card's live session, NowPlayingCard, the Command Center header) — a
+/// gradient-tinted border and soft glow instead of PanelCard's flat single-
+/// color stroke, so a small number of "this is the important thing on
+/// screen" surfaces read as a step up from the dozens of plain PanelCards
+/// around them, without introducing a whole second visual language.
+struct SwarmHeroCard<Content: View>: View {
+    var padding: CGFloat = 18
+    var tint: Color = SwarmTheme.accent
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12, content: { content })
+            .padding(padding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(SwarmTheme.panel, in: RoundedRectangle(cornerRadius: SwarmTheme.cardRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: SwarmTheme.cardRadius, style: .continuous)
+                    .stroke(
+                        LinearGradient(colors: [tint.opacity(0.65), tint.opacity(0.1)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                        lineWidth: 1.5
+                    )
+            )
+            .shadow(color: tint.opacity(0.25), radius: 16, y: 6)
+    }
+}
+
+/// Big glanceable number + label, styled for a marquee row (Command Center
+/// header, fleet radar summary) — larger and gradient-tinted vs. MetricTile,
+/// which stays as-is for the compact 3-up rows it's already used in
+/// everywhere (Dashboard's Fleet card, BotDetailView).
+struct SwarmStatBadge: View {
+    let value: String
+    let label: String
+    var tint: Color = SwarmTheme.accent
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.system(.title, design: .rounded).weight(.heavy))
+                .foregroundStyle(LinearGradient(colors: [tint, tint.opacity(0.7)], startPoint: .leading, endPoint: .trailing))
+            Text(label.uppercased())
+                .font(.caption2.bold())
+                .foregroundStyle(SwarmTheme.textMuted)
+                .tracking(0.5)
         }
     }
 }

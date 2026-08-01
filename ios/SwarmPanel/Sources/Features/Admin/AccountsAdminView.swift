@@ -5,6 +5,7 @@ struct AccountsAdminView: View {
     @State private var resetPasswordTarget: SwarmAccountSummary?
     @State private var newPassword = ""
     @State private var deleteTarget: SwarmAccountSummary?
+    @State private var showBulkDeleteConfirm = false
 
     var body: some View {
         ScrollView {
@@ -53,9 +54,29 @@ struct AccountsAdminView: View {
                 .padding(.horizontal)
             }
             .padding(.vertical)
+            // Room for the bulk-action bar so the last row isn't hidden behind it.
+            .padding(.bottom, viewModel.isSelecting && !viewModel.selectedIds.isEmpty ? 64 : 0)
         }
         .background(SwarmTheme.background)
         .navigationTitle("Accounts")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button(viewModel.isSelecting ? "Done" : "Select") {
+                    if viewModel.isSelecting { viewModel.exitSelectionMode() } else { viewModel.isSelecting = true }
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if viewModel.isSelecting && !viewModel.selectedIds.isEmpty {
+                BulkActionBar(
+                    count: viewModel.selectedIds.count,
+                    isWorking: viewModel.isBulkWorking,
+                    onVerify: { Task { await viewModel.bulkVerify(true) } },
+                    onUnverify: { Task { await viewModel.bulkVerify(false) } },
+                    onDelete: { showBulkDeleteConfirm = true }
+                )
+            }
+        }
         .task { await viewModel.load() }
         .refreshable {
             Haptics.light()
@@ -83,6 +104,46 @@ struct AccountsAdminView: View {
         } message: {
             Text("Permanently delete \(deleteTarget?.username ?? "this account")? This cannot be undone.")
         }
+        .confirmationDialog(
+            "Delete \(viewModel.selectedIds.count) account(s)?",
+            isPresented: $showBulkDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete \(viewModel.selectedIds.count) Account(s)", role: .destructive) {
+                Task { await viewModel.bulkDelete() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently deletes every selected account. This cannot be undone.")
+        }
+    }
+}
+
+private struct BulkActionBar: View {
+    let count: Int
+    let isWorking: Bool
+    let onVerify: () -> Void
+    let onUnverify: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text("\(count) selected")
+                .font(.caption.bold())
+                .foregroundStyle(SwarmTheme.textMuted)
+            Spacer()
+            if isWorking {
+                ProgressView().tint(SwarmTheme.accent)
+            } else {
+                Button(action: onVerify) { Image(systemName: "checkmark.seal") }
+                Button(action: onUnverify) { Image(systemName: "xmark.seal") }
+                Button(role: .destructive, action: onDelete) { Image(systemName: "trash") }
+            }
+        }
+        .buttonStyle(.bordered)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.bar)
     }
 }
 
@@ -92,9 +153,16 @@ private struct AccountRow: View {
     let onResetPassword: () -> Void
     let onDelete: () -> Void
 
+    private var isSelected: Bool { viewModel.selectedIds.contains(account.id) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
+                if viewModel.isSelecting {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.title3)
+                        .foregroundStyle(isSelected ? SwarmTheme.accent : SwarmTheme.textMuted)
+                }
                 InitialsAvatar(name: account.name, diameter: 28)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(account.name).font(.subheadline.bold()).foregroundStyle(SwarmTheme.textPrimary)
@@ -108,21 +176,33 @@ private struct AccountRow: View {
                 }
                 StatusPill(text: account.verificationVerified == true ? "Verified" : "Unverified", tone: account.verificationVerified == true ? .live : .off)
             }
-            HStack(spacing: 14) {
-                Button(account.verificationVerified == true ? "Unverify" : "Verify") {
-                    Task { await viewModel.toggleVerified(account) }
+            if !viewModel.isSelecting {
+                HStack(spacing: 14) {
+                    Button(account.verificationVerified == true ? "Unverify" : "Verify") {
+                        Task { await viewModel.toggleVerified(account) }
+                    }
+                    Button(account.isModerator ? "Revoke Mod" : "Make Mod") {
+                        Task { await viewModel.toggleModerator(account) }
+                    }
+                    if account.verificationVerified != true {
+                        Button("Resend Code") {
+                            Task { await viewModel.resendVerification(account) }
+                        }
+                    }
+                    Button("Reset Password", action: onResetPassword)
+                    Button("Delete", role: .destructive, action: onDelete)
                 }
-                Button(account.isModerator ? "Revoke Mod" : "Make Mod") {
-                    Task { await viewModel.toggleModerator(account) }
-                }
-                Button("Reset Password", action: onResetPassword)
-                Button("Delete", role: .destructive, action: onDelete)
+                .buttonStyle(.borderless)
+                .font(.caption)
+                .tint(SwarmTheme.accent)
             }
-            .buttonStyle(.borderless)
-            .font(.caption)
-            .tint(SwarmTheme.accent)
         }
         .padding(14)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard viewModel.isSelecting else { return }
+            viewModel.toggleSelection(account.id)
+        }
     }
 }
 

@@ -42,3 +42,36 @@ struct SwarmAccountModeratorBody: Encodable {
     let accountId: Int
     let moderator: Bool
 }
+
+struct SwarmAccountResendVerificationBody: Encodable {
+    let accountId: Int
+}
+
+struct SwarmAccountResendVerificationResponse: Decodable {
+    let ok: Bool?
+    let verificationSent: Bool?
+    let alreadyVerified: Bool?
+}
+
+struct SwarmAccountBulkIdsBody: Encodable {
+    let ids: [Int]
+}
+
+struct SwarmAccountBulkVerifyBody: Encodable {
+    let ids: [Int]
+    let verified: Bool
+}
+
+/// Shared response shape for both bulk-delete and bulk-verify — routes.lua's
+/// run_bulk_op() returns the same {ok, succeeded: [ids], failed: [{id,
+/// error}]} for both.
+struct SwarmAccountBulkResult: Decodable {
+    let ok: Bool?
+    let succeeded: [Int]?
+    let failed: [SwarmAccountBulkFailure]?
+}
+
+struct SwarmAccountBulkFailure: Decodable, Identifiable {
+    let id: Int
+    let error: String?
+}

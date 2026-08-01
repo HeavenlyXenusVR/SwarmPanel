@@ -7,6 +7,8 @@ final class AuditLogViewModel: ObservableObject {
     @Published var actionFilter = ""
     @Published var isLoading = true
     @Published var errorMessage: String?
+    @Published var statusMessage: String?
+    @Published var revertingId: Int?
 
     private let api = APIClient.shared
 
@@ -24,6 +26,26 @@ final class AuditLogViewModel: ObservableObject {
         } catch {
             guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to load audit log."
+        }
+    }
+
+    /// Not every entry is revertible — routes.lua's REVERTIBLE_ACTIONS table
+    /// gates this server-side (and requires a recorded before-state on the
+    /// entry), so the client doesn't try to precompute eligibility and just
+    /// surfaces whatever 400 message comes back for an entry that can't be
+    /// reverted.
+    func revert(_ entry: AuditLogEntry) async {
+        revertingId = entry.id
+        defer { revertingId = nil }
+        do {
+            let _: OKResponse = try await api.post("/api/audit-log/\(entry.id)/revert")
+            Haptics.success()
+            statusMessage = "Reverted \(entry.action)."
+            await load()
+        } catch {
+            guard !error.isCancellation else { return }
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to revert this entry."
+            Haptics.error()
         }
     }
 }
