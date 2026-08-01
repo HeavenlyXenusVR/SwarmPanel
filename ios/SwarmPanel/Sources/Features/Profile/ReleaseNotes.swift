@@ -16,6 +16,9 @@ let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"
 /// Static changelog shown on the "What's New" screen — updated by hand
 /// alongside each ios/vX.Y.Z tag, mirroring the tag's own release notes.
 let releaseNotes: [ReleaseNote] = [
+    ReleaseNote(version: "0.10.1", highlights: [
+        "Fixed Dashboard (the app's first tab) doing a full reconnect and re-fetch every time you switched away to another tab and back — it was tearing down a perfectly good live connection on ordinary navigation, not just when the app actually backgrounded, which made the app feel like it took forever to reload",
+    ]),
     ReleaseNote(version: "0.10.0", highlights: [
         "New Swarm-Wide Leaderboard (admin): a scope toggle on Leaderboard shows top tracks across every bot's own database instead of one guild at a time",
         "Accounts admin: bulk select to verify/unverify or delete multiple accounts at once, plus Resend Verification for a single account",

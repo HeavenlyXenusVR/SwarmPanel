@@ -13,6 +13,7 @@ struct DashboardView: View {
     @StateObject private var viewModel = DashboardViewModel()
     @StateObject private var recentBots = RecentBotsStore()
     @StateObject private var pinnedBots = PinnedBotsStore()
+    @Environment(\.scenePhase) private var scenePhase
 
     private var allBots: [DashboardBot] { viewModel.response?.bots ?? [] }
     private var allSessions: [DashboardSession] {
@@ -219,8 +220,27 @@ struct DashboardView: View {
             .environmentObject(recentBots)
             .environmentObject(pinnedBots)
         }
+        // BUGFIX: this used to be .onAppear { viewModel.start() } /
+        // .onDisappear { viewModel.stop() } — which sounds right but isn't:
+        // TabView keeps every tab's view alive and fires onAppear/onDisappear
+        // on every single tab switch, not just real backgrounding. Since
+        // Dashboard is the default/first tab, that meant switching to
+        // another tab and back tore down a perfectly good WebSocket
+        // connection and re-did the full connect handshake + a fresh
+        // /api/dashboard fetch every time — the "app takes forever to
+        // reload" complaint. start() is already idempotent (guarded by its
+        // own `started` flag), so calling it again on every reappearance is
+        // harmless; the fix is just to stop calling stop() on mere tab-away.
+        // scenePhase (real background/active transitions) is the correct
+        // signal for actually tearing the connection down to save battery.
         .onAppear { viewModel.start() }
-        .onDisappear { viewModel.stop() }
+        .onChange(of: scenePhase) { newPhase in
+            switch newPhase {
+            case .active: viewModel.start()
+            case .background: viewModel.stop()
+            default: break
+            }
+        }
         // Uses the emitted value directly rather than re-reading
         // viewModel.response — @Published's publisher fires from willSet,
         // so the backing property isn't guaranteed updated yet at the point
