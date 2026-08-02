@@ -911,6 +911,17 @@ function M.register(cfg)
     local gid = action == "RESTART" and "0" or tostring(body.guild_id or "")
     if action ~= "RESTART" and gid == "" then return 400, { detail = "guild_id is required" } end
 
+    -- This endpoint checked auth (any valid session) but never checked
+    -- guild SCOPE -- a guild-bound account could PLAY/SKIP/STOP/etc any
+    -- bot in any guild by just typing a different guild_id, not only its
+    -- own registered one. Every other guild-scoped endpoint in this file
+    -- (control-state, control-matrix, queues, ...) already calls
+    -- require_bot_guild_access/require_guild_scope; this one was missed.
+    if action ~= "RESTART" then
+      local gerr_status, gerr_body = require_bot_guild_access(req, a, bot_key, gid)
+      if gerr_status then return gerr_status, gerr_body end
+    end
+
     -- Every control action (not just destructive account/admin actions) is
     -- now audit-logged, payload included -- previously nothing recorded
     -- what was actually sent (e.g. a PLAY's source_url), and swarm_

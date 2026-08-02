@@ -91,11 +91,22 @@ function M.verification_code()
   return string.format("%08d", sodium.randombytes_uniform(100000000))
 end
 
-function M.hmac_sha256(key, msg)
+-- Splits key-block-padding out of hmac_sha256 so PBKDF2's hot loop (up to
+-- 260,000 HMAC calls with the SAME key) can pad the key ONCE up front
+-- instead of re-running the byte-by-byte xor_pad() on every single
+-- iteration. This was the actual bottleneck behind login/register/password-
+-- change taking ~5 seconds real time (confirmed live: 260k iterations took
+-- 3.9s of CPU time, almost entirely in redundant ipad/opad recomputation) --
+-- not the SHA-256 calls themselves, which are native libsodium calls.
+-- Output is byte-for-byte identical; this only removes repeated work.
+local function hmac_sha256_pads(key)
   if #key > BLOCKSIZE then key = M.sha256(key) end
   if #key < BLOCKSIZE then key = key .. string.rep("\0", BLOCKSIZE - #key) end
-  local ipad = xor_pad(key, 0x36)
-  local opad = xor_pad(key, 0x5c)
+  return xor_pad(key, 0x36), xor_pad(key, 0x5c)
+end
+
+function M.hmac_sha256(key, msg)
+  local ipad, opad = hmac_sha256_pads(key)
   return M.sha256(opad .. M.sha256(ipad .. msg))
 end
 
@@ -106,27 +117,29 @@ function M.pbkdf2_hmac_sha256(password, salt, iterations, dklen)
   local hlen = 32
   local blocks_needed = math.ceil(dklen / hlen)
   local dk_parts = {}
+  local ipad, opad = hmac_sha256_pads(password)
+  local function hmac(msg) return M.sha256(opad .. M.sha256(ipad .. msg)) end
   for block_index = 1, blocks_needed do
-    local int_be = string.char(
-      bit_xor_byte(0, 0) -- placeholder, overwritten below (kept for clarity)
-    )
     -- big-endian uint32 block index
     local i = block_index
-    int_be = string.char(
+    local int_be = string.char(
       math.floor(i / 16777216) % 256,
       math.floor(i / 65536) % 256,
       math.floor(i / 256) % 256,
       i % 256
     )
-    local u = M.hmac_sha256(password, salt .. int_be)
+    local u = hmac(salt .. int_be)
     local t = u
+    local xor_buf = {} -- reused across all `iterations` rounds below instead
+                        -- of allocating a fresh 32-slot table each time --
+                        --260k table allocations was real, avoidable GC
+                        -- pressure on top of the redundant-padding fix above.
     for _ = 2, iterations do
-      u = M.hmac_sha256(password, u)
-      local next_t = {}
+      u = hmac(u)
       for byte_index = 1, hlen do
-        next_t[byte_index] = string.char(bit_xor_byte(t:byte(byte_index), u:byte(byte_index)))
+        xor_buf[byte_index] = string.char(bit_xor_byte(t:byte(byte_index), u:byte(byte_index)))
       end
-      t = table.concat(next_t)
+      t = table.concat(xor_buf)
     end
     dk_parts[#dk_parts + 1] = t
   end

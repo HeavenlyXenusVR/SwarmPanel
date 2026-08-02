@@ -41,33 +41,84 @@ function M.register(cfg)
     local a = get_auth(req)
     if a then return 303, "", { Location = "/" } end
     local next_path = req.query["next"]
+    -- Mirrors AuthPage.jsx: a login/register mode toggle on one form. The
+    -- register fields (guild_id/email/verification_webhook_url) were
+    -- entirely missing from the first Lua-rendered pass -- POST
+    -- /api/session/register already existed and worked server-side the
+    -- whole time, there was just no page that could reach it, so new
+    -- guild accounts had no way to sign up at all.
     local body = ([[
-      <form id="login-form" class="auth-card form-panel">
+      <form id="auth-form" class="auth-card form-panel">
         <h1>SwarmPanel</h1>
-        <span class="page-lede">Sign in to reach fleet command.</span>
+        <span class="page-lede" id="auth-lede">Sign in to reach fleet command.</span>
+        <div class="segmented" role="tablist">
+          <button type="button" class="active" data-auth-mode="login">Login</button>
+          <button type="button" data-auth-mode="register">Register</button>
+        </div>
         <div id="auth-error" class="notice notice-error" hidden></div>
         <label class="field"><span>Username</span><input type="text" name="username" autocomplete="username" required></label>
-        <label class="field"><span>Password</span><input type="password" name="password" autocomplete="current-password" required></label>
+        <label class="field"><span>Password</span><input type="password" name="password" autocomplete="current-password"></label>
+        <div data-auth-register hidden>
+          <label class="field"><span>Guild ID</span><input type="text" name="guild_id"></label>
+          <label class="field"><span>Email</span><input type="email" name="email"></label>
+          <label class="field"><span>Discord Verification Webhook</span><input type="text" name="verification_webhook_url" placeholder="https://discord.com/api/webhooks/..."></label>
+          <div class="auth-proof-guide">
+            <div class="auth-proof-head">
+              <div><strong>How webhook proof works</strong>
+              <p>SwarmPanel verifies that the webhook URL belongs to the same Discord server as the guild ID you entered, then sends your real verification code there.</p></div>
+            </div>
+            <div class="auth-proof-steps">
+              <article><span>1</span><div><strong>Open your Discord server settings</strong><p>Go to the server you want to register, then open a text channel you manage.</p></div></article>
+              <article><span>2</span><div><strong>Create a temporary webhook</strong><p>Channel Settings &rarr; Integrations &rarr; Webhooks &rarr; New Webhook. Copy the URL.</p></div></article>
+              <article><span>3</span><div><strong>Paste the URL here and register</strong><p>Remove the webhook after you finish verification.</p></div></article>
+            </div>
+            <div class="auth-proof-footnote">
+              <span>This prevents someone else from claiming your guild by typing its ID first.</span>
+              <span>The webhook only needs to stay active until the verification code is confirmed.</span>
+            </div>
+          </div>
+        </div>
         <input type="hidden" name="next" value="%s">
-        <button type="submit" class="primary">Login</button>
+        <button type="submit" class="primary" id="auth-submit">Login</button>
       </form>
       <script>
-        document.getElementById("login-form").addEventListener("submit", async (e) => {
+        const authForm = document.getElementById("auth-form");
+        const authLede = document.getElementById("auth-lede");
+        const authSubmit = document.getElementById("auth-submit");
+        const registerFields = document.querySelector("[data-auth-register]");
+        let authMode = "login";
+        document.querySelectorAll("[data-auth-mode]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            authMode = btn.getAttribute("data-auth-mode");
+            document.querySelectorAll("[data-auth-mode]").forEach((b) => b.classList.toggle("active", b === btn));
+            registerFields.hidden = authMode !== "register";
+            authForm.password.required = authMode === "login";
+            authForm.guild_id.required = authMode === "register";
+            authForm.verification_webhook_url.required = authMode === "register";
+            authLede.textContent = authMode === "login"
+              ? "Sign in to reach fleet command."
+              : "Register your guild identity with a Discord webhook that proves guild ownership and receives your verification code.";
+            authSubmit.textContent = authMode === "login" ? "Login" : "Create Account";
+          });
+        });
+        authForm.addEventListener("submit", async (e) => {
           e.preventDefault();
-          const form = e.target;
           const errBox = document.getElementById("auth-error");
           errBox.hidden = true;
+          const fd = new FormData(authForm);
+          const endpoint = authMode === "login" ? "/api/session/login" : "/api/session/register";
+          const payload = Object.fromEntries(fd);
           try {
-            const res = await fetch("/api/session/login", {
+            const res = await fetch(endpoint, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ username: form.username.value, password: form.password.value }),
+              body: JSON.stringify(payload),
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.detail || "Login failed");
-            window.location = form.next.value || "/";
+            if (!res.ok) throw new Error(data.detail || (authMode === "login" ? "Login failed" : "Registration failed"));
+            window.location = fd.get("next") || "/";
           } catch (err) {
-            errBox.textContent = err.message || "Login failed";
+            errBox.textContent = err.message || "Something went wrong";
             errBox.hidden = false;
           }
         });

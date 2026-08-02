@@ -51,12 +51,32 @@ function M.register(cfg)
       action_options[#action_options + 1] = ("<option value=\"%s\">%s</option>"):format(html.esc(act), html.esc(act))
     end
 
+    -- Mirrors ControlsPage.jsx's form.guild_id default: a guild-scoped
+    -- account's own registered guild (ctx.session.guild_id), read-only --
+    -- POST /api/bots/control now rejects any other guild_id for a scoped
+    -- account anyway (require_bot_guild_access), so letting them type an
+    -- arbitrary one here was never actually usable, just confusing. Admins
+    -- get it pre-filled from the first live session (also matching the
+    -- React fallback: dash.sessions?.[0]?.guild_id) but still editable,
+    -- since they can legitimately target any guild.
+    local own_guild_id = (not a.admin_mode) and a.guild_id or nil
+    local default_guild_id = own_guild_id
+    if not default_guild_id then
+      for _, bot in ipairs(data.bots) do
+        local first = bot.sessions and bot.sessions[1]
+        if first and first.guild_id then default_guild_id = first.guild_id; break end
+      end
+    end
+    local guild_field = own_guild_id
+      and ('<label class="field">Guild ID<input type="text" name="guild_id" value="%s" readonly></label>'):format(html.esc(own_guild_id))
+      or ('<label class="field">Guild ID<input type="text" name="guild_id" required value="%s" placeholder="1247394560007471134"></label>'):format(html.esc(default_guild_id or ""))
+
     local body = html.page({
       title = "Controls", eyebrow = "Direct Control", lede = "Send a direct order to any bot in any guild.",
       body = ([[
         <form id="control-form" class="panel form-panel">
           <label class="field">Bot<select name="bot_key" required>%s</select></label>
-          <label class="field">Guild ID<input type="text" name="guild_id" required placeholder="1247394560007471134"></label>
+          %s
           <label class="field">Action<select name="action">%s</select></label>
           <label class="field">Source URL / search (PLAY only)<input type="text" name="source_url" placeholder="https://... or search terms"></label>
           <label class="field">Voice channel ID<input type="text" name="voice_channel_id"></label>
@@ -70,7 +90,7 @@ function M.register(cfg)
         <div id="control-state" class="control-state"></div>
         %s
         <div id="saved-queues"></div>
-      ]]):format(html.join(bot_options), html.join(action_options),
+      ]]):format(html.join(bot_options), guild_field, html.join(action_options),
         html.section_head("Control State"), html.section_head("Saved Queues")),
     })
 
