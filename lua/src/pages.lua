@@ -8,6 +8,7 @@ local auth = require("auth")
 local dashboard = require("dashboard")
 local ratelimit = require("ratelimit")
 local config = require("config")
+local accounts = require("accounts")
 
 local M = {}
 
@@ -184,17 +185,23 @@ function M.register(cfg)
       local playback_block = ""
       if session then
         local duration = math.floor(session.duration_seconds or 0)
-        local pct = (duration > 0) and math.floor(100 * (session.position_seconds or 0) / duration) or 0
+        local pct = (duration > 0) and math.min(100, math.floor(100 * (session.position_seconds or 0) / duration)) or 0
+        -- data-playback-bar must live INSIDE the data-playback-counter
+        -- element -- app.js's tickPlaybackCounters() finds the bar via
+        -- el.querySelector() scoped to the counter element, so a sibling
+        -- bar (as this used to be) is never found and its width just
+        -- freezes at whatever the server rendered on page load.
         playback_block = ([[
-          <div class="bot-seek-bar" data-seek-bar data-bot-key="%s" data-guild-id="%s" data-duration="%d">
-            <div class="bot-seek-track"><div class="bot-seek-fill" data-playback-bar style="width:%d%%"></div></div>
-          </div>
-          <span data-playback-counter data-position="%s" data-observed-at="%s" data-duration="%s" data-playing="%s">
+          <div class="bot-playback-wrap" data-playback-counter data-position="%s" data-observed-at="%s" data-duration="%s" data-playing="%s">
+            <div class="bot-seek-bar" data-seek-bar data-bot-key="%s" data-guild-id="%s" data-duration="%d">
+              <div class="bot-seek-track"><div class="bot-seek-fill" data-playback-bar style="width:%d%%"></div></div>
+            </div>
             <span data-playback-label></span>
-          </span>
-        ]]):format(html.esc(bot.key), html.esc(session.guild_id), duration, pct,
+          </div>
+        ]]):format(
           tostring(session.position_seconds or 0), tostring(session.position_observed_at or 0),
-          tostring(session.duration_seconds or 0), tostring(session.is_playing == true))
+          tostring(session.duration_seconds or 0), tostring(session.is_playing == true),
+          html.esc(bot.key), html.esc(session.guild_id), duration, pct)
       end
 
       bot_cards[#bot_cards + 1] = ([[
@@ -253,20 +260,18 @@ function M.register(cfg)
             <td>%s</td>
             <td>%s</td>
             <td style="max-width:160px">
-              <div class="bot-playback compact">
+              <div class="bot-playback compact" data-playback-counter data-position="%s" data-observed-at="%s" data-duration="%s" data-playing="%s">
                 <div class="bot-playback-bar" aria-hidden="true"><span data-playback-bar style="width:%d%%"></span></div>
-              </div>
-              <span data-playback-counter data-position="%s" data-observed-at="%s" data-duration="%s" data-playing="%s">
                 <span data-playback-label></span>
-              </span>
+              </div>
             </td>
             <td>%d queued</td>
           </tr>
         ]]):format(
           html.esc(s.bot_display), html.esc(s.title or "—"), html.esc(s.session_state_label or ""),
-          (s.duration_seconds and s.duration_seconds > 0) and math.floor(100 * (s.position_seconds or 0) / s.duration_seconds) or 0,
           tostring(s.position_seconds or 0), tostring(s.position_observed_at or 0), tostring(s.duration_seconds or 0),
           tostring(s.is_playing == true),
+          (s.duration_seconds and s.duration_seconds > 0) and math.min(100, math.floor(100 * (s.position_seconds or 0) / s.duration_seconds)) or 0,
           s.queue_count or 0)
       end
     end
@@ -304,7 +309,8 @@ function M.register(cfg)
       </script>
     ]]
 
-    return 200, html.layout({ title = "Dashboard", path = path, session = session_view(a), token = req.cookies and req.cookies.swarm_session, body = body }),
+    local prefs = a and accounts.get_panel_preferences(a.username, a.guild_id) or nil
+    return 200, html.layout({ title = "Dashboard", path = path, session = session_view(a), token = req.cookies and req.cookies.swarm_session, body = body, preferences = prefs }),
       { ["Content-Type"] = "text/html; charset=utf-8" }
   end
 

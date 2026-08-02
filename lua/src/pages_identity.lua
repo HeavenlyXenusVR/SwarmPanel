@@ -3,6 +3,7 @@
 -- against the existing JSON API.
 local httpd = require("httpd")
 local html = require("html")
+local accounts = require("accounts")
 
 local M = {}
 
@@ -18,6 +19,7 @@ function M.register(cfg)
 
   local function page_shell(req, a, path, title, body_html, extra_script, prefs)
     local script = ([[<script>%s</script>]]):format(extra_script or "")
+    prefs = prefs or (a and accounts.get_panel_preferences(a.username, a.guild_id)) or nil
     return 200, html.layout({
       title = title, path = path, session = session_view(a),
       token = req.cookies and req.cookies.swarm_session, preferences = prefs,

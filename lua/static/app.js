@@ -147,7 +147,14 @@ window.swarmFormatDuration = formatDuration;
 // explicit "Z" first so Date.parse() treats it as UTC correctly.
 function parseSqlTimestampSeconds(raw) {
   if (!raw) return 0;
-  const iso = raw.indexOf("T") === -1 ? raw.replace(" ", "T") + "Z" : raw;
+  let iso = raw.indexOf("T") === -1 ? raw.replace(" ", "T") : raw;
+  // Some rows already carry a Postgres-style "+00" (or "+00:00") offset
+  // suffix instead of the bare "YYYY-MM-DD HH:MM:SS" this was written for;
+  // blindly appending "Z" onto those produced an invalid string like
+  // "...+00Z" that Date.parse() rejects, so the counter never ticks at all
+  // (basePos is used as-is forever). Only append "Z" when there's no
+  // existing offset/zone marker already at the end.
+  if (!/(?:Z|[+-]\d\d(?::?\d\d)?)$/.test(iso)) iso += "Z";
   const ms = Date.parse(iso);
   return Number.isFinite(ms) ? ms / 1000 : 0;
 }

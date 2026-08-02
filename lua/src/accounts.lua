@@ -188,6 +188,25 @@ function M.get_account_profile(username, guild_id)
   return serialize_profile(row)
 end
 
+-- Loads and cleans an account's saved panel_preferences (theme/accent/layout
+-- etc.), for threading into html.layout()'s `preferences` option so the
+-- rendered page shell actually reflects what the user saved on /appearance,
+-- instead of every page always rendering html.DEFAULT_PREFERENCES. Returns
+-- profiles.default_panel_preferences() (unsaved) if there's no scoped guild
+-- or no stored row, mirroring GET /api/users/preferences' fallback.
+function M.get_panel_preferences(username, guild_id)
+  local profiles = require("profiles")
+  local defaults = profiles.default_panel_preferences()
+  local uname = normalize_username(username)
+  if not uname or not guild_id or guild_id == "" then return defaults end
+  local profile = M.get_account_profile(uname, guild_id)
+  if not profile then return defaults end
+  local stored = (type(profile.panel_preferences) == "table") and profile.panel_preferences or nil
+  local ok, prefs = pcall(profiles.clean_panel_preferences, stored, defaults)
+  if not ok then return defaults end
+  return prefs
+end
+
 -- Every column update_account_profile/update_account_admin is allowed to
 -- touch. Mirrors helpers.py's ACCOUNT_PROFILE_FIELDS (derived from
 -- ACCOUNT_PROFILE_COLUMNS) — the actual field-level shape/enum validation
