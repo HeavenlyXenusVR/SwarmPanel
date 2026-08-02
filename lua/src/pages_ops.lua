@@ -355,18 +355,61 @@ function M.register(cfg)
         .. '<div id="user-results" class="user-grid">' .. html.empty_state("Start typing to search.") .. "</div>",
     })
     local script = [[
+      function escUser(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+      function userInitials(label) {
+        const parts = String(label || "").trim().split(/\s+/).filter(Boolean);
+        if (!parts.length) return "SP";
+        return (parts[0][0] + (parts[1] ? parts[1][0] : "")).toUpperCase();
+      }
+      function titleCaseUser(s) { return String(s || "").replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()); }
+      // Full port of UserCard from components/swarm.jsx -- the first pass
+      // only rendered the display name and three bare buttons, so avatars,
+      // handles, guild/favorite-bot chips, and follower/friend counts (all
+      // already returned by /api/users/directory) never showed up anywhere
+      // in the directory.
       async function renderUsers(q) {
         try {
           const res = await swarmFetch("/api/users/directory?q=" + encodeURIComponent(q || ""));
-          const cards = (res.users || []).map((u) => `
-            <div class="user-card">
-              <div class="bot-now"><strong>${(u.display_name || u.username).replace(/</g,"&lt;")}</strong></div>
-              <p>
-                <a href="/users/${u.id}">View profile</a>
-                <button type="button" data-follow="${u.id}">Follow</button>
-                <button type="button" data-friend="${u.id}">Add friend</button>
-              </p>
-            </div>`).join("");
+          const cards = (res.users || []).map((u) => {
+            const imageUrl = u.avatar_url || u.server_icon_url || "";
+            const displayName = u.display_name || u.username || "Unknown operator";
+            const guildLabel = u.server_name || u.profile_headline || (u.guild_id ? `Guild ${u.guild_id}` : "Swarm directory");
+            const favoriteBot = u.favorite_bot ? titleCaseUser(u.favorite_bot) : "No favorite";
+            const avatarImg = imageUrl ? `<img class="avatar-image" src="${escUser(imageUrl)}" alt="">` : `<span class="avatar-fallback">${escUser(userInitials(displayName))}</span>`;
+            const friendLocked = ["friends", "pending_out", "self"].includes(u.friend_status);
+            const friendLabel = u.friend_status === "friends" ? "Friends" : u.friend_status === "pending_out" ? "Pending" : "Friend";
+            return `
+            <article class="user-card">
+              <div class="user-card-main">
+                <a class="avatar-link" href="/users/${u.id}">
+                  <div class="avatar avatar-lg avatar-presence">${avatarImg}<span class="presence-dot avatar-dot ${u.is_online ? "online" : "inactive"}" aria-hidden="true"></span></div>
+                </a>
+                <div class="user-card-copy">
+                  <div class="user-card-head">
+                    <a href="/users/${u.id}"><h3>${escUser(displayName)}</h3></a>
+                    <span class="presence-pill compact ${u.is_online ? "online" : "inactive"}"><span class="presence-dot" aria-hidden="true"></span>${u.is_online ? "Online" : "Inactive"}</span>
+                  </div>
+                  <p class="user-card-handle">@${escUser(u.username || "operator")}</p>
+                  <p class="user-card-guild">${escUser(guildLabel)}</p>
+                  <div class="chip-row user-card-tags">
+                    <span>${escUser(favoriteBot)}</span>
+                    ${u.server_name ? `<span>${escUser(u.server_name)}</span>` : ""}
+                  </div>
+                </div>
+              </div>
+              <div class="user-card-stats">
+                <article><strong>${u.follower_count || 0}</strong><span>Followers</span></article>
+                <article><strong>${u.friend_count || 0}</strong><span>Friends</span></article>
+                <article><strong>${escUser(favoriteBot)}</strong><span>Favorite Bot</span></article>
+              </div>
+              <div class="inline-controls user-card-actions">
+                <a class="button-link" href="/users/${u.id}">Open</a>
+                <button type="button" data-follow="${u.id}" data-following="${u.followed_by_me ? "1" : ""}">${u.followed_by_me ? "Unfollow" : "Follow"}</button>
+                <button type="button" data-friend="${u.id}" ${friendLocked ? "disabled" : ""}>${escUser(friendLabel)}</button>
+                <a class="button-link" href="/messages">Message</a>
+              </div>
+            </article>`;
+          }).join("");
           document.getElementById("user-results").innerHTML = cards || "<p>No users found.</p>";
         } catch (err) { swarmToast("Search failed.", "error"); }
       }
@@ -376,7 +419,11 @@ function M.register(cfg)
         const followId = e.target.getAttribute("data-follow");
         const friendId = e.target.getAttribute("data-friend");
         try {
-          if (followId) await swarmFetch(`/api/users/${followId}/follow`, { method: "POST" });
+          if (followId) {
+            const wasFollowing = e.target.getAttribute("data-following") === "1";
+            await swarmFetch(`/api/users/${followId}/follow`, { method: "POST", body: JSON.stringify({ following: !wasFollowing }) });
+            renderUsers(document.getElementById("user-search").value);
+          }
           if (friendId) await swarmFetch(`/api/users/${friendId}/friend-request`, { method: "POST" });
           if (followId || friendId) swarmToast("Done.", "success");
         } catch (err) { swarmToast(err.message, "error"); }

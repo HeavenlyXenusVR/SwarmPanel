@@ -124,25 +124,96 @@ function M.register(cfg)
       -- quoted string literal).
       body = html.page({ title = "Profile", body = ('<div id="profile-view" data-profile-id="%s">%s</div>'):format(
         html.esc(target_id), html.empty_state("Loading...")) })
+      -- Full public-card port of ProfilePage.jsx's publicMode branch -- the
+      -- first pass only rendered display_name/bio and Follow/Friend/Message
+      -- buttons, so avatar, banner, tags, favorite bot, server info, custom
+      -- links, quote, and all the profile_banner_mode/card_style/
+      -- border_accent visual styling (which /api/users/:id/profile already
+      -- returns, straight off the account row) never rendered anywhere.
       script = [[
         (async () => {
           const view = document.getElementById("profile-view");
           const id = view.dataset.profileId;
+          const BORDER_ACCENTS = new Set(["none", "glow", "pulse", "neon", "solid"]);
+          function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+          function initials(label) {
+            const parts = String(label || "").trim().split(/\s+/).filter(Boolean);
+            if (!parts.length) return "SP";
+            return (parts[0][0] + (parts[1] ? parts[1][0] : "")).toUpperCase();
+          }
+          function avatarHtml(src, label, online, cls) {
+            const img = src ? `<img class="avatar-image" src="${esc(src)}" alt="">` : `<span class="avatar-fallback">${esc(initials(label))}</span>`;
+            return `<div class="${cls} avatar-presence">${img}<span class="presence-dot avatar-dot ${online ? "online" : "inactive"}" aria-hidden="true"></span></div>`;
+          }
           try {
             const res = await swarmFetch("/api/users/" + encodeURIComponent(id) + "/profile");
             const p = res.profile || {};
+            const perms = res.social_permissions || {};
+            const activity = p.activity || {};
+            const tags = Array.isArray(p.profile_tags) ? p.profile_tags.slice(0, 5) : [];
+            const links = Array.isArray(p.profile_links) ? p.profile_links : [];
+            const accent = p.theme_accent || "#89b4fa";
+            const bannerMode = p.profile_banner_mode || "gradient";
+            const cardStyle = p.profile_card_style || "solid";
+            const borderAccent = BORDER_ACCENTS.has(String(p.profile_border_accent || "").toLowerCase()) ? p.profile_border_accent : "none";
+            const heroStyle = `--accent:${accent};--profile-banner-url:${p.profile_banner_url ? `url("${String(p.profile_banner_url).replace(/["\\]/g, "\\$&")}")` : "none"}`;
+            const guildLabel = p.server_name || `Guild ${p.guild_id || "profile"}`;
+            const socialLabel = { open: "Open", friends: "Friends Only", quiet: "Quiet" }[String(p.profile_social_mode || "open").toLowerCase()] || "Open";
+
+            const followDisabled = !p.followed_by_me && !perms.can_follow;
+            const friendLocked = ["friends", "pending_out", "self"].includes(p.friend_status);
+            const friendLabel = p.friend_status === "friends" ? "Friends" : p.friend_status === "pending_out" ? "Pending" : "Friend";
+
+            view.className = `public-profile-shell`;
+            view.setAttribute("style", heroStyle);
             view.innerHTML = `
-              <div class="profile-header"><h2>${(p.display_name||p.username||"Unknown").replace(/</g,"&lt;")}</h2>
-              <p>${(p.bio||"").replace(/</g,"&lt;")}</p></div>
-              <div class="profile-actions">
-                <button type="button" id="follow-btn">Follow</button>
-                <button type="button" id="friend-btn">Add friend</button>
-                <a href="/messages">Message</a>
-              </div>`;
+              <section class="panel public-profile-hero public-profile-card-${esc(cardStyle)} public-profile-banner-${esc(bannerMode)} profile-border-${esc(borderAccent)}" style="${heroStyle}">
+                ${avatarHtml(p.avatar_url || p.server_icon_url, p.display_name || p.username, p.is_online, "avatar profile-avatar-xl")}
+                <div class="public-profile-copy">
+                  <h2>${esc(p.profile_headline || p.display_name || p.username || "Unknown")}</h2>
+                  <p>${esc(p.bio || p.server_name || guildLabel)}</p>
+                  ${p.profile_quote ? `<p class="muted">${esc(p.profile_quote)}</p>` : ""}
+                  <div class="chip-row">
+                    <span class="presence-pill ${p.is_online ? "online" : "inactive"}"><span class="presence-dot" aria-hidden="true"></span>${p.is_online ? "Online" : "Inactive"}</span>
+                    ${tags.map((t) => `<span>${esc(t)}</span>`).join("")}
+                    <span>${esc(p.favorite_bot || "swarm")}</span>
+                    <span>${esc(guildLabel)}</span>
+                  </div>
+                </div>
+                <div class="public-profile-actions">
+                  <button type="button" id="follow-btn" ${followDisabled ? "disabled" : ""}>${p.followed_by_me ? "Unfollow" : "Follow"}</button>
+                  <button type="button" id="friend-btn" ${(!perms.can_friend || friendLocked) ? "disabled" : ""}>${esc(friendLabel)}</button>
+                  ${perms.can_message ? '<a class="button-link primary" href="/messages">Message</a>' : '<button type="button" disabled>Message Locked</button>'}
+                </div>
+              </section>
+              <section class="profile-dashboard-grid">
+                <article class="panel profile-stat-panel"><strong>${p.follower_count || 0}</strong><span>Followers</span></article>
+                <article class="panel profile-stat-panel"><strong>${p.following_count || 0}</strong><span>Following</span></article>
+                <article class="panel profile-stat-panel"><strong>${p.friend_count || 0}</strong><span>Friends</span></article>
+                <article class="panel profile-stat-panel"><strong>${activity.total_plays || 0}</strong><span>Plays</span></article>
+              </section>
+              <section class="settings-grid profile-social-layout">
+                <article class="panel form-panel">
+                  <div class="section-head"><h2>Swarm Activity</h2></div>
+                  <div class="event-list compact-events">
+                    ${(activity.active_sessions || []).slice(0, 4).map((s) => `<article class="event"><strong>${esc(s.title || s.bot_name)}</strong><p>${esc(s.bot_name)} / ${esc(s.channel_name || "voice")}</p></article>`).join("") || '<div class="empty-state">No live sessions</div>'}
+                  </div>
+                </article>
+                <article class="panel form-panel">
+                  <div class="section-head"><h2>Links</h2></div>
+                  <div class="profile-link-list">
+                    ${links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noreferrer">${esc(l.label)}</a>`).join("")}
+                    ${p.server_invite_url ? `<a href="${esc(p.server_invite_url)}" target="_blank" rel="noreferrer">Discord</a>` : ""}
+                    ${!links.length && !p.server_invite_url ? '<div class="empty-state">No links</div>' : ""}
+                  </div>
+                </article>
+              </section>
+            `;
             document.getElementById("follow-btn").addEventListener("click", () =>
-              swarmFetch("/api/users/" + encodeURIComponent(id) + "/follow", { method: "POST" }).then(() => swarmToast("Followed.", "success")).catch((e) => swarmToast(e.message, "error")));
+              swarmFetch("/api/users/" + encodeURIComponent(id) + "/follow", { method: "POST", body: JSON.stringify({ following: !p.followed_by_me }) })
+                .then(() => { swarmToast("Done.", "success"); location.reload(); }).catch((e) => swarmToast(e.message, "error")));
             document.getElementById("friend-btn").addEventListener("click", () =>
-              swarmFetch("/api/users/" + encodeURIComponent(id) + "/friend-request", { method: "POST" }).then(() => swarmToast("Request sent.", "success")).catch((e) => swarmToast(e.message, "error")));
+              swarmFetch("/api/users/" + encodeURIComponent(id) + "/friend-request", { method: "POST" }).then(() => { swarmToast("Request sent.", "success"); location.reload(); }).catch((e) => swarmToast(e.message, "error")));
           } catch (err) { view.innerHTML = '<div class="notice notice-error">Profile not found.</div>'; }
         })();
       ]]

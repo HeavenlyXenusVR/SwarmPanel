@@ -227,17 +227,15 @@ for _, name in ipairs({
 end
 
 function M.get_account_by_id(account_id)
+  -- Was missing profile_quote/profile_layout_mode/profile_header_style/
+  -- profile_border_accent (present in PROFILE_COLUMNS, used by
+  -- get_account_profile/search_account_profiles) -- since this is what
+  -- feeds GET /api/users/:id/profile via social.get_public_account_profile,
+  -- every public profile view silently dropped its quote and three of its
+  -- six visual-style pickers regardless of what was saved.
   local row = db.fetchone(
     SCHEMA,
-    [[SELECT id, username, guild_id, email, email_verified_at,
-             verification_webhook_url, verification_webhook_channel_id, verification_webhook_name,
-             webhook_verified_at, webhook_verification_sent_at,
-             display_name, avatar_url, bio,
-             profile_headline, profile_tags, profile_links, profile_banner_url, profile_banner_mode, profile_card_style, profile_social_mode,
-             favorite_bot, theme_accent,
-             public_profile, server_invite_url, server_name, server_icon_url, panel_preferences,
-             created_at, last_login_at, last_seen_at, updated_at
-      FROM ]] .. TABLE .. [[ WHERE id = %s LIMIT 1]],
+    "SELECT " .. PROFILE_COLUMNS:gsub("password_hash, ", "") .. " FROM " .. TABLE .. " WHERE id = %s LIMIT 1",
     tostring(account_id)
   )
   return serialize_profile(row)
