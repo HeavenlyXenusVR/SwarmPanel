@@ -870,9 +870,25 @@ function M.register(cfg)
     local gid = action == "RESTART" and "0" or tostring(body.guild_id or "")
     if action ~= "RESTART" and gid == "" then return 400, { detail = "guild_id is required" } end
 
+    -- Every control action (not just destructive account/admin actions) is
+    -- now audit-logged, payload included -- previously nothing recorded
+    -- what was actually sent (e.g. a PLAY's source_url), and swarm_
+    -- direct_orders/overrides rows get deleted right after processing, so
+    -- once a command succeeded there was no way to answer "what URL did I
+    -- send to which bot" after the fact.
     local ok, result_or_err, maybe_err = pcall(control.control_bot, bot, gid, action, body.payload)
-    if not ok then return 500, { detail = "Bot control failed: " .. tostring(result_or_err) } end
+    if not ok then
+      audit.record_audit_log(a.username, "swarm_bot_control", {
+        target_type = "music_bot", target_id = bot_key,
+        details = cjson.encode({ action = action, guild_id = gid, payload = body.payload, ok = false, error = tostring(result_or_err) }),
+      })
+      return 500, { detail = "Bot control failed: " .. tostring(result_or_err) }
+    end
     local result, cerr = result_or_err, maybe_err
+    audit.record_audit_log(a.username, "swarm_bot_control", {
+      target_type = "music_bot", target_id = bot_key,
+      details = cjson.encode({ action = action, guild_id = gid, payload = body.payload, ok = result ~= nil, error = (not result) and tostring(cerr) or nil }),
+    })
     if not result then return 400, { detail = tostring(cerr) } end
     result.ok = true
     return 200, result
