@@ -4254,3 +4254,129 @@ tbody tr.is-selected td {
     max-width: 180px;
   }
 }
+
+/* ---------------------------------------------------------------------
+   Added for the Lua-rendered pages (pages_ops.lua/pages_identity.lua/
+   pages_admin.lua) -- layouts with no direct equivalent in the ported
+   React stylesheet above (Friends' three columns, Messages' thread-list
+   + conversation split, and small helper rows used by Friends/Messages/
+   Diagnostics/Audit Log that render simple item lists rather than full
+   DataTable-style cards).
+   --------------------------------------------------------------------- */
+
+.friends-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.friend-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+  background: rgba(17, 23, 27, var(--surface-opacity));
+}
+
+.messages-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.messages-threads {
+  display: grid;
+  gap: 8px;
+}
+
+.thread-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(17, 23, 27, var(--surface-opacity));
+  color: inherit;
+  cursor: pointer;
+}
+
+.thread-item:hover {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
+}
+
+.messages-conversation {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(17, 23, 27, var(--surface-opacity));
+  padding: 14px;
+  min-height: 240px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+#msg-list {
+  display: grid;
+  gap: 8px;
+}
+
+.msg-bubble {
+  justify-self: start;
+  max-width: 70%;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 14%, rgba(17, 23, 27, 0.9));
+}
+
+.msg-bubble.mine {
+  justify-self: end;
+  background: color-mix(in srgb, var(--accent) 32%, rgba(17, 23, 27, 0.9));
+}
+
+#msg-form {
+  display: flex;
+  gap: 8px;
+}
+
+#msg-form input {
+  flex: 1;
+}
+
+.alert-rule,
+.audit-row {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+  background: rgba(17, 23, 27, var(--surface-opacity));
+}
+
+.alert-rule {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.json-panel {
+  max-height: 420px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(10, 13, 16, 0.9);
+  font-size: 0.82rem;
+}
+
+@media (max-width: 760px) {
+  .friends-columns,
+  .messages-layout {
+    grid-template-columns: 1fr;
+  }
+}

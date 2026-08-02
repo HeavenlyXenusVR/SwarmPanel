@@ -256,7 +256,7 @@ function M.register(cfg)
           document.getElementById("intel-metrics").innerHTML =
             '<pre class="json-panel">' + JSON.stringify({ metrics, stability }, null, 2).replace(/</g, "&lt;") + "</pre>";
           const rows = (events.events || []).map((e) =>
-            `<tr><td>${e.created_at||""}</td><td>${(e.event_type||"").replace(/</g,"&lt;")}</td><td>${(e.severity||"").replace(/</g,"&lt;")}</td></tr>`).join("");
+            `<tr><td>${e.timestamp||""}</td><td>${(e.title||e.type||"").replace(/</g,"&lt;")}</td><td>${(e.level||"").replace(/</g,"&lt;")}</td></tr>`).join("");
           document.getElementById("intel-events").innerHTML =
             '<table class="data-table"><thead><tr><th>Time</th><th>Type</th><th>Severity</th></tr></thead><tbody>' + (rows || '<tr><td colspan="3">No events.</td></tr>') + "</tbody></table>";
         } catch (err) { swarmToast("Failed to load intel.", "error"); }
