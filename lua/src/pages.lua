@@ -41,19 +41,15 @@ function M.register(cfg)
     if a then return 303, "", { Location = "/" } end
     local next_path = req.query["next"]
     local body = ([[
-      <div class="auth-page">
-        <div class="auth-card">
-          <h1>SwarmPanel</h1>
-          <p class="page-lede">Sign in to reach fleet command.</p>
-          <div id="auth-error" class="notice notice-error" hidden></div>
-          <form id="login-form">
-            <label>Username<input type="text" name="username" autocomplete="username" required></label>
-            <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
-            <input type="hidden" name="next" value="%s">
-            <button type="submit" class="button-link primary">Login</button>
-          </form>
-        </div>
-      </div>
+      <form id="login-form" class="auth-card form-panel">
+        <h1>SwarmPanel</h1>
+        <span class="page-lede">Sign in to reach fleet command.</span>
+        <div id="auth-error" class="notice notice-error" hidden></div>
+        <label class="field"><span>Username</span><input type="text" name="username" autocomplete="username" required></label>
+        <label class="field"><span>Password</span><input type="password" name="password" autocomplete="current-password" required></label>
+        <input type="hidden" name="next" value="%s">
+        <button type="submit" class="primary">Login</button>
+      </form>
       <script>
         document.getElementById("login-form").addEventListener("submit", async (e) => {
           e.preventDefault();
@@ -96,16 +92,15 @@ function M.register(cfg)
     local bot_cards = {}
     local all_sessions = {}
     for _, bot in ipairs(data.bots) do
-      local status_cls = bot.status == "online" and "ok" or (bot.status == "ONLINE" and "ok" or "warn")
+      local status_lower = tostring(bot.status or ""):lower()
+      local status_cls = status_lower == "online" and "live" or (status_lower == "offline" and "off" or "soft")
       bot_cards[#bot_cards + 1] = ([[
         <div class="bot-card">
-          <div class="bot-card-head">
+          <div class="bot-now">
             <strong>%s</strong>
-            <span class="status-pill %s">%s</span>
+            <span class="data-pill data-pill-%s">%s</span>
           </div>
-          <div class="bot-card-body">
-            <span>%d playing</span><span>%d guilds</span><span>%s</span>
-          </div>
+          <p>%d playing &middot; %d guilds &middot; %s</p>
         </div>
       ]]):format(html.esc(bot.display_name), status_cls, html.esc(bot.status or "unknown"),
         bot.active_playing_count or 0, bot.known_guild_count or 0,
@@ -126,8 +121,8 @@ function M.register(cfg)
             <td>%s</td>
             <td>%s</td>
             <td>
-              <div class="seek-bar" data-seek-bar data-bot-key="%s" data-guild-id="%s" data-duration="%d">
-                <div class="seek-bar-fill" data-playback-bar style="width:%d%%"></div>
+              <div class="bot-seek-bar" data-seek-bar data-bot-key="%s" data-guild-id="%s" data-duration="%d">
+                <div class="bot-seek-track"><div class="bot-seek-fill" data-playback-bar style="width:%d%%"></div></div>
               </div>
               <span data-playback-counter data-position="%s" data-observed-at="%s" data-duration="%s" data-playing="%s">
                 <span data-playback-label></span>
@@ -151,9 +146,9 @@ function M.register(cfg)
       lede = "Live status across the swarm.",
       body = ([[
         %s
-        <div class="bot-card-grid" id="bot-cards">%s</div>
+        <div class="bot-grid" id="bot-cards">%s</div>
         %s
-        <div class="table-scroll">
+        <div class="table-wrap">
           <table class="data-table" id="sessions-table">
             <thead><tr><th>Bot</th><th>Track</th><th>State</th><th>Position</th><th>Queue</th></tr></thead>
             <tbody>%s</tbody>

@@ -53,7 +53,7 @@ function M.register(cfg)
       async function loadAccounts(q) {
         try {
           const res = await swarmFetch("/api/swarm-accounts/admin?query=" + encodeURIComponent(q || "") + "&limit=100");
-          const rows = (res.accounts || []).map((acc) => `
+          const rows = ((res.data && res.data.users) || []).map((acc) => `
             <tr>
               <td><input type="checkbox" data-select-row value="${acc.id}"></td>
               <td>${(acc.username||"").replace(/</g,"&lt;")}</td>
@@ -111,9 +111,9 @@ function M.register(cfg)
     local body = html.page({
       title = "Databases", eyebrow = "Admin", lede = "Browse raw schema tables.",
       body = [[
-        <div class="control-form">
-          <label>Schema<select id="db-schema"></select></label>
-          <label>Table<select id="db-table"></select></label>
+        <div class="panel form-panel">
+          <label class="field">Schema<select id="db-schema"></select></label>
+          <label class="field">Table<select id="db-table"></select></label>
           <a id="db-csv" class="button-link" target="_blank">Export CSV</a>
         </div>
         <div id="db-data"></div>
@@ -124,16 +124,16 @@ function M.register(cfg)
         try {
           const res = await swarmFetch("/api/databases?include_tables=true");
           const sel = document.getElementById("db-schema");
-          sel.innerHTML = (res.databases || []).map((d) => `<option value="${d.schema}">${d.schema}</option>`).join("");
+          sel.innerHTML = (res.schemas || []).map((d) => `<option value="${d.schema}">${d.schema}</option>`).join("");
           window.SWARM_DB_TABLES = {};
-          (res.databases || []).forEach((d) => { window.SWARM_DB_TABLES[d.schema] = d.tables || []; });
+          (res.schemas || []).forEach((d) => { window.SWARM_DB_TABLES[d.schema] = d.tables || []; });
           onSchemaChange();
         } catch (err) { swarmToast("Failed to load databases.", "error"); }
       }
       function onSchemaChange() {
         const schema = document.getElementById("db-schema").value;
         const tableSel = document.getElementById("db-table");
-        tableSel.innerHTML = (window.SWARM_DB_TABLES[schema] || []).map((t) => `<option value="${t}">${t}</option>`).join("");
+        tableSel.innerHTML = (window.SWARM_DB_TABLES[schema] || []).map((t) => `<option value="${t.table_name}">${t.table_name} (${t.estimated_rows})</option>`).join("");
         loadTableData();
       }
       async function loadTableData() {
@@ -169,8 +169,8 @@ function M.register(cfg)
       title = "Gallery Admin", eyebrow = "Image Gallery", lede = "Users, media, comments, and reports.",
       body = [[
         <div id="gallery-summary"></div>
-        <div class="control-form">
-          <label>Table<select id="gallery-table"></select></label>
+        <div class="panel form-panel">
+          <label class="field">Table<select id="gallery-table"></select></label>
           <a id="gallery-csv-media" class="button-link" href="/api/image-gallery/admin/media/export.csv" target="_blank">Export Media CSV</a>
           <a id="gallery-csv-users" class="button-link" href="/api/image-gallery/admin/users/export.csv" target="_blank">Export Users CSV</a>
         </div>
@@ -186,7 +186,7 @@ function M.register(cfg)
         try {
           const tables = await swarmFetch("/api/image-gallery/tables");
           const sel = document.getElementById("gallery-table");
-          sel.innerHTML = (tables.tables || []).map((t) => `<option value="${t}">${t}</option>`).join("");
+          sel.innerHTML = (tables.tables || []).map((t) => `<option value="${t.table_name}">${t.table_name} (${t.estimated_rows})</option>`).join("");
           loadGalleryTable();
         } catch { /* ignore */ }
       }
@@ -282,7 +282,7 @@ function M.register(cfg)
       async function loadAudit() {
         try {
           const res = await swarmFetch("/api/audit-log?limit=200");
-          document.getElementById("audit-rows").innerHTML = (res.entries || []).map((e) => {
+          document.getElementById("audit-rows").innerHTML = ((res.data && res.data.entries) || []).map((e) => {
             let diff = "";
             try {
               const d = JSON.parse(e.details || "{}");

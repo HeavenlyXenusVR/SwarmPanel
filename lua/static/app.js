@@ -2,6 +2,14 @@
 // behavior (hooks/useDashboardStream.js, useLiveRefresh.js, Shell.jsx's
 // mobile nav + notifications bell, and various per-page widgets). No
 // framework, no build step: this file is served as-is by static.lua.
+//
+// Loaded from <head> (see html.lua's layout()) so every function/global
+// defined below exists before any page-specific inline <script> later in
+// the body runs. That means everything in this top section must be safe to
+// define before the DOM exists -- no top-level querySelector calls here.
+// Anything that actually touches the DOM at *definition* time (not just
+// when later called) is pushed down into the DOMContentLoaded block at the
+// bottom instead.
 "use strict";
 
 // ---------------------------------------------------------------------------
@@ -17,49 +25,6 @@ function swarmToast(message, kind) {
   toastTimer = setTimeout(() => { el.className = "toast"; }, 3600);
 }
 window.swarmToast = swarmToast;
-
-// ---------------------------------------------------------------------------
-// Mobile nav sheet (mirrors Shell.jsx's mobileNavOpen state)
-// ---------------------------------------------------------------------------
-(function initMobileNav() {
-  const toggle = document.querySelector("[data-mobile-nav-toggle]");
-  const sheet = document.querySelector("[data-mobile-nav-sheet]");
-  const backdrop = document.querySelector("[data-mobile-nav-backdrop]");
-  const closeBtn = document.querySelector("[data-mobile-nav-close]");
-  if (!toggle || !sheet || !backdrop) return;
-  function setOpen(open) {
-    sheet.classList.toggle("open", open);
-    backdrop.classList.toggle("open", open);
-    toggle.classList.toggle("active", open);
-    document.body.style.overflow = open ? "hidden" : "";
-  }
-  toggle.addEventListener("click", (e) => { e.preventDefault(); setOpen(!sheet.classList.contains("open")); });
-  backdrop.addEventListener("click", () => setOpen(false));
-  if (closeBtn) closeBtn.addEventListener("click", () => setOpen(false));
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") setOpen(false); });
-})();
-
-// ---------------------------------------------------------------------------
-// Admin-mode toggle (mirrors ctx.switchAdminMode)
-// ---------------------------------------------------------------------------
-(function initAdminToggle() {
-  const btn = document.querySelector("[data-admin-toggle]");
-  if (!btn) return;
-  btn.addEventListener("click", async () => {
-    const enabled = btn.getAttribute("data-admin-toggle") === "1";
-    try {
-      const res = await fetch("/api/session/admin-mode", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + window.SWARM_TOKEN },
-        body: JSON.stringify({ enabled }),
-      });
-      if (!res.ok) throw new Error("request failed");
-      window.location.reload();
-    } catch {
-      swarmToast("Could not switch admin mode.", "error");
-    }
-  });
-})();
 
 // ---------------------------------------------------------------------------
 // Generic authenticated fetch helper for page-specific inline scripts.
@@ -186,16 +151,65 @@ function tickPlaybackCounters() {
   });
 }
 setInterval(tickPlaybackCounters, 1000);
-document.addEventListener("DOMContentLoaded", tickPlaybackCounters);
+
+window.swarmSelectedIds = function (table) {
+  return Array.from(table.querySelectorAll("[data-select-row]:checked")).map((b) => b.value);
+};
 
 // ---------------------------------------------------------------------------
-// Drag-to-seek bar (mirrors swarm.jsx's BotSeekBar). Element contract:
-// <div data-seek-bar data-bot-key="..." data-guild-id="..." data-duration="240">
-//   <div data-playback-bar></div>
-// </div>
-// Posts SEEK via /api/bots/control on release.
+// Everything below touches the DOM at init time, so it has to wait for the
+// document to actually be parsed -- unlike the pure function/global
+// definitions above, none of this is safe to run from <head>.
 // ---------------------------------------------------------------------------
-(function initSeekBars() {
+document.addEventListener("DOMContentLoaded", () => {
+  tickPlaybackCounters();
+
+  // Mobile nav sheet (mirrors Shell.jsx's mobileNavOpen state)
+  (function initMobileNav() {
+    const toggle = document.querySelector("[data-mobile-nav-toggle]");
+    const sheet = document.querySelector("[data-mobile-nav-sheet]");
+    const backdrop = document.querySelector("[data-mobile-nav-backdrop]");
+    const closeBtn = document.querySelector("[data-mobile-nav-close]");
+    if (!toggle || !sheet || !backdrop) return;
+    function setOpen(open) {
+      sheet.classList.toggle("open", open);
+      backdrop.classList.toggle("open", open);
+      toggle.classList.toggle("active", open);
+      document.body.style.overflow = open ? "hidden" : "";
+    }
+    toggle.addEventListener("click", (e) => { e.preventDefault(); setOpen(!sheet.classList.contains("open")); });
+    backdrop.addEventListener("click", () => setOpen(false));
+    if (closeBtn) closeBtn.addEventListener("click", () => setOpen(false));
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") setOpen(false); });
+  })();
+
+  // Admin-mode toggle (mirrors ctx.switchAdminMode)
+  (function initAdminToggle() {
+    const btn = document.querySelector("[data-admin-toggle]");
+    if (!btn) return;
+    btn.addEventListener("click", async () => {
+      const enabled = btn.getAttribute("data-admin-toggle") === "1";
+      try {
+        const res = await fetch("/api/session/admin-mode", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + window.SWARM_TOKEN },
+          body: JSON.stringify({ enabled }),
+        });
+        if (!res.ok) throw new Error("request failed");
+        window.location.reload();
+      } catch {
+        swarmToast("Could not switch admin mode.", "error");
+      }
+    });
+  })();
+
+  // Drag-to-seek bar (mirrors swarm.jsx's BotSeekBar). Element contract:
+  // <div data-seek-bar data-bot-key="..." data-guild-id="..." data-duration="240">
+  //   <div data-playback-bar></div>
+  // </div>
+  // Posts SEEK via /api/bots/control on release. Uses event delegation
+  // (document-level mousedown) so it also works for seek bars added to the
+  // page later via innerHTML, not just ones present at DOMContentLoaded.
   document.addEventListener("mousedown", (e) => {
     const bar = e.target.closest("[data-seek-bar]");
     if (!bar) return;
@@ -230,57 +244,37 @@ document.addEventListener("DOMContentLoaded", tickPlaybackCounters);
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
   });
-})();
 
-// ---------------------------------------------------------------------------
-// Debounced search input helper. Element contract:
-// <input data-debounced-search data-search-target="#results">, dispatches a
-// "swarm:search" CustomEvent with {detail:{query}} on the input after 220ms.
-// ---------------------------------------------------------------------------
-(function initDebouncedSearch() {
-  document.querySelectorAll("[data-debounced-search]").forEach((input) => {
-    let timer = null;
-    input.addEventListener("input", () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        input.dispatchEvent(new CustomEvent("swarm:search", { detail: { query: input.value }, bubbles: true }));
-      }, 220);
-    });
+  // Debounced search input helper. Element contract:
+  // <input data-debounced-search>, dispatches a "swarm:search" CustomEvent
+  // with {detail:{query}} on the input after 220ms. Delegated so inputs
+  // added dynamically after DOMContentLoaded still work.
+  document.addEventListener("input", (e) => {
+    if (!e.target.matches("[data-debounced-search]")) return;
+    const input = e.target;
+    clearTimeout(input._swarmSearchTimer);
+    input._swarmSearchTimer = setTimeout(() => {
+      input.dispatchEvent(new CustomEvent("swarm:search", { detail: { query: input.value }, bubbles: true }));
+    }, 220);
   });
-})();
 
-// ---------------------------------------------------------------------------
-// Bulk-select table helper (mirrors DataTable's selection support). Element
-// contract: a table with [data-select-all] checkbox in <thead>, and
-// [data-select-row] checkboxes in <tbody>; toggles a
-// [data-bulk-actions][hidden] bar and exposes window.swarmSelectedIds(table).
-// ---------------------------------------------------------------------------
-(function initBulkSelect() {
-  document.querySelectorAll("[data-select-all]").forEach((selectAll) => {
-    const table = selectAll.closest("table");
+  // Bulk-select table helper (mirrors DataTable's selection support).
+  // Delegated (change events bubble) so it works for tables rendered
+  // dynamically via innerHTML after a swarmFetch, not just ones present at
+  // DOMContentLoaded -- most of the admin tables that use this are exactly
+  // that case.
+  document.addEventListener("change", (e) => {
+    const table = e.target.closest("table");
     if (!table) return;
-    const rowBoxes = () => table.querySelectorAll("[data-select-row]");
-    const bar = document.querySelector(selectAll.getAttribute("data-bulk-actions-target") || "[data-bulk-actions]");
-    function refreshBar() {
-      const anyChecked = Array.from(rowBoxes()).some((b) => b.checked);
-      if (bar) bar.hidden = !anyChecked;
+    if (e.target.matches("[data-select-all]")) {
+      table.querySelectorAll("[data-select-row]").forEach((b) => { b.checked = e.target.checked; });
     }
-    selectAll.addEventListener("change", () => {
-      rowBoxes().forEach((b) => { b.checked = selectAll.checked; });
-      refreshBar();
-    });
-    table.addEventListener("change", (e) => {
-      if (e.target.matches("[data-select-row]")) refreshBar();
-    });
+    if (e.target.matches("[data-select-all], [data-select-row]")) {
+      const bar = document.querySelector("[data-bulk-actions]");
+      if (bar) {
+        const anyChecked = Array.from(table.querySelectorAll("[data-select-row]")).some((b) => b.checked);
+        bar.hidden = !anyChecked;
+      }
+    }
   });
-})();
-window.swarmSelectedIds = function (table) {
-  return Array.from(table.querySelectorAll("[data-select-row]:checked")).map((b) => b.value);
-};
-
-// ---------------------------------------------------------------------------
-// Remote-origin/tunnel discovery is intentionally NOT ported: the Lua-
-// rendered UI is always served same-origin by the backend itself (no
-// separate static hosting), so there is no tunnel-origin indirection to
-// resolve.
-// ---------------------------------------------------------------------------
+});

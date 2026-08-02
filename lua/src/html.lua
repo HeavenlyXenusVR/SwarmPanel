@@ -234,6 +234,8 @@ function M.layout(opts)
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>%s // SwarmPanel</title>
 <link rel="stylesheet" href="/static/app.css">
+<script>window.SWARM_TOKEN = %s; window.SWARM_SESSION = %s;</script>
+<script src="/static/app.js"></script>
 %s
 </head>
 <body>
@@ -251,15 +253,14 @@ function M.layout(opts)
 </footer>
 </div>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
-<script>window.SWARM_TOKEN = %s; window.SWARM_SESSION = %s;</script>
-<script src="/static/app.js"></script>
 </body>
 </html>]]):format(
-    M.esc(opts.title or "SwarmPanel"), opts.head_extra or "",
-    M.esc(M.panel_class(prefs)), M.esc(M.panel_style(prefs)),
-    nav_desktop, session_bar, mobile_nav, opts.body or "",
+    M.esc(opts.title or "SwarmPanel"),
     opts.token and ('"' .. M.esc(opts.token):gsub('"', '\\"') .. '"') or "null",
-    (authed and "true" or "false"))
+    (authed and "true" or "false"),
+    opts.head_extra or "",
+    M.esc(M.panel_class(prefs)), M.esc(M.panel_style(prefs)),
+    nav_desktop, session_bar, mobile_nav, opts.body or "")
 end
 
 -- ---------------------------------------------------------------------------
@@ -281,9 +282,9 @@ function M.page(opts)
       %s
     </div>
   ]]):format(
-    opts.eyebrow and ('<p class="page-eyebrow">' .. M.esc(opts.eyebrow) .. "</p>") or "",
+    opts.eyebrow and ("<p>" .. M.esc(opts.eyebrow) .. "</p>") or "",
     M.esc(opts.title or ""),
-    opts.lede and ('<p class="page-lede">' .. M.esc(opts.lede) .. "</p>") or "",
+    opts.lede and ('<span class="page-lede">' .. M.esc(opts.lede) .. "</span>") or "",
     opts.actions or "",
     opts.body or "")
 end
@@ -341,7 +342,7 @@ function M.data_table(rows, columns, opts)
     end
     tbody[#tbody + 1] = "<tr>" .. table.concat(cells, "") .. "</tr>"
   end
-  return ('<div class="table-scroll"><table class="data-table"><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>'):format(
+  return ('<div class="table-wrap"><table class="data-table"><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>'):format(
     table.concat(thead, ""), table.concat(tbody, ""))
 end
 

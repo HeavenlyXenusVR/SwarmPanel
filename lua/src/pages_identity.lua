@@ -148,20 +148,20 @@ function M.register(cfg)
       body = html.page({
         title = "Profile", eyebrow = "Account", lede = "Edit how you appear across the panel.",
         body = [[
-          <form id="profile-form" class="control-form">
-            <label>Display name<input name="display_name"></label>
-            <label>Bio<textarea name="bio" rows="3"></textarea></label>
-            <label>Accent color<input type="color" name="theme_accent"></label>
+          <form id="profile-form" class="panel form-panel">
+            <label class="field">Display name<input name="display_name"></label>
+            <label class="field">Bio<textarea name="bio" rows="3"></textarea></label>
+            <label class="field">Accent color<input type="color" name="theme_accent"></label>
             <button type="submit" class="button-link primary">Save</button>
           </form>
           <div id="profile-msg"></div>
           <h3>Account</h3>
-          <form id="account-form" class="control-form">
-            <label>Email<input type="email" name="email"></label>
+          <form id="account-form" class="panel form-panel">
+            <label class="field">Email<input type="email" name="email"></label>
             <button type="submit">Update email</button>
           </form>
-          <form id="password-form" class="control-form">
-            <label>New password<input type="password" name="password" minlength="8"></label>
+          <form id="password-form" class="panel form-panel">
+            <label class="field">New password<input type="password" name="password" minlength="8"></label>
             <button type="submit">Change password</button>
           </form>
         ]],
@@ -218,14 +218,14 @@ function M.register(cfg)
     local function select_field(name, label, options)
       local opts = {}
       for _, o in ipairs(options) do opts[#opts + 1] = ("<option value=\"%s\">%s</option>"):format(o, o) end
-      return ('<label>%s<select name="%s">%s</select></label>'):format(html.esc(label), name, html.join(opts))
+      return ('<label class="field">%s<select name="%s">%s</select></label>'):format(html.esc(label), name, html.join(opts))
     end
     local body = html.page({
       title = "Appearance", eyebrow = "Look", lede = "Customize theme, layout, and motion.",
       body = ([[
-        <form id="appearance-form" class="control-form">
+        <form id="appearance-form" class="panel form-panel">
           %s%s%s%s%s%s%s%s
-          <label>Accent color<input type="color" name="accent_color"></label>
+          <label class="field">Accent color<input type="color" name="accent_color"></label>
           <button type="submit" class="button-link primary">Save</button>
         </form>
         <div id="appearance-msg"></div>
@@ -304,8 +304,9 @@ function M.register(cfg)
       async function loadExports() {
         try {
           const res = await swarmFetch("/api/exports");
-          document.getElementById("diag-exports").innerHTML = (res.exports || []).map((ex) =>
-            `<div><a href="/api/exports/${ex.date}/${ex.filename}">${ex.filename}</a></div>`).join("") || "<p>No exports.</p>";
+          const rows = (res.snapshots || []).flatMap((snap) => (snap.files || []).map((f) =>
+            `<div><a href="/api/exports/${snap.date}/${f.name}">${snap.date}/${f.name}</a> (${f.size_bytes}b)</div>`));
+          document.getElementById("diag-exports").innerHTML = rows.join("") || "<p>No exports.</p>";
         } catch { /* ignore */ }
       }
       document.getElementById("diag-alerts").addEventListener("click", async (e) => {

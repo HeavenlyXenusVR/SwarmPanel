@@ -54,20 +54,20 @@ function M.register(cfg)
     local body = html.page({
       title = "Controls", eyebrow = "Direct Control", lede = "Send a direct order to any bot in any guild.",
       body = ([[
-        <form id="control-form" class="control-form">
-          <label>Bot<select name="bot_key" required>%s</select></label>
-          <label>Guild ID<input type="text" name="guild_id" required placeholder="1247394560007471134"></label>
-          <label>Action<select name="action">%s</select></label>
-          <label>Source URL / search (PLAY only)<input type="text" name="source_url" placeholder="https://... or search terms"></label>
-          <label>Voice channel ID<input type="text" name="voice_channel_id"></label>
-          <label>Text channel ID<input type="text" name="text_channel_id"></label>
-          <label>Loop mode (LOOP only)<select name="loop_mode"><option value="off">off</option><option value="song">song</option><option value="queue">queue</option></select></label>
-          <label>Filter mode (FILTER only)<select name="filter_mode"><option value="none">none</option><option value="bassboost">bassboost</option><option value="nightcore">nightcore</option><option value="vaporwave">vaporwave</option><option value="8d">8d</option></select></label>
+        <form id="control-form" class="panel form-panel">
+          <label class="field">Bot<select name="bot_key" required>%s</select></label>
+          <label class="field">Guild ID<input type="text" name="guild_id" required placeholder="1247394560007471134"></label>
+          <label class="field">Action<select name="action">%s</select></label>
+          <label class="field">Source URL / search (PLAY only)<input type="text" name="source_url" placeholder="https://... or search terms"></label>
+          <label class="field">Voice channel ID<input type="text" name="voice_channel_id"></label>
+          <label class="field">Text channel ID<input type="text" name="text_channel_id"></label>
+          <label class="field">Loop mode (LOOP only)<select name="loop_mode"><option value="off">off</option><option value="song">song</option><option value="queue">queue</option></select></label>
+          <label class="field">Filter mode (FILTER only)<select name="filter_mode"><option value="none">none</option><option value="bassboost">bassboost</option><option value="nightcore">nightcore</option><option value="vaporwave">vaporwave</option><option value="8d">8d</option></select></label>
           <button type="submit" class="button-link primary">Send</button>
         </form>
         <div id="control-result"></div>
         %s
-        <div id="control-state"></div>
+        <div id="control-state" class="control-state"></div>
         %s
         <div id="saved-queues"></div>
       ]]):format(html.join(bot_options), html.join(action_options),
@@ -149,18 +149,18 @@ function M.register(cfg)
     if not a then return status, "", headers end
     local body = html.page({
       title = "Invites", eyebrow = "Fleet", lede = "Invite links for every bot in the swarm.",
-      body = '<div id="invite-cards" class="bot-card-grid">' .. html.empty_state("Loading...") .. "</div>",
+      body = '<div id="invite-cards" class="invite-grid">' .. html.empty_state("Loading...") .. "</div>",
     })
     local script = [[
       async function loadInvites() {
         try {
           const res = await swarmFetch("/api/bots");
-          const cards = (res.bots || []).map((b) => `
-            <div class="bot-card">
-              <div class="bot-card-head"><strong>${b.name || b.display_name}</strong></div>
-              <div class="bot-card-body">
+          const cards = (res.invite_bots || res.bots || []).map((b) => `
+            <div class="invite-card">
+              <div class="bot-now"><strong>${b.name || b.display_name}</strong></div>
+              <p>
                 ${b.invite_url ? `<a class="button-link primary" href="${b.invite_url}" target="_blank" rel="noreferrer">Invite</a>` : "<span>No invite available</span>"}
-              </div>
+              </p>
             </div>`).join("");
           document.getElementById("invite-cards").innerHTML = cards || "<p>No bots found.</p>";
         } catch (err) { swarmToast("Failed to load bots.", "error"); }
@@ -184,9 +184,9 @@ function M.register(cfg)
     local body = html.page({
       title = "Leaderboard", eyebrow = "Music Intelligence", lede = "Top tracks and listeners.",
       body = ([[
-        <form id="lb-form" class="control-form">
-          <label>Bot<select name="bot_key">%s</select></label>
-          <label>Guild ID<input type="text" name="guild_id" required></label>
+        <form id="lb-form" class="panel form-panel">
+          <label class="field">Bot<select name="bot_key">%s</select></label>
+          <label class="field">Guild ID<input type="text" name="guild_id" required></label>
           <button type="submit" class="button-link primary">Load</button>
         </form>
         %s
@@ -233,20 +233,20 @@ function M.register(cfg)
     local body = html.page({
       title = "Users", eyebrow = "Directory", lede = "Find other operators in the swarm.",
       body = '<input type="search" placeholder="Search users..." data-debounced-search id="user-search">'
-        .. '<div id="user-results" class="bot-card-grid">' .. html.empty_state("Start typing to search.") .. "</div>",
+        .. '<div id="user-results" class="user-grid">' .. html.empty_state("Start typing to search.") .. "</div>",
     })
     local script = [[
       async function renderUsers(q) {
         try {
           const res = await swarmFetch("/api/users/directory?q=" + encodeURIComponent(q || ""));
           const cards = (res.users || []).map((u) => `
-            <div class="bot-card">
-              <div class="bot-card-head"><strong>${(u.display_name || u.username).replace(/</g,"&lt;")}</strong></div>
-              <div class="bot-card-body">
+            <div class="user-card">
+              <div class="bot-now"><strong>${(u.display_name || u.username).replace(/</g,"&lt;")}</strong></div>
+              <p>
                 <a href="/users/${u.id}">View profile</a>
                 <button type="button" data-follow="${u.id}">Follow</button>
                 <button type="button" data-friend="${u.id}">Add friend</button>
-              </div>
+              </p>
             </div>`).join("");
           document.getElementById("user-results").innerHTML = cards || "<p>No users found.</p>";
         } catch (err) { swarmToast("Search failed.", "error"); }
