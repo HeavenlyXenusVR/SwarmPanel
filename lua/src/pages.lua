@@ -7,6 +7,7 @@ local html = require("html")
 local auth = require("auth")
 local dashboard = require("dashboard")
 local ratelimit = require("ratelimit")
+local config = require("config")
 
 local M = {}
 
@@ -89,22 +90,96 @@ function M.register(cfg)
 
     local data = dashboard.get_dashboard_data(music_bots)
 
+    -- Mirrors swarm.jsx's bestSession()/playbackBadge(): the featured
+    -- session for a card is whichever guild is actually playing, falling
+    -- back to the first known session, then the badge reflects that
+    -- session's state (or the bot's own heartbeat health when nothing is
+    -- playing at all).
+    local function best_session(bot)
+      for _, s in ipairs(bot.sessions or {}) do
+        if s.is_playing then return s end
+      end
+      return bot.sessions and bot.sessions[1] or nil
+    end
+    local function playback_badge(session, bot)
+      if session and session.is_playing then return "live", "Live" end
+      if session and session.is_paused then return "soft", "Paused" end
+      local status_lower = tostring(bot.heartbeat_status or bot.status or ""):lower()
+      if status_lower:find("stale") or tostring(bot.status or ""):lower() == "offline" then
+        return "danger", "Stale"
+      end
+      return "off", "Idle"
+    end
+
     local bot_cards = {}
     local all_sessions = {}
     for _, bot in ipairs(data.bots) do
-      local status_lower = tostring(bot.status or ""):lower()
-      local status_cls = status_lower == "online" and "live" or (status_lower == "offline" and "off" or "soft")
+      local session = best_session(bot)
+      local tone, label = playback_badge(session, bot)
+      local accent = config.bot_accents[bot.key] or "#89b4fa"
+
+      local thumb
+      if session and session.thumbnail and session.thumbnail ~= "" then
+        thumb = ('<img class="bot-thumb" src="%s" alt="" loading="lazy">'):format(html.esc(session.thumbnail))
+      else
+        thumb = '<div class="bot-thumb bot-thumb-empty">&#9835;</div>'
+      end
+
+      local now_title = (session and session.title and session.title ~= "") and session.title
+        or bot.error or bot.schema or "Waiting for live playback."
+      local now_sub = (session and (session.media_source_label or session.session_state_label))
+        or "Live state will fill in automatically."
+
+      local playback_block = ""
+      if session then
+        local duration = math.floor(session.duration_seconds or 0)
+        local pct = (duration > 0) and math.floor(100 * (session.position_seconds or 0) / duration) or 0
+        playback_block = ([[
+          <div class="bot-seek-bar" data-seek-bar data-bot-key="%s" data-guild-id="%s" data-duration="%d">
+            <div class="bot-seek-track"><div class="bot-seek-fill" data-playback-bar style="width:%d%%"></div></div>
+          </div>
+          <span data-playback-counter data-position="%s" data-observed-at="%s" data-duration="%s" data-playing="%s">
+            <span data-playback-label></span>
+          </span>
+        ]]):format(html.esc(bot.key), html.esc(session.guild_id), duration, pct,
+          tostring(session.position_seconds or 0), tostring(session.position_observed_at or 0),
+          tostring(session.duration_seconds or 0), tostring(session.is_playing == true))
+      end
+
       bot_cards[#bot_cards + 1] = ([[
-        <div class="bot-card">
-          <div class="bot-now">
-            <strong>%s</strong>
+        <article class="bot-card" style="--card-accent: %s">
+          <div class="bot-head">
+            <span class="bot-dot"></span>
+            <div class="bot-head-copy">
+              <h3>%s</h3>
+              <small>%s</small>
+            </div>
             <span class="data-pill data-pill-%s">%s</span>
           </div>
-          <p>%d playing &middot; %d guilds &middot; %s</p>
-        </div>
-      ]]):format(html.esc(bot.display_name), status_cls, html.esc(bot.status or "unknown"),
+          <div class="bot-now">
+            %s
+            <div class="bot-now-copy">
+              <strong>%s</strong>
+              <small>%s</small>
+            </div>
+          </div>
+          %s
+          <div class="chip-row">
+            <span>%d live</span>
+            <span>%d guilds</span>
+            <span>%d queued</span>
+            <span>%d backup</span>
+          </div>
+        </article>
+      ]]):format(html.esc(accent),
+        html.esc(bot.display_name), html.esc(bot.heartbeat_status or bot.status or "telemetry ready"),
+        tone, label,
+        thumb,
+        html.esc(now_title), html.esc(now_sub),
+        playback_block,
         bot.active_playing_count or 0, bot.known_guild_count or 0,
-        bot.heartbeat_age_seconds and ("hb " .. bot.heartbeat_age_seconds .. "s ago") or "no heartbeat")
+        bot.queue_depth or 0, bot.backup_queue_depth or 0)
+
       for _, s in ipairs(bot.sessions or {}) do
         s.bot_key = bot.key
         s.bot_display = bot.display_name
