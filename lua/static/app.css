@@ -4380,3 +4380,15 @@ tbody tr.is-selected td {
     grid-template-columns: 1fr;
   }
 }
+
+/* The React app only ever mounted the toast <div> when a message was
+   active; this server-rendered version always has #toast in the DOM (see
+   html.lua's layout()), so unlike the original, .toast alone as a fixed
+   bottom-right box would sit there permanently -- invisible but still
+   catching clicks/taps (confirmed live: it blocked the mobile "More" nav
+   button, which sits in the same corner). Hide it for real, not just
+   visually, until app.js adds .show. */
+.toast:not(.show) {
+  display: none;
+  pointer-events: none;
+}

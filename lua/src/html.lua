@@ -98,12 +98,26 @@ local function is_active(pathname, to)
   return pathname == to or pathname:sub(1, #to + 1) == to .. "/"
 end
 
-local function render_nav(session, pathname, variant)
+-- Mirrors Shell.jsx's mobilePrimaryItems/mobileSecondaryItems split: the
+-- mobile bottom bar only has room for ~5 icons + a "More" launcher, not
+-- all 9-16 nav items -- rendering the full list there (as this used to)
+-- breaks the CSS's fixed 6-column bottom-bar layout into a multi-row block
+-- that eats half the viewport.
+local MOBILE_PRIMARY_PATHS = { ["/"] = true, ["/controls"] = true, ["/users"] = true, ["/messages"] = true, ["/profile"] = true }
+
+-- filter: nil = all items (desktop nav), "primary" = the 5 mobile-primary
+-- items, "secondary" = everything else (the mobile "More" sheet).
+local function render_nav(session, pathname, variant, filter)
   local out = {}
   for _, item in ipairs(nav_items_for(session)) do
-    out[#out + 1] = ('<a class="%s" href="%s"><span class="nav-glyph">%s</span><span>%s</span></a>'):format(
-      M.cls({ "nav-item", variant, is_active(pathname, item.to) and "active" or nil }),
-      M.esc(item.to), item.glyph, M.esc(item.label))
+    local include = true
+    if filter == "primary" then include = MOBILE_PRIMARY_PATHS[item.to] == true
+    elseif filter == "secondary" then include = MOBILE_PRIMARY_PATHS[item.to] ~= true end
+    if include then
+      out[#out + 1] = ('<a class="%s" href="%s"><span class="nav-glyph">%s</span><span>%s</span></a>'):format(
+        M.cls({ "nav-item", variant, is_active(pathname, item.to) and "active" or nil }),
+        M.esc(item.to), item.glyph, M.esc(item.label))
+    end
   end
   return table.concat(out, "")
 end
@@ -220,9 +234,9 @@ function M.layout(opts)
         <div class="mobile-session-chip"><span class="mode-pill%s">%s</span><span>%s</span></div>
         <nav class="mobile-nav-list" aria-label="More Navigation">%s</nav>
       </aside>
-    ]]):format(render_nav(session, opts.path, "mobile-primary"),
+    ]]):format(render_nav(session, opts.path, "mobile-primary", "primary"),
       session.admin_mode and " admin" or "", session.admin_mode and "Admin" or "User", M.esc(username),
-      render_nav(session, opts.path, ""))
+      render_nav(session, opts.path, "", "secondary"))
   end
 
   local prefs = opts.preferences or M.DEFAULT_PREFERENCES
