@@ -5,6 +5,11 @@ local config = require("config")
 local db = require("db")
 local httpd = require("httpd")
 local routes = require("routes")
+local pages = require("pages")
+local pages_ops = require("pages_ops")
+local pages_identity = require("pages_identity")
+local pages_admin = require("pages_admin")
+local static = require("static")
 
 local settings = config.load()
 db.init(settings)
@@ -45,6 +50,20 @@ routes.register({
   bot_tokens = config.bot_tokens,
   bot_accents = config.bot_accents,
 })
+local pages_cfg = {
+  settings = settings,
+  music_bots = config.music_bots,
+  aria_bot = config.aria_bot,
+  get_auth = routes.get_auth,
+  require_auth_page = routes.require_auth_page,
+  session_cookie_header = routes.session_cookie_header,
+  clear_session_cookie_header = routes.clear_session_cookie_header,
+}
+pages.register(pages_cfg)
+pages_ops.register(pages_cfg)
+pages_identity.register(pages_cfg)
+pages_admin.register(pages_cfg)
+static.register()
 
 httpd.listen("0.0.0.0", settings.port)
 httpd.run()

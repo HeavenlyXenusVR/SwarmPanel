@@ -97,12 +97,31 @@ local function url_decode(s)
   return s
 end
 
+function M.url_encode(s)
+  return (tostring(s or ""):gsub("[^%w%-%._~]", function(c)
+    return string.format("%%%02X", c:byte())
+  end))
+end
+
 local function parse_query(qs)
   local out = {}
   if not qs then return out end
   for pair in qs:gmatch("[^&]+") do
     local k, v = pair:match("^([^=]+)=?(.*)$")
     if k then out[url_decode(k)] = url_decode(v or "") end
+  end
+  return out
+end
+
+-- "k1=v1; k2=v2" -> {k1="v1", k2="v2"}. Used by the server-rendered page
+-- routes for cookie-based auth (see routes.lua's get_auth) -- the Bearer-
+-- token JSON API path doesn't touch this at all.
+local function parse_cookies(header)
+  local out = {}
+  if not header then return out end
+  for pair in header:gmatch("[^;]+") do
+    local k, v = pair:match("^%s*([^=]+)=(.-)%s*$")
+    if k then out[k] = url_decode(v or "") end
   end
   return out
 end
@@ -282,6 +301,7 @@ local function handle_connection(sock)
       query = query,
       params = params or {},
       headers = headers,
+      cookies = parse_cookies(headers["cookie"]),
       raw_body = body,
       client_ip = client_ip,
     }

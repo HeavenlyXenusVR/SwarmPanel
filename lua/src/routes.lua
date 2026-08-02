@@ -55,10 +55,29 @@ function M.register(cfg)
     return status, { detail = detail }
   end
 
+  -- Server-rendered pages (plain <a href> navigation, no fetch()) can't send
+  -- an Authorization header, so they authenticate via the swarm_session
+  -- cookie instead -- same opaque token, just carried a different way. The
+  -- JSON API's Bearer-header path (frontend/src/api.js, and any future
+  -- fetch()-based JS on the rendered pages) is unchanged and checked first.
+  local SESSION_COOKIE = "swarm_session"
   local function get_auth(req)
     local token = auth.extract_bearer_token(req.headers["authorization"])
+    if not token and req.cookies then token = req.cookies[SESSION_COOKIE] end
     if not token then return nil end
     return auth.verify_api_token(settings.session_secret, token)
+  end
+
+  -- Set-Cookie value for a freshly-issued token. HttpOnly (no client JS
+  -- needs to read it -- the page-rendered UI never touches the token
+  -- directly) + SameSite=Lax (survives normal top-level navigation, blocks
+  -- cross-site POST) + Max-Age matching the token's own embedded expiry.
+  local function session_cookie_header(token)
+    return ("%s=%s; Path=/; HttpOnly; SameSite=Lax; Max-Age=%d"):format(
+      SESSION_COOKIE, token, settings.api_token_ttl_seconds or 43200)
+  end
+  local function clear_session_cookie_header()
+    return SESSION_COOKIE .. "=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
   end
 
   local function require_auth(req)
@@ -66,6 +85,25 @@ function M.register(cfg)
     if not a then return nil, json_error(401, "Authentication required") end
     return a
   end
+
+  -- Page-route counterpart to require_auth: a plain <a href> GET can't do
+  -- anything with a 401 JSON body, so unauthenticated page requests get a
+  -- 303 redirect to /login instead (mirrors App.jsx's Protected component
+  -- rendering <Navigate to="/login">).
+  local function require_auth_page(req)
+    local a = get_auth(req)
+    if not a then return nil, 303, { Location = "/login?next=" .. httpd.url_encode(req.path) } end
+    return a
+  end
+
+  -- Exposed so pages.lua (server-rendered HTML routes, registered separately
+  -- from main.lua) can share the exact same auth/cookie logic rather than
+  -- reimplementing it -- both modules authenticate against the one
+  -- SESSION_COOKIE convention defined above.
+  M.get_auth = get_auth
+  M.require_auth_page = require_auth_page
+  M.session_cookie_header = session_cookie_header
+  M.clear_session_cookie_header = clear_session_cookie_header
 
   local function is_site_owner(a) return a and a.site_owner == true end
   local function is_admin_auth(a)
@@ -279,6 +317,10 @@ function M.register(cfg)
     local account_guild_id = resolve_account_guild_id(a)
     local site_owner = is_site_owner(a)
     local admin_mode = is_admin_auth(a)
+    local fresh_token = auth.issue_api_token(settings.session_secret, username, {
+      role = role, guild_id = account_guild_id or a.guild_id, admin_mode = admin_mode,
+      site_owner = site_owner, moderator = a.moderator, ttl_seconds = settings.api_token_ttl_seconds,
+    })
     return 200, {
       authenticated = true,
       mode = "token",
@@ -290,13 +332,10 @@ function M.register(cfg)
       admin_mode = admin_mode,
       moderator = a.moderator == true,
       image_gallery_owner = admin_mode and site_owner,
-      token = auth.issue_api_token(settings.session_secret, username, {
-        role = role, guild_id = account_guild_id or a.guild_id, admin_mode = admin_mode,
-        site_owner = site_owner, moderator = a.moderator, ttl_seconds = settings.api_token_ttl_seconds,
-      }),
+      token = fresh_token,
       pages_public_url = settings.pages_public_url,
       expires_in = settings.api_token_ttl_seconds,
-    }
+    }, { ["Set-Cookie"] = session_cookie_header(fresh_token) }
   end)
 
   -- Port of app/routers/session.py's POST /api/session/admin-mode: lets a
@@ -312,18 +351,19 @@ function M.register(cfg)
     local body = req.json or {}
     local admin_mode = body.enabled == true
     local role = a.role or "account"
+    local fresh_token = auth.issue_api_token(settings.session_secret, username, {
+      role = role, guild_id = linked_guild_id, admin_mode = admin_mode,
+      site_owner = true, moderator = a.moderator, ttl_seconds = settings.api_token_ttl_seconds,
+    })
     return 200, {
       ok = true, username = username, role = role,
       guild_id = linked_guild_id, account_guild_id = linked_guild_id,
       site_owner = true, admin_mode = admin_mode,
       image_gallery_owner = admin_mode and true or false,
-      token = auth.issue_api_token(settings.session_secret, username, {
-        role = role, guild_id = linked_guild_id, admin_mode = admin_mode,
-        site_owner = true, moderator = a.moderator, ttl_seconds = settings.api_token_ttl_seconds,
-      }),
+      token = fresh_token,
       pages_public_url = settings.pages_public_url,
       expires_in = settings.api_token_ttl_seconds,
-    }
+    }, { ["Set-Cookie"] = session_cookie_header(fresh_token) }
   end)
 
   httpd.route("POST", "/api/session/login", function(req)
@@ -372,14 +412,15 @@ function M.register(cfg)
       site_owner = auth_result.site_owner, admin_mode = auth_result.admin_mode, moderator = auth_result.moderator,
       image_gallery_owner = auth_result.admin_mode and auth_result.site_owner,
       pages_public_url = settings.pages_public_url, expires_in = settings.api_token_ttl_seconds,
-    }
+    }, { ["Set-Cookie"] = session_cookie_header(token) }
   end)
 
   httpd.route("POST", "/api/session/logout", function(req)
     -- Stateless bearer tokens: nothing server-side to invalidate (matches
     -- the "not implemented" cookie-session note above; a real revocation
-    -- list is future work if that's ever needed).
-    return 200, { ok = true }
+    -- list is future work if that's ever needed). The cookie itself is
+    -- cleared client-side so a server-rendered page stops being "logged in".
+    return 200, { ok = true }, { ["Set-Cookie"] = clear_session_cookie_header() }
   end)
 
   -- Port of app/routers/session.py's POST /api/session/password: self-service
