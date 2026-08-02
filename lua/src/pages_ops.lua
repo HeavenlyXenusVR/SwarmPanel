@@ -79,8 +79,8 @@ function M.register(cfg)
           %s
           <label class="field">Action<select name="action">%s</select></label>
           <label class="field">Source URL / search (PLAY only)<input type="text" name="source_url" placeholder="https://... or search terms"></label>
-          <label class="field">Voice channel ID<input type="text" name="voice_channel_id"></label>
-          <label class="field">Text channel ID<input type="text" name="text_channel_id"></label>
+          <label class="field">Voice channel<select name="voice_channel_id"><option value="">Choose channel</option></select></label>
+          <label class="field">Text channel<select name="text_channel_id"><option value="">None</option></select></label>
           <label class="field">Loop mode (LOOP only)<select name="loop_mode"><option value="off">off</option><option value="song">song</option><option value="queue">queue</option></select></label>
           <label class="field">Filter mode (FILTER only)<select name="filter_mode">
             <option value="none">None</option>
@@ -157,16 +157,66 @@ function M.register(cfg)
           // loop_mode=queue, but the form never showed that).
           const session = state && state.session;
           if (session) {
-            if (!form.voice_channel_id.value) form.voice_channel_id.value = session.home_channel_id || session.channel_id || "";
-            if (!form.text_channel_id.value) form.text_channel_id.value = session.feedback_channel_id || "";
+            // voice/text channel selects are populated asynchronously by
+            // loadChannels() below (real channel NAMES, not raw IDs -- a
+            // bare numeric snowflake told you nothing about which channel
+            // you were about to target), so the desired id is stashed here
+            // and applied once loadChannels() has real <option>s to match
+            // against, instead of writing straight to .value (which is a
+            // silent no-op on a <select> with no matching <option> yet).
+            if (!form.voice_channel_id.value) {
+              pendingVoiceChannelId = session.home_channel_id || session.channel_id || "";
+              applyPendingChannelValue(form.voice_channel_id, pendingVoiceChannelId);
+            }
+            if (!form.text_channel_id.value) {
+              pendingTextChannelId = session.feedback_channel_id || "";
+              applyPendingChannelValue(form.text_channel_id, pendingTextChannelId);
+            }
             if (session.loop_mode) form.loop_mode.value = session.loop_mode;
             if (session.filter_mode) form.filter_mode.value = session.filter_mode;
           }
         } catch { /* not ready yet */ }
       }
-      form.bot_key.addEventListener("change", refreshControlState);
-      form.guild_id.addEventListener("change", refreshControlState);
+      form.bot_key.addEventListener("change", () => { refreshControlState(); loadChannels(); });
+      form.guild_id.addEventListener("change", () => { refreshControlState(); loadChannels(); });
       swarmLiveRefresh(refreshControlState, 4000);
+
+      let pendingVoiceChannelId = "", pendingTextChannelId = "";
+      let channelsRequestId = 0;
+      const VOICE_TYPES = new Set([2, 13]);
+      const TEXT_TYPES = new Set([0, 5, 10, 11, 12]);
+      function fillChannelSelect(select, channels, keepValue) {
+        const current = keepValue || select.value;
+        select.innerHTML = '<option value="">' + (select.name === "text_channel_id" ? "None" : "Choose channel") + "</option>"
+          + channels.map((c) => `<option value="${c.id}">${(c.name || c.id).replace(/</g, "&lt;")}</option>`).join("");
+        if (current && channels.some((c) => String(c.id) === String(current))) select.value = current;
+      }
+      // refreshControlState() polls independently of loadChannels() -- if a
+      // session's home channel arrives after the select is already
+      // populated, nothing would otherwise re-apply it until the next
+      // loadChannels() call, so try to select it immediately too.
+      function applyPendingChannelValue(select, value) {
+        if (value && [...select.options].some((o) => o.value === String(value))) select.value = value;
+      }
+      async function loadChannels() {
+        const botKey = form.bot_key.value, guildId = form.guild_id.value;
+        if (!botKey || !guildId) return;
+        // bot_key/guild_id changes and the initial call can overlap in
+        // flight; only the response to the MOST RECENT request may write
+        // to the selects, or a slow stale fetch can clobber a faster
+        // newer one and silently leave the wrong guild's channels showing.
+        const requestId = ++channelsRequestId;
+        try {
+          const inv = await swarmFetch(`/api/bots/${botKey}/inventory`);
+          if (requestId !== channelsRequestId) return;
+          const guild = (inv.guilds || []).find((g) => String(g.id) === String(guildId));
+          const channels = (guild && guild.channels) || [];
+          fillChannelSelect(form.voice_channel_id, channels.filter((c) => VOICE_TYPES.has(Number(c.type))), pendingVoiceChannelId);
+          fillChannelSelect(form.text_channel_id, channels.filter((c) => TEXT_TYPES.has(Number(c.type))), pendingTextChannelId);
+          pendingVoiceChannelId = ""; pendingTextChannelId = "";
+        } catch { /* bot token/inventory unavailable -- selects just stay empty */ }
+      }
+      loadChannels();
 
       async function loadQueues() {
         const botKey = form.bot_key.value, guildId = form.guild_id.value;
@@ -232,19 +282,35 @@ function M.register(cfg)
     for _, bot in ipairs(data.bots) do
       bot_options[#bot_options + 1] = ("<option value=\"%s\">%s</option>"):format(html.esc(bot.key), html.esc(bot.display_name))
     end
+
+    -- Same default as Controls: a guild-scoped account's own registered
+    -- guild, read-only; admins get the first live session's guild as a
+    -- convenience default but can still edit it.
+    local own_guild_id = (not a.admin_mode) and a.guild_id or nil
+    local default_guild_id = own_guild_id
+    if not default_guild_id then
+      for _, bot in ipairs(data.bots) do
+        local first = bot.sessions and bot.sessions[1]
+        if first and first.guild_id then default_guild_id = first.guild_id; break end
+      end
+    end
+    local guild_field = own_guild_id
+      and ('<label class="field">Guild ID<input type="text" name="guild_id" value="%s" readonly></label>'):format(html.esc(own_guild_id))
+      or ('<label class="field">Guild ID<input type="text" name="guild_id" required value="%s"></label>'):format(html.esc(default_guild_id or ""))
+
     local body = html.page({
       title = "Leaderboard", eyebrow = "Music Intelligence", lede = "Top tracks and listeners.",
       body = ([[
         <form id="lb-form" class="panel form-panel">
           <label class="field">Bot<select name="bot_key">%s</select></label>
-          <label class="field">Guild ID<input type="text" name="guild_id" required></label>
+          %s
           <button type="submit" class="button-link primary">Load</button>
         </form>
         %s
         <div id="lb-results"></div>
         %s
         <div id="lb-swarm"></div>
-      ]]):format(html.join(bot_options), html.section_head("Guild Leaderboard"),
+      ]]):format(html.join(bot_options), guild_field, html.section_head("Guild Leaderboard"),
         a.admin_mode and html.section_head("Swarm-wide (admin)") or ""),
     })
     local script = ([[

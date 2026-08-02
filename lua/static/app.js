@@ -135,11 +135,28 @@ function formatDuration(totalSeconds) {
 }
 window.swarmFormatDuration = formatDuration;
 
+// The backend hands over position_observed_at as a raw Postgres
+// "YYYY-MM-DD HH:MM:SS[.ffffff]" string (UTC, no offset marker) via the
+// data-observed-at attribute. That format is NOT what it looks like to
+// parseFloat() -- parseFloat("2026-08-02 20:40:05...") reads "2026" and
+// stops at the first "-", so every counter was computing its elapsed time
+// against the literal number 2026 instead of a real timestamp, producing
+// an astronomically large (~56-year) delta that got clamped straight to
+// the track's duration -- every playback counter showed the end of the
+// track regardless of actual position. Convert to ISO-8601 with an
+// explicit "Z" first so Date.parse() treats it as UTC correctly.
+function parseSqlTimestampSeconds(raw) {
+  if (!raw) return 0;
+  const iso = raw.indexOf("T") === -1 ? raw.replace(" ", "T") + "Z" : raw;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms / 1000 : 0;
+}
+
 function tickPlaybackCounters() {
   document.querySelectorAll("[data-playback-counter]").forEach((el) => {
     const playing = el.getAttribute("data-playing") === "true";
     const basePos = parseFloat(el.getAttribute("data-position") || "0");
-    const observedAt = parseFloat(el.getAttribute("data-observed-at") || "0");
+    const observedAt = parseSqlTimestampSeconds(el.getAttribute("data-observed-at"));
     const duration = parseFloat(el.getAttribute("data-duration") || "0");
     let pos = basePos;
     if (playing && observedAt) pos = basePos + (Date.now() / 1000 - observedAt);

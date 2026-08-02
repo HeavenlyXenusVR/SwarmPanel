@@ -145,13 +145,49 @@ function M.register(cfg)
         })();
       ]]
     else
+      -- Full field set mirrors pages/ProfilePage.jsx -- the first pass only
+      -- had display_name/bio/accent, so headline, tags, up to 5 custom
+      -- links, avatar/banner/server-icon URLs, favorite bot, quote, invite
+      -- URL, and all 6 visual-style pickers (banner/card/social/layout/
+      -- header/border) were unreachable even though profiles.lua already
+      -- validated and stored every one of them.
+      local link_fields = {}
+      for i = 1, 5 do
+        link_fields[#link_fields + 1] = ([[
+          <div class="two-col">
+            <label class="field">Link %d label<input data-link-label="%d" maxlength="32"></label>
+            <label class="field">Link %d URL<input data-link-url="%d" placeholder="https://..."></label>
+          </div>
+        ]]):format(i, i - 1, i, i - 1)
+      end
       body = html.page({
         title = "Profile", eyebrow = "Account", lede = "Edit how you appear across the panel.",
-        body = [[
+        body = ([[
           <form id="profile-form" class="panel form-panel">
-            <label class="field">Display name<input name="display_name"></label>
-            <label class="field">Bio<textarea name="bio" rows="3"></textarea></label>
+            <h3>Identity</h3>
+            <label class="field">Display name<input name="display_name" maxlength="80"></label>
+            <label class="field">Headline<input name="profile_headline" maxlength="140"></label>
+            <label class="field">Bio<textarea name="bio" rows="3" maxlength="280"></textarea></label>
+            <label class="field">Signature / quote<input name="profile_quote" maxlength="160" placeholder="A short motto, quote, or vibe descriptor"></label>
+            <label class="field">Tags (comma separated)<input name="profile_tags_text" placeholder="tag1, tag2, tag3"></label>
+            <label class="field">Favorite bot<select name="favorite_bot" id="favorite-bot-select"><option value="">None</option></select></label>
+            <h3>Links</h3>
+            %s
+            <h3>Server</h3>
+            <label class="field">Server name<input name="server_name" maxlength="120"></label>
+            <label class="field">Discord invite<input name="server_invite_url" placeholder="https://discord.gg/..."></label>
+            <label class="field">Server icon URL<input name="server_icon_url" placeholder="https://..."></label>
+            <h3>Appearance</h3>
+            <label class="field">Avatar URL<input name="avatar_url" placeholder="https://..."></label>
+            <label class="field">Banner URL<input name="profile_banner_url" placeholder="https://..."></label>
             <label class="field">Accent color<input type="color" name="theme_accent"></label>
+            <label class="field">Banner style<select name="profile_banner_mode"><option value="gradient">Gradient</option><option value="image">Image</option><option value="signal">Signal</option><option value="quiet">Quiet</option><option value="contrast">Contrast</option></select></label>
+            <label class="field">Card style<select name="profile_card_style"><option value="solid">Solid</option><option value="glass">Glass</option><option value="outline">Outline</option><option value="terminal">Terminal</option></select></label>
+            <label class="field">Social visibility<select name="profile_social_mode"><option value="open">Open</option><option value="friends">Friends</option><option value="quiet">Quiet</option></select></label>
+            <label class="field">Profile layout<select name="profile_layout_mode"><option value="default">Default</option><option value="sidebar">Sidebar</option><option value="stacked">Stacked</option><option value="split">Split</option></select></label>
+            <label class="field">Header style<select name="profile_header_style"><option value="solid">Solid</option><option value="glass">Glass</option><option value="blur">Blur</option><option value="transparent">Transparent</option><option value="gradient">Gradient</option></select></label>
+            <label class="field">Border accent<select name="profile_border_accent"><option value="none">None</option><option value="solid">Solid</option><option value="glow">Glow</option><option value="pulse">Pulse</option><option value="neon">Neon</option></select></label>
+            <label class="field field-inline"><input type="checkbox" name="public_profile"><span>Public profile</span></label>
             <button type="submit" class="button-link primary">Save</button>
           </form>
           <div id="profile-msg"></div>
@@ -164,7 +200,7 @@ function M.register(cfg)
             <label class="field">New password<input type="password" name="password" minlength="8"></label>
             <button type="submit">Change password</button>
           </form>
-        ]],
+        ]]):format(html.join(link_fields)),
       })
       script = [[
         (async () => {
@@ -172,16 +208,46 @@ function M.register(cfg)
             const res = await swarmFetch("/api/users/me");
             const p = res.profile || {};
             const f = document.getElementById("profile-form");
-            f.display_name.value = p.display_name || "";
-            f.bio.value = p.bio || "";
+            const fields = ["display_name", "profile_headline", "bio", "profile_quote", "server_name",
+              "server_invite_url", "server_icon_url", "avatar_url", "profile_banner_url",
+              "profile_banner_mode", "profile_card_style", "profile_social_mode",
+              "profile_layout_mode", "profile_header_style", "profile_border_accent", "favorite_bot"];
+            for (const key of fields) if (f.elements[key]) f.elements[key].value = p[key] || "";
             f.theme_accent.value = p.theme_accent || "#89b4fa";
+            f.public_profile.checked = !!p.public_profile;
+            f.profile_tags_text.value = (p.profile_tags || []).join(", ");
+            const sel = document.getElementById("favorite-bot-select");
+            (res.favorite_bot_options || []).forEach((bot) => {
+              const opt = document.createElement("option");
+              opt.value = bot.key; opt.textContent = bot.display_name;
+              sel.appendChild(opt);
+            });
+            if (p.favorite_bot) sel.value = p.favorite_bot;
+            (p.profile_links || []).forEach((link, i) => {
+              const labelEl = f.querySelector(`[data-link-label="${i}"]`);
+              const urlEl = f.querySelector(`[data-link-url="${i}"]`);
+              if (labelEl) labelEl.value = link.label || "";
+              if (urlEl) urlEl.value = link.url || "";
+            });
           } catch { /* ignore */ }
         })();
         document.getElementById("profile-form").addEventListener("submit", async (e) => {
           e.preventDefault();
-          const fd = new FormData(e.target);
+          const f = e.target;
+          const fd = new FormData(f);
+          const payload = Object.fromEntries(fd);
+          payload.public_profile = f.public_profile.checked;
+          payload.profile_tags = (payload.profile_tags_text || "").split(",").map((t) => t.trim()).filter(Boolean);
+          delete payload.profile_tags_text;
+          const links = [];
+          for (let i = 0; i < 5; i++) {
+            const label = f.querySelector(`[data-link-label="${i}"]`).value.trim();
+            const url = f.querySelector(`[data-link-url="${i}"]`).value.trim();
+            if (label && url) links.push({ label, url });
+          }
+          payload.profile_links = links;
           try {
-            await swarmFetch("/api/users/me", { method: "POST", body: JSON.stringify(Object.fromEntries(fd)) });
+            await swarmFetch("/api/users/me", { method: "POST", body: JSON.stringify(payload) });
             document.getElementById("profile-msg").innerHTML = '<div class="notice notice-success">Saved.</div>';
           } catch (err) { document.getElementById("profile-msg").innerHTML = '<div class="notice notice-error">' + err.message + "</div>"; }
         });
@@ -220,39 +286,115 @@ function M.register(cfg)
       for _, o in ipairs(options) do opts[#opts + 1] = ("<option value=\"%s\">%s</option>"):format(o, o) end
       return ('<label class="field">%s<select name="%s">%s</select></label>'):format(html.esc(label), name, html.join(opts))
     end
+    local function text_field(name, label, placeholder)
+      return ('<label class="field">%s<input type="text" name="%s" placeholder="%s"></label>'):format(
+        html.esc(label), name, html.esc(placeholder or ""))
+    end
+    local function range_field(name, label, min, max, step)
+      return ('<label class="field">%s<input type="range" name="%s" min="%s" max="%s" step="%s"></label>'):format(
+        html.esc(label), name, min, max, step)
+    end
+    local function check_field(name, label)
+      return ('<label class="field field-inline"><input type="checkbox" name="%s"><span>%s</span></label>'):format(name, html.esc(label))
+    end
+    -- Full field set mirrors frontend/src/config.js's DEFAULT_PREFERENCES --
+    -- the first Lua-rendered pass only had 8 of these ~23 fields, so most
+    -- of the panel's per-user look customization was simply unreachable
+    -- even though the backend (profiles.lua/routes.lua) already accepted
+    -- and stored all of them.
     local body = html.page({
       title = "Appearance", eyebrow = "Look", lede = "Customize theme, layout, and motion.",
       body = ([[
         <form id="appearance-form" class="panel form-panel">
-          %s%s%s%s%s%s%s%s
+          <h3>Theme</h3>
+          %s%s
           <label class="field">Accent color<input type="color" name="accent_color"></label>
+          <label class="field">Accent secondary (optional)<input type="color" name="accent_secondary"></label>
+          %s
+          <h3>Background</h3>
+          %s
+          <label class="field">Background color (custom_color mode)<input type="color" name="background_color"></label>
+          %s
+          <h3>Layout</h3>
+          %s%s%s%s%s%s%s%s
+          <h3>Cards &amp; motion</h3>
+          %s%s%s%s
+          %s%s
+          <h3>Profile backdrop</h3>
+          %s
+          %s
+          <h3>Misc</h3>
+          %s%s%s
           <button type="submit" class="button-link primary">Save</button>
+          <button type="button" id="appearance-reset" class="button-link">Reset to defaults</button>
         </form>
         <div id="appearance-msg"></div>
       ]]):format(
         select_field("theme_mode", "Theme", { "dark", "light", "system" }),
+        select_field("font_scale", "Font scale", { "normal", "large", "dense" }),
+        select_field("panel_font_family", "Panel font", { "system", "serif", "mono", "rounded" }),
         select_field("background_mode", "Background", { "default", "midnight", "aurora", "ember", "custom_color", "custom_image" }),
+        text_field("background_image_url", "Background image URL (custom_image mode)", "https://..."),
         select_field("layout_mode", "Layout", { "standard", "focused", "wide" }),
         select_field("density", "Density", { "comfortable", "compact" }),
-        select_field("card_shape", "Card shape", { "soft", "crisp" }),
-        select_field("motion", "Motion", { "standard", "reduced" }),
+        select_field("operator_layout", "Profile layout", { "command", "console", "compact" }),
+        select_field("roster_layout", "Directory layout", { "cards", "signals", "ledger" }),
         select_field("tab_style", "Tabs", { "rail", "underline", "minimal" }),
-        select_field("card_hover_effect", "Hover effect", { "lift", "glow", "border", "none" })),
+        select_field("dashboard_density", "Dashboard density", { "command", "dense" }),
+        select_field("sidebar_style", "Sidebar", { "full", "compact", "hidden" }),
+        select_field("notification_position", "Toast position", { "br", "bl", "tr", "tc" }),
+        select_field("card_shape", "Card shape", { "soft", "crisp" }),
+        select_field("card_hover_effect", "Hover effect", { "lift", "glow", "border", "none" }),
+        select_field("stream_card_style", "Bot card style", { "telemetry", "compact", "cinematic" }),
+        select_field("bot_card_detail", "Bot card detail", { "full", "compact" }),
+        select_field("motion", "Motion", { "standard", "reduced" }),
+        select_field("panel_radius", "Corner radius", { "sharp", "medium", "soft" }),
+        range_field("surface_opacity", "Surface opacity", "0.5", "1", "0.01"),
+        range_field("surface_blur", "Surface blur (px)", "0", "32", "1"),
+        text_field("profile_backdrop_image_url", "Profile backdrop image URL", "https://..."),
+        range_field("profile_backdrop_strength", "Backdrop strength", "0", "0.55", "0.01"),
+        check_field("show_bot_uptime", "Show bot uptime"),
+        check_field("show_queue_pressure", "Show queue pressure"),
+        check_field("compact_sidebar", "Compact sidebar")),
     })
     local script = [[
+      const DEFAULT_PREFS = {
+        theme_mode: "dark", accent_color: "#89b4fa", accent_secondary: "", background_mode: "default",
+        background_color: "#0b0e18", background_image_url: "", layout_mode: "standard", density: "comfortable",
+        card_shape: "soft", font_scale: "normal", motion: "standard", operator_layout: "command",
+        roster_layout: "cards", tab_style: "rail", surface_opacity: 0.92, surface_blur: 18,
+        stream_card_style: "telemetry", dashboard_density: "command", profile_backdrop_image_url: "",
+        profile_backdrop_strength: 0.18, sidebar_style: "full", panel_font_family: "system",
+        card_hover_effect: "lift", notification_position: "br", bot_card_detail: "full", panel_radius: "medium",
+        show_bot_uptime: true, show_queue_pressure: true, compact_sidebar: false,
+      };
+      function applyPrefs(p) {
+        const f = document.getElementById("appearance-form");
+        for (const key of Object.keys(DEFAULT_PREFS)) {
+          const el = f.elements[key];
+          if (!el) continue;
+          const value = (p[key] !== undefined && p[key] !== null && p[key] !== "") ? p[key] : DEFAULT_PREFS[key];
+          if (el.type === "checkbox") el.checked = !!value && value !== "false";
+          else el.value = value;
+        }
+      }
       (async () => {
         try {
           const res = await swarmFetch("/api/users/preferences");
-          const p = res.preferences || {};
-          const f = document.getElementById("appearance-form");
-          for (const key of Object.keys(p)) if (f.elements[key]) f.elements[key].value = p[key];
-        } catch { /* defaults stay */ }
+          applyPrefs(res.preferences || {});
+        } catch { applyPrefs({}); }
       })();
+      document.getElementById("appearance-reset").addEventListener("click", () => applyPrefs({}));
       document.getElementById("appearance-form").addEventListener("submit", async (e) => {
         e.preventDefault();
-        const fd = new FormData(e.target);
+        const f = e.target;
+        const payload = {};
+        for (const key of Object.keys(DEFAULT_PREFS)) {
+          if (!f.elements[key]) continue;
+          payload[key] = f.elements[key].type === "checkbox" ? f.elements[key].checked : f.elements[key].value;
+        }
         try {
-          await swarmFetch("/api/users/preferences", { method: "POST", body: JSON.stringify(Object.fromEntries(fd)) });
+          await swarmFetch("/api/users/preferences", { method: "POST", body: JSON.stringify(payload) });
           document.getElementById("appearance-msg").innerHTML = '<div class="notice notice-success">Saved. Reloading...</div>';
           setTimeout(() => window.location.reload(), 600);
         } catch (err) { document.getElementById("appearance-msg").innerHTML = '<div class="notice notice-error">' + err.message + "</div>"; }

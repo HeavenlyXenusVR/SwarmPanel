@@ -241,14 +241,20 @@ function M.register(cfg)
     local session_rows = {}
     for _, s in ipairs(all_sessions) do
       if s.is_playing or s.is_paused or (s.title and s.title ~= "") then
+        -- Read-only compact counter here, not the draggable bot-seek-bar
+        -- (that belongs on the bot cards above, matching the original
+        -- BotCard/SessionTable split) -- the seek bar has no width of its
+        -- own (100% of its container), so dropped into a wide table column
+        -- it stretched across nearly the full row. The bare 160px cap here
+        -- matches PlaybackCounter's compact rendering in ControlState.
         session_rows[#session_rows + 1] = ([[
           <tr>
             <td>%s</td>
             <td>%s</td>
             <td>%s</td>
-            <td>
-              <div class="bot-seek-bar" data-seek-bar data-bot-key="%s" data-guild-id="%s" data-duration="%d">
-                <div class="bot-seek-track"><div class="bot-seek-fill" data-playback-bar style="width:%d%%"></div></div>
+            <td style="max-width:160px">
+              <div class="bot-playback compact">
+                <div class="bot-playback-bar" aria-hidden="true"><span data-playback-bar style="width:%d%%"></span></div>
               </div>
               <span data-playback-counter data-position="%s" data-observed-at="%s" data-duration="%s" data-playing="%s">
                 <span data-playback-label></span>
@@ -258,7 +264,6 @@ function M.register(cfg)
           </tr>
         ]]):format(
           html.esc(s.bot_display), html.esc(s.title or "—"), html.esc(s.session_state_label or ""),
-          html.esc(s.bot_key), html.esc(s.guild_id), math.floor(s.duration_seconds or 0),
           (s.duration_seconds and s.duration_seconds > 0) and math.floor(100 * (s.position_seconds or 0) / s.duration_seconds) or 0,
           tostring(s.position_seconds or 0), tostring(s.position_observed_at or 0), tostring(s.duration_seconds or 0),
           tostring(s.is_playing == true),
