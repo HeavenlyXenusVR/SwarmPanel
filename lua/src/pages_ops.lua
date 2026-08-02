@@ -82,7 +82,22 @@ function M.register(cfg)
           <label class="field">Voice channel ID<input type="text" name="voice_channel_id"></label>
           <label class="field">Text channel ID<input type="text" name="text_channel_id"></label>
           <label class="field">Loop mode (LOOP only)<select name="loop_mode"><option value="off">off</option><option value="song">song</option><option value="queue">queue</option></select></label>
-          <label class="field">Filter mode (FILTER only)<select name="filter_mode"><option value="none">none</option><option value="bassboost">bassboost</option><option value="nightcore">nightcore</option><option value="vaporwave">vaporwave</option><option value="8d">8d</option></select></label>
+          <label class="field">Filter mode (FILTER only)<select name="filter_mode">
+            <option value="none">None</option>
+            <option value="nightcore">Nightcore</option>
+            <option value="bassboost">Bassboost</option>
+            <option value="vaporwave">Vaporwave</option>
+            <option value="8d">8D</option>
+            <option value="karaoke">Karaoke</option>
+            <option value="tremolo">Tremolo</option>
+            <option value="vibrato">Vibrato</option>
+            <option value="lowpass">Low Pass</option>
+            <option value="lofi">Lo-fi</option>
+            <option value="electronic">Electronic</option>
+            <option value="party">Party</option>
+            <option value="radio">Radio</option>
+            <option value="cinema">Cinema</option>
+          </select></label>
           <button type="submit" class="button-link primary">Send</button>
         </form>
         <div id="control-result"></div>
@@ -131,6 +146,22 @@ function M.register(cfg)
           const state = await swarmFetch(`/api/bots/${botKey}/control-state?guild_id=${encodeURIComponent(guildId)}`);
           document.getElementById("control-state").innerHTML =
             '<pre class="json-panel">' + JSON.stringify(state, null, 2).replace(/</g, "&lt;") + "</pre>";
+          // Mirrors ControlsPage.jsx's controlState effect: voice/text channel
+          // are one-time defaults (only fill an empty field -- never clobber
+          // what the operator is mid-typing for a PLAY/SET_HOME order), while
+          // loop_mode/filter_mode always reflect the bot's actual live
+          // setting, since those aren't per-order inputs, they're "what is
+          // this guild currently configured to do" (was previously stuck on
+          // the form's hardcoded "off"/"none" defaults regardless of what
+          // the bot was really set to -- e.g. every bot defaults to
+          // loop_mode=queue, but the form never showed that).
+          const session = state && state.session;
+          if (session) {
+            if (!form.voice_channel_id.value) form.voice_channel_id.value = session.home_channel_id || session.channel_id || "";
+            if (!form.text_channel_id.value) form.text_channel_id.value = session.feedback_channel_id || "";
+            if (session.loop_mode) form.loop_mode.value = session.loop_mode;
+            if (session.filter_mode) form.filter_mode.value = session.filter_mode;
+          }
         } catch { /* not ready yet */ }
       }
       form.bot_key.addEventListener("change", refreshControlState);
