@@ -207,10 +207,7 @@ struct ControlsView: View {
             // iOS 16.0 deployment target used here (the zero-parameter overload
             // is iOS 17+ only and would fail to build against iOS 16).
             .onChange(of: viewModel.selectedBotKey) { _ in
-                Task {
-                    await viewModel.loadInventory()
-                    await viewModel.loadControlStateAndQueues()
-                }
+                Task { await viewModel.botDidChange() }
             }
             .onChange(of: viewModel.guildId) { _ in
                 Task { await viewModel.loadControlStateAndQueues() }

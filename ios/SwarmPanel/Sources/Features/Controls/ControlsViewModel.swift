@@ -42,6 +42,44 @@ final class ControlsViewModel: ObservableObject {
         }
     }
 
+    /// Switching bots left guildId pointed at whatever guild the PREVIOUS
+    /// bot defaulted to — loadInventory()/loadControlStateAndQueues() still
+    /// succeed against that guild (it's a real guild, just not one the
+    /// newly selected bot serves), so the Guild ID/Voice channel/Text
+    /// channel fields all stayed frozen on the old bot's values no matter
+    /// which bot was picked, with nothing but a small inline error message
+    /// (easy to miss while scrolling) hinting anything was wrong. Re-picks
+    /// a guild the newly selected bot actually has a live session in
+    /// before refreshing inventory/control-state, mirroring the same fix
+    /// already shipped on the web panel's /controls page.
+    func botDidChange() async {
+        if let guild = await pickGuildForBot(selectedBotKey) {
+            guildId = guild
+            // The old voiceChannelId belonged to the previous bot/guild
+            // pair — clearing it lets loadControlStateAndQueues()'s
+            // fill-if-empty pick the NEW bot's actual home channel instead
+            // of silently carrying over a channel ID that may not even
+            // exist in the new guild.
+            voiceChannelId = ""
+        }
+        await loadInventory()
+        await loadControlStateAndQueues()
+    }
+
+    private func pickGuildForBot(_ botKey: String) async -> String? {
+        guard !botKey.isEmpty else { return nil }
+        do {
+            let dashboard: DashboardResponse = try await api.get("/api/dashboard")
+            guard let bot = dashboard.bots?.first(where: { $0.key == botKey }) else { return nil }
+            let sessions = bot.sessions ?? []
+            let live = sessions.first(where: { $0.isPlaying == true }) ?? sessions.first
+            guard let guild = live?.guildId, !guild.isEmpty else { return nil }
+            return guild
+        } catch {
+            return nil
+        }
+    }
+
     func loadInventory() async {
         guard !selectedBotKey.isEmpty else { guilds = []; return }
         do {
@@ -73,6 +111,18 @@ final class ControlsViewModel: ObservableObject {
             )
             controlState = state.session
             errorMessage = nil
+            // Fill-if-empty, matching the web panel's Controls page — never
+            // clobbers a voice channel the operator is mid-picking for a
+            // PLAY/SET_HOME order, but this was previously never wired up
+            // at all here, so the field just started (and stayed) blank
+            // every time until you knew to open the picker and pick the
+            // bot's actual home channel yourself.
+            if voiceChannelId.isEmpty {
+                let homeChannel = state.session?.homeChannelId ?? state.session?.channelId
+                if let homeChannel, !homeChannel.isEmpty { voiceChannelId = homeChannel }
+            }
+            if let loop = state.session?.loopMode, !loop.isEmpty { loopMode = loop }
+            if let filter = state.session?.filterMode, !filter.isEmpty { filterMode = filter }
         } catch {
             controlState = nil
             if !error.isCancellation {
