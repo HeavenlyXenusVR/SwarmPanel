@@ -165,15 +165,53 @@ function M.panel_class(prefs)
   })
 end
 
+local BACKGROUND_PRESETS = {
+  default = "#0d1117", midnight = "#090b12", aurora = "#101821", ember = "#17100d",
+}
+
+local function safe_hex(value, fallback)
+  if type(value) == "string" and value:match("^#%x%x%x%x%x%x$") then return value end
+  return fallback
+end
+
+local function clamp_number(value, fallback, min, max)
+  local n = tonumber(value)
+  if not n then return fallback end
+  if n < min then return min end
+  if n > max then return max end
+  return n
+end
+
+local function css_url(value)
+  -- Matches utils/control.js's safeImage()/panelStyle() -- only http(s)
+  -- URLs are trusted into a CSS url(); escapes quotes/backslashes so a
+  -- crafted background_image_url can't break out of the string literal.
+  local text = tostring(value or ""):match("^%s*(.-)%s*$")
+  if not text:match("^https?://") then return "none" end
+  return ('url("%s")'):format(text:gsub('([\\"])', '\\%1'))
+end
+
+-- Was only setting --surface-opacity/--surface-blur/--accent -- --bg (the
+-- background_mode preset/custom_color) and --panel-bg-image
+-- (background_image_url, custom_image mode) are both referenced by
+-- app.css's .app-shell::before/.panel-bg-* rules but were never actually
+-- set anywhere, so background_mode="custom_image" plus a saved image URL
+-- silently did nothing. Mirrors utils/control.js's panelStyle() exactly.
 function M.panel_style(prefs)
   prefs = prefs or M.DEFAULT_PREFERENCES
+  local mode = choice(prefs, "background_mode", "default")
+  local base_bg = (mode == "custom_color") and safe_hex(prefs.background_color, "#0b0e18")
+    or (BACKGROUND_PRESETS[mode] or BACKGROUND_PRESETS.default)
+  local use_image = (mode == "custom_image") and tostring(prefs.background_image_url or ""):match("^%s*https?://")
   local parts = {
-    ("--surface-opacity:%s"):format(tostring(prefs.surface_opacity or 0.92)),
-    ("--surface-blur:%spx"):format(tostring(prefs.surface_blur or 18)),
-    ("--accent:%s"):format(prefs.accent_color or "#89b4fa"),
+    ("--accent:%s"):format(safe_hex(prefs.accent_color, "#89b4fa")),
+    ("--bg:%s"):format(base_bg),
+    ("--panel-bg-image:%s"):format(use_image and css_url(prefs.background_image_url) or "none"),
+    ("--surface-opacity:%s"):format(tostring(clamp_number(prefs.surface_opacity, 0.92, 0.35, 1))),
+    ("--surface-blur:%spx"):format(tostring(clamp_number(prefs.surface_blur, 18, 0, 36))),
   }
   if prefs.accent_contrast_text and prefs.accent_contrast_text ~= "" then
-    parts[#parts + 1] = "--accent-contrast-text:" .. prefs.accent_contrast_text
+    parts[#parts + 1] = "--accent-contrast-text:" .. safe_hex(prefs.accent_contrast_text, "#ffffff")
   end
   if prefs.accent_gradient and prefs.accent_gradient ~= "" then
     parts[#parts + 1] = "--accent-gradient:" .. prefs.accent_gradient

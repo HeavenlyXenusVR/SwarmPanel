@@ -179,7 +179,33 @@ function M.register(cfg)
           }
         } catch { /* not ready yet */ }
       }
-      form.bot_key.addEventListener("change", () => { refreshControlState(); loadChannels(); });
+      // Switching bots left guild_id pointed at whatever guild the PREVIOUS
+      // bot defaulted to -- if the new bot isn't even in that guild,
+      // control-state/inventory still return 200 (guild_id is valid, just
+      // not one this bot serves) with an empty/idle session, so the page
+      // looked like nothing happened. Re-pick a guild the newly selected
+      // bot actually has a live session in (falls back to its first known
+      // guild) whenever guild_id is editable, mirroring the page-load
+      // default-guild logic in the route handler above.
+      async function pickGuildForBot(botKey) {
+        try {
+          const dash = await swarmFetch("/api/dashboard");
+          const bot = (dash.bots || []).find((b) => b.key === botKey);
+          if (!bot) return null;
+          const sessions = bot.sessions || [];
+          const live = sessions.find((s) => s.is_playing) || sessions[0];
+          if (live && live.guild_id) return String(live.guild_id);
+        } catch { /* fall through */ }
+        return null;
+      }
+      form.bot_key.addEventListener("change", async () => {
+        if (!form.guild_id.readOnly) {
+          const guild = await pickGuildForBot(form.bot_key.value);
+          if (guild) form.guild_id.value = guild;
+        }
+        refreshControlState();
+        loadChannels();
+      });
       form.guild_id.addEventListener("change", () => { refreshControlState(); loadChannels(); });
       swarmLiveRefresh(refreshControlState, 4000);
 

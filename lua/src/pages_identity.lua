@@ -236,6 +236,7 @@ function M.register(cfg)
       body = html.page({
         title = "Profile", eyebrow = "Account", lede = "Edit how you appear across the panel.",
         body = ([[
+          <section class="profile-dashboard-grid" id="profile-stats"></section>
           <form id="profile-form" class="panel form-panel">
             <h3>Identity</h3>
             <label class="field">Display name<input name="display_name" maxlength="80"></label>
@@ -280,6 +281,13 @@ function M.register(cfg)
           try {
             const res = await swarmFetch("/api/users/me");
             const p = res.profile || {};
+            const activity = p.activity || {};
+            document.getElementById("profile-stats").innerHTML = `
+              <article class="panel profile-stat-panel"><strong>${p.follower_count || 0}</strong><span>Followers</span></article>
+              <article class="panel profile-stat-panel"><strong>${p.following_count || 0}</strong><span>Following</span></article>
+              <article class="panel profile-stat-panel"><strong>${p.friend_count || 0}</strong><span>Friends</span></article>
+              <article class="panel profile-stat-panel"><strong>${activity.total_plays || 0}</strong><span>Plays</span></article>
+            `;
             const f = document.getElementById("profile-form");
             const fields = ["display_name", "profile_headline", "bio", "profile_quote", "server_name",
               "server_invite_url", "server_icon_url", "avatar_url", "profile_banner_url",

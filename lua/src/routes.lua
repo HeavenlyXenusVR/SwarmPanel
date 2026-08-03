@@ -80,9 +80,29 @@ function M.register(cfg)
     return SESSION_COOKIE .. "=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
   end
 
+  -- Port of auth_deps.py's _touch_request_presence: every authenticated
+  -- request (API or page) refreshes last_seen_at, throttled so it's one
+  -- UPDATE per ~30s of activity rather than per-request. accounts.lua's
+  -- touch_account_seen() existed already (ported from db/accounts.py) but
+  -- was never actually called from anywhere, so last_seen_at only ever got
+  -- set once at login -- every account showed "Inactive" a few minutes
+  -- into a session no matter how actively they were using the panel.
+  local PRESENCE_TOUCH_INTERVAL_SECONDS = 30
+  local function touch_presence(a)
+    if not a then return end
+    local username = tostring(a.username or ""):match("^%s*(.-)%s*$")
+    local guild_id = a.guild_id
+    if username == "" or not guild_id or guild_id == "" then return end
+    local ok, err = pcall(accounts.touch_account_seen, username, guild_id, PRESENCE_TOUCH_INTERVAL_SECONDS)
+    if not ok then
+      print("[swarmpanel-lua] presence touch failed for " .. username .. ": " .. tostring(err))
+    end
+  end
+
   local function require_auth(req)
     local a = get_auth(req)
     if not a then return nil, json_error(401, "Authentication required") end
+    touch_presence(a)
     return a
   end
 
@@ -93,6 +113,7 @@ function M.register(cfg)
   local function require_auth_page(req)
     local a = get_auth(req)
     if not a then return nil, 303, { Location = "/login?next=" .. httpd.url_encode(req.path) } end
+    touch_presence(a)
     return a
   end
 

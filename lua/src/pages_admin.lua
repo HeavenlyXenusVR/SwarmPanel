@@ -218,19 +218,116 @@ function M.register(cfg)
     local a, status, headers = cfg.require_auth_page(req)
     if not a then return status, "", headers end
     if not (a.admin_mode or a.moderator) then return denied(req, a, "/lumisound-admin", "Lumisound Admin") end
+    -- Full port of LumisoundAdminPage.jsx (150 lines: metric grid + 6 live
+    -- data tables with real admin actions) -- the first Lua pass just
+    -- JSON.stringify()'d the whole /api/lumisound/admin response into a
+    -- <pre>, which lost every admin action (suspend/reinstate users,
+    -- delete uploads, resolve/reopen bug reports all already existed as
+    -- working API endpoints -- routes.lua's /api/lumisound/users/active,
+    -- /api/lumisound/uploads/delete, /api/lumisound/bug-reports/status --
+    -- just with no UI left to call them from).
     local body = html.page({
-      title = "Lumisound Admin", eyebrow = "Companion App", lede = "Users, uploads, and bug reports.",
-      body = '<div id="lumisound-data">' .. html.empty_state("Loading...") .. "</div>",
+      title = "Lumisound", eyebrow = "Admin Workspace", lede = "Account, library, and activity data for the Lumisound iOS app.",
+      body = [[
+        <div id="lumisound-metrics" class="metric-grid"></div>
+        <div class="dashboard-grid">
+          <div class="panel wide"><div class="section-head"><h2>Listening Now</h2></div><div id="lumisound-now-playing"></div></div>
+          <div class="panel wide"><div class="section-head"><h2>Recent Plays</h2></div><div id="lumisound-recent-plays"></div></div>
+          <div class="panel wide"><div class="section-head"><h2>Users</h2></div><div id="lumisound-users"></div></div>
+          <div class="panel wide"><div class="section-head"><h2>Recent Uploads</h2></div><div id="lumisound-uploads"></div></div>
+          <div class="panel"><div class="section-head"><h2>Bug Reports</h2></div><div id="lumisound-bugs"></div></div>
+          <div class="panel"><div class="section-head"><h2>Active Listen Rooms</h2></div><div id="lumisound-rooms"></div></div>
+        </div>
+      ]],
     })
-    local script = [[
+    -- Uses [=[ ]=] instead of [[ ]] -- the JS below has array-literal
+    -- patterns like ["upload_count", "Uploads"]] whose trailing "]]" would
+    -- otherwise close a plain Lua long-bracket string early and truncate
+    -- the rest of the script silently.
+    local script = [=[
+      function lsEsc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+      function lsBytes(n) {
+        const v = Number(n) || 0;
+        if (v <= 0) return "0 B";
+        const units = ["B", "KB", "MB", "GB"];
+        const exp = Math.min(units.length - 1, Math.floor(Math.log(v) / Math.log(1024)));
+        return (v / 1024 ** exp).toFixed(exp ? 1 : 0) + " " + units[exp];
+      }
+      function lsDuration(sec) {
+        const v = Math.max(0, Math.floor(Number(sec) || 0));
+        return Math.floor(v / 60) + ":" + String(v % 60).padStart(2, "0");
+      }
+      function lsTable(rows, cols, rowHtml) {
+        if (!rows || !rows.length) return '<div class="empty-state">No rows.</div>';
+        const thead = cols.map(([, label]) => `<th>${lsEsc(label)}</th>`).join("") + "<th>Actions</th>";
+        const tbody = rows.map((r) => `<tr>${cols.map(([key, , fmt]) => `<td>${lsEsc(fmt ? fmt(r[key], r) : (r[key] ?? "—"))}</td>`).join("")}<td>${rowHtml ? rowHtml(r) : ""}</td></tr>`).join("");
+        return `<div class="table-wrap"><table class="data-table"><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table></div>`;
+      }
+      async function mutateLumisound(path, payload, message, confirmText) {
+        if (confirmText && !confirm(confirmText)) return;
+        try {
+          await swarmFetch(path, { method: "POST", body: JSON.stringify(payload) });
+          swarmToast(message, "success");
+          loadLumisound();
+        } catch (err) { swarmToast(err.message, "error"); }
+      }
       async function loadLumisound() {
         try {
           const res = await swarmFetch("/api/lumisound/admin");
-          document.getElementById("lumisound-data").innerHTML = '<pre class="json-panel">' + JSON.stringify(res, null, 2).replace(/</g, "&lt;") + "</pre>";
+          const d = res.data || {};
+          const summary = d.summary || {};
+          const users = d.users || [];
+          const uploads = d.uploads || [];
+          const bugReports = d.bug_reports || [];
+          const listenRooms = d.listen_rooms || [];
+          const nowPlaying = d.now_playing || [];
+          const recentPlays = d.recent_plays || [];
+
+          document.getElementById("lumisound-metrics").innerHTML = [
+            ["Users", summary.users ?? users.length], ["Active Users", summary.active_users ?? 0],
+            ["Listening Now", summary.listening_now ?? nowPlaying.length], ["Plays (24h)", summary.plays_24h ?? 0],
+            ["Uploads", summary.uploads ?? uploads.length], ["Upload Storage", lsBytes(summary.uploads_storage_bytes)],
+            ["Playlists", summary.playlists ?? 0], ["Plays Logged", summary.play_history ?? 0],
+            ["Open Bug Reports", summary.bug_reports_open ?? bugReports.length], ["Active Listen Rooms", summary.listen_rooms_active ?? listenRooms.length],
+          ].map(([label, value]) => `<div class="metric"><span class="metric-value">${lsEsc(value)}</span><span class="metric-label">${lsEsc(label)}</span></div>`).join("");
+
+          document.getElementById("lumisound-now-playing").innerHTML = lsTable(nowPlaying,
+            [["username", "User"], ["title", "Title"], ["artist", "Artist"], ["source", "Source"]],
+            (r) => `<span>${lsEsc(lsDuration(r.position_seconds))} / ${lsEsc(lsDuration(r.duration_seconds))}</span>`);
+
+          document.getElementById("lumisound-recent-plays").innerHTML = lsTable(recentPlays,
+            [["username", "User"], ["title", "Title"], ["artist", "Artist"], ["played_at", "Played At"], ["listen_seconds", "Listened (s)"]]);
+
+          document.getElementById("lumisound-users").innerHTML = lsTable(users,
+            [["username", "Username"], ["display_name", "Display Name"], ["email", "Email"], ["created_at", "Created"], ["playlist_count", "Playlists"], ["upload_count", "Uploads"]],
+            (r) => (r.is_active === false || r.is_active === 0)
+              ? `<button type="button" data-ls-reinstate="${r.id}">Reinstate</button>`
+              : `<button type="button" class="danger" data-ls-suspend="${r.id}" data-username="${lsEsc(r.username || r.id)}">Suspend</button>`);
+
+          document.getElementById("lumisound-uploads").innerHTML = lsTable(uploads,
+            [["title", "Title"], ["filename", "Filename"], ["artist", "Artist"], ["username", "User"], ["file_size_bytes", "Size", lsBytes], ["uploaded_at", "Uploaded"]],
+            (r) => `<button type="button" class="danger" data-ls-delete-upload="${r.id}" data-title="${lsEsc(r.title || r.filename || r.id)}">Delete</button>`);
+
+          document.getElementById("lumisound-bugs").innerHTML = lsTable(bugReports,
+            [["username", "User"], ["category", "Category"], ["description", "Description"], ["status", "Status"], ["created_at", "Created"]],
+            (r) => r.status === "resolved"
+              ? `<button type="button" data-ls-reopen="${r.id}">Reopen</button>`
+              : `<button type="button" data-ls-resolve="${r.id}">Resolve</button>`);
+
+          document.getElementById("lumisound-rooms").innerHTML = lsTable(listenRooms,
+            [["room_code", "Code"], ["title", "Title"], ["artist", "Artist"], ["host_username", "Host"], ["is_playing", "Playing"], ["updated_at", "Updated"]]);
         } catch (err) { swarmToast("Failed to load Lumisound data.", "error"); }
       }
+      document.body.addEventListener("click", (e) => {
+        const t = e.target;
+        if (t.hasAttribute("data-ls-suspend")) mutateLumisound("/api/lumisound/users/active", { user_id: t.getAttribute("data-ls-suspend"), active: false }, "User suspended.", `Suspend Lumisound user "${t.getAttribute("data-username")}"? They will be blocked from login/API access.`);
+        else if (t.hasAttribute("data-ls-reinstate")) mutateLumisound("/api/lumisound/users/active", { user_id: t.getAttribute("data-ls-reinstate"), active: true }, "User reinstated.");
+        else if (t.hasAttribute("data-ls-delete-upload")) mutateLumisound("/api/lumisound/uploads/delete", { upload_id: t.getAttribute("data-ls-delete-upload") }, "Upload deleted.", `Delete upload "${t.getAttribute("data-title")}"? This cannot be undone.`);
+        else if (t.hasAttribute("data-ls-resolve")) mutateLumisound("/api/lumisound/bug-reports/status", { report_id: t.getAttribute("data-ls-resolve"), status: "resolved" }, "Bug report resolved.");
+        else if (t.hasAttribute("data-ls-reopen")) mutateLumisound("/api/lumisound/bug-reports/status", { report_id: t.getAttribute("data-ls-reopen"), status: "open" }, "Bug report reopened.");
+      });
       swarmLiveRefresh(loadLumisound, 15000);
-    ]]
+    ]=]
     return page_shell(req, a, "/lumisound-admin", "Lumisound Admin", body, script)
   end)
 

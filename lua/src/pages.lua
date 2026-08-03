@@ -153,13 +153,26 @@ function M.register(cfg)
       end
       return bot.sessions and bot.sessions[1] or nil
     end
+    -- Was checking session.is_playing BEFORE offline/stale status, so a bot
+    -- that went offline mid-track (its last DB-persisted session row still
+    -- has is_playing=true from before it dropped) still showed a "Live"
+    -- badge and a playback counter that could never advance again -- which
+    -- is what actually produced several of the "duration stuck" bot cards:
+    -- not a display bug, a genuinely dead bot whose last-known state was
+    -- being trusted as current. Offline/stale is checked first now.
+    local function bot_is_offline(bot)
+      local status_lower = tostring(bot.status or ""):lower()
+      if status_lower == "offline" then return true end
+      local age = tonumber(bot.heartbeat_age_seconds)
+      if age and age > 120 then return true end
+      return false
+    end
     local function playback_badge(session, bot)
+      if bot_is_offline(bot) then return "danger", "Offline" end
       if session and session.is_playing then return "live", "Live" end
       if session and session.is_paused then return "soft", "Paused" end
       local status_lower = tostring(bot.heartbeat_status or bot.status or ""):lower()
-      if status_lower:find("stale") or tostring(bot.status or ""):lower() == "offline" then
-        return "danger", "Stale"
-      end
+      if status_lower:find("stale") then return "danger", "Stale" end
       return "off", "Idle"
     end
 
@@ -204,8 +217,12 @@ function M.register(cfg)
           html.esc(bot.key), html.esc(session.guild_id), duration, pct)
       end
 
+      local offline_overlay = bot_is_offline(bot)
+        and '<div class="bot-card-offline-overlay"><span class="bot-card-offline-label">Offline</span></div>' or ""
+
       bot_cards[#bot_cards + 1] = ([[
-        <article class="bot-card" style="--card-accent: %s">
+        <article class="bot-card%s" style="--card-accent: %s">
+          %s
           <div class="bot-head">
             <span class="bot-dot"></span>
             <div class="bot-head-copy">
@@ -229,7 +246,8 @@ function M.register(cfg)
             <span>%d backup</span>
           </div>
         </article>
-      ]]):format(html.esc(accent),
+      ]]):format(offline_overlay ~= "" and " bot-card-offline" or "", html.esc(accent),
+        offline_overlay,
         html.esc(bot.display_name), html.esc(bot.heartbeat_status or bot.status or "telemetry ready"),
         tone, label,
         thumb,

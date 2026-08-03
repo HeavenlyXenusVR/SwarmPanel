@@ -1175,6 +1175,40 @@ small,
   content-visibility: auto;
   contain-intrinsic-size: 142px 280px;
   animation: surface-enter var(--motion-slow) both;
+  position: relative;
+}
+
+/* A bot can drop offline mid-track and leave a stale is_playing=true row
+   behind in the DB -- the card content itself still renders whatever that
+   last-known state was (title, position, queue counts), which reads as
+   "still working" at a glance. This overlay makes the dead state
+   impossible to miss without hiding the last-known data underneath it. */
+.bot-card-offline {
+  border-color: color-mix(in srgb, #ff6b6b 45%, var(--line));
+}
+
+.bot-card-offline-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 12, 16, 0.55);
+  backdrop-filter: blur(4px);
+  border-radius: inherit;
+}
+
+.bot-card-offline-label {
+  padding: 6px 16px;
+  border-radius: 999px;
+  background: rgba(255, 107, 107, 0.16);
+  border: 1px solid rgba(255, 107, 107, 0.55);
+  color: #ffb4b4;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-size: 0.8rem;
 }
 
 .invite-card {
