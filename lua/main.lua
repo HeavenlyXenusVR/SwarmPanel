@@ -10,6 +10,8 @@ local pages_ops = require("pages_ops")
 local pages_identity = require("pages_identity")
 local pages_admin = require("pages_admin")
 local static = require("static")
+local copas = require("copas")
+local metrics = require("metrics")
 
 local settings = config.load()
 db.init(settings)
@@ -64,6 +66,23 @@ pages_ops.register(pages_cfg)
 pages_identity.register(pages_cfg)
 pages_admin.register(pages_cfg)
 static.register()
+
+-- Port of app/main.py's _metrics_history_capture_loop(): samples fleet
+-- totals into swarm_metrics_history every 5 minutes so the Intel page's
+-- trend charts/anomaly detection have data newer than the Python app's
+-- retirement. This is the one background task the Lua rewrite's read-only
+-- metrics.lua port explicitly left out for lack of a scheduler -- copas
+-- (already used for the dashboard WebSocket broadcast loop) works fine as
+-- one.
+local METRICS_HISTORY_CAPTURE_INTERVAL_SECONDS = 300
+copas.addthread(function()
+  copas.sleep(30)
+  while true do
+    local ok, err = pcall(metrics.capture_metrics_snapshot, config.music_bots)
+    if not ok then print("[swarmpanel-lua] metrics history capture failed: " .. tostring(err)) end
+    copas.sleep(METRICS_HISTORY_CAPTURE_INTERVAL_SECONDS)
+  end
+end)
 
 httpd.listen("0.0.0.0", settings.port)
 httpd.run()

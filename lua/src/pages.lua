@@ -242,8 +242,9 @@ function M.register(cfg)
           <div class="chip-row">
             <span>%d live</span>
             <span>%d guilds</span>
-            <span>%d queued</span>
-            <span>%d backup</span>
+            <span data-queue-pressure>%d queued</span>
+            <span data-queue-pressure>%d backup</span>
+            %s
           </div>
         </article>
       ]]):format(offline_overlay ~= "" and " bot-card-offline" or "", html.esc(accent),
@@ -254,7 +255,16 @@ function M.register(cfg)
         html.esc(now_title), html.esc(now_sub),
         playback_block,
         bot.active_playing_count or 0, bot.known_guild_count or 0,
-        bot.queue_depth or 0, bot.backup_queue_depth or 0)
+        bot.queue_depth or 0, bot.backup_queue_depth or 0,
+        -- show_bot_uptime ("Show bot uptime" on /appearance): saved but
+        -- never had any stat to toggle. heartbeat_age_seconds is real,
+        -- live data already flowing through /api/dashboard (used for
+        -- offline detection above) -- surfaced here as "last heartbeat"
+        -- rather than inventing a fabricated process-uptime number, since
+        -- no bot actually persists a process start time anywhere.
+        (tonumber(bot.heartbeat_age_seconds) ~= nil)
+          and ('<span data-bot-uptime>heartbeat %ds ago</span>'):format(math.floor(bot.heartbeat_age_seconds))
+          or "")
 
       for _, s in ipairs(bot.sessions or {}) do
         s.bot_key = bot.key

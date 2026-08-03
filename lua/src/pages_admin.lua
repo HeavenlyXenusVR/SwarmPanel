@@ -338,22 +338,116 @@ function M.register(cfg)
     local a, status, headers = cfg.require_auth_page(req)
     if not a then return status, "", headers end
     if not a.admin_mode then return denied(req, a, "/intel", "Intel") end
+    -- Ports IntelPage.jsx's 24h TrendChart section (SVG line chart + area
+    -- fill + anomaly markers + hover tooltip) -- the first Lua pass never
+    -- called /api/metrics/history or /api/metrics/anomalies at all, and
+    -- (separately) swarm_metrics_history had stopped receiving new rows
+    -- the moment the Python app -- the only thing that ever wrote to it --
+    -- was retired. Both are fixed now: main.lua runs a copas thread that
+    -- samples fleet totals into that table every 5 minutes (see
+    -- metrics.capture_metrics_snapshot), and this page actually reads it.
     local body = html.page({
-      title = "Intel", eyebrow = "Admin", lede = "Trends, anomalies, and raw events.",
+      title = "Errors And Metrics", eyebrow = "Intel", lede = "Trends, anomalies, and raw events.",
       body = [[
-        <div id="intel-metrics"></div>
-        <h3>Recent Events</h3>
-        <div id="intel-events"></div>
+        <div id="intel-anomaly-banner"></div>
+        <div class="panel wide">
+          <div class="section-head"><h2>24h Trends</h2></div>
+          <div class="trend-chart-grid" id="intel-trends"></div>
+        </div>
+        <div class="dashboard-grid">
+          <div class="panel wide"><div class="section-head"><h2>Events</h2></div><div id="intel-events"></div></div>
+          <div class="panel"><div class="section-head"><h2>Metrics</h2></div><div id="intel-metrics"></div></div>
+          <div class="panel"><div class="section-head"><h2>Stability</h2></div><div id="intel-stability"></div></div>
+        </div>
       ]],
     })
-    local script = [[
+    local script = [=[
+      const TREND_METRICS = [
+        { key: "queued_tracks", label: "Queued Tracks (24h)", color: "var(--accent)" },
+        { key: "active_bots", label: "Active Bots (24h)", color: "var(--ok)" },
+      ];
+      const TREND_W = 560, TREND_H = 160, TREND_PAD = { top: 12, right: 14, bottom: 22, left: 14 };
+      function intelEsc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+      function fmtTime(iso) { const d = new Date(iso); return Number.isFinite(d.getTime()) ? d.toLocaleString() : String(iso || ""); }
+      function renderTrendChart(points, label, color, anomalies) {
+        const safePoints = (points || []).filter((p) => p && p.captured_at);
+        const gid = "trend-gradient-" + label.replace(/[^a-z0-9]/gi, "");
+        if (!safePoints.length) {
+          return `<div class="trend-chart trend-chart-empty"><div class="empty-state">No ${intelEsc(label || "metric")} history yet</div></div>`;
+        }
+        const values = safePoints.map((p) => Number(p.metric_value) || 0);
+        const times = safePoints.map((p) => new Date(p.captured_at).getTime());
+        const minValue = Math.min(0, ...values), maxValue = Math.max(1, ...values);
+        const minTime = Math.min(...times), maxTime = Math.max(...times);
+        const innerW = TREND_W - TREND_PAD.left - TREND_PAD.right, innerH = TREND_H - TREND_PAD.top - TREND_PAD.bottom;
+        const xFor = (i) => TREND_PAD.left + ((times[i] - minTime) / (maxTime - minTime || 1)) * innerW;
+        const yFor = (v) => TREND_PAD.top + innerH - ((v - minValue) / (maxValue - minValue || 1)) * innerH;
+        const linePath = safePoints.map((_, i) => `${i === 0 ? "M" : "L"}${xFor(i).toFixed(2)},${yFor(values[i]).toFixed(2)}`).join(" ");
+        const areaPath = `${linePath} L${xFor(safePoints.length - 1).toFixed(2)},${(TREND_PAD.top + innerH).toFixed(2)} L${xFor(0).toFixed(2)},${(TREND_PAD.top + innerH).toFixed(2)} Z`;
+        const latest = values[values.length - 1];
+        const anomalyTimes = new Set((anomalies || []).map((p) => p.captured_at));
+        const anomalyCircles = safePoints.map((p, i) => anomalyTimes.has(p.captured_at)
+          ? `<circle cx="${xFor(i)}" cy="${yFor(values[i])}" r="4.5" fill="var(--danger)" stroke="var(--panel)" stroke-width="1.5"><title>Anomaly: ${values[i]} at ${intelEsc(fmtTime(p.captured_at))}</title></circle>` : "").join("");
+        return `
+          <div class="trend-chart" data-trend-chart data-points='${JSON.stringify(safePoints.map((p, i) => ({ x: xFor(i), y: yFor(values[i]), value: values[i], time: p.captured_at })))}'>
+            <div class="trend-chart-head"><span>${intelEsc(label)}</span><strong>${latest}</strong></div>
+            <svg viewBox="0 0 ${TREND_W} ${TREND_H}" class="trend-chart-svg" role="img" aria-label="${intelEsc(label)} trend, latest value ${latest}">
+              <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity="0.28"/><stop offset="100%" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
+              <line x1="${TREND_PAD.left}" x2="${TREND_W - TREND_PAD.right}" y1="${TREND_PAD.top + innerH}" y2="${TREND_PAD.top + innerH}" class="trend-chart-axis"/>
+              <path d="${areaPath}" fill="url(#${gid})" stroke="none"/>
+              <path d="${linePath}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              ${anomalyCircles}
+            </svg>
+            <div class="trend-chart-tooltip trend-chart-tooltip-muted"><span>Hover the chart for a point-in-time reading.</span></div>
+          </div>
+        `;
+      }
+      function wireTrendHover(container) {
+        container.querySelectorAll("[data-trend-chart]").forEach((chart) => {
+          const svg = chart.querySelector("svg");
+          const tooltip = chart.querySelector(".trend-chart-tooltip");
+          const points = JSON.parse(chart.getAttribute("data-points") || "[]");
+          if (!points.length) return;
+          svg.addEventListener("mousemove", (e) => {
+            const rect = svg.getBoundingClientRect();
+            const relX = ((e.clientX - rect.left) / rect.width) * TREND_W;
+            let nearest = 0, nearestDist = Infinity;
+            points.forEach((p, i) => { const d = Math.abs(p.x - relX); if (d < nearestDist) { nearestDist = d; nearest = i; } });
+            const p = points[nearest];
+            tooltip.className = "trend-chart-tooltip";
+            tooltip.innerHTML = `<strong>${p.value}</strong><span>${intelEsc(fmtTime(p.time))}</span>`;
+          });
+          svg.addEventListener("mouseleave", () => {
+            tooltip.className = "trend-chart-tooltip trend-chart-tooltip-muted";
+            tooltip.innerHTML = "<span>Hover the chart for a point-in-time reading.</span>";
+          });
+        });
+      }
+      async function loadTrends() {
+        try {
+          const results = await Promise.all(TREND_METRICS.map((m) =>
+            Promise.all([
+              swarmFetch(`/api/metrics/history?metric=${m.key}&hours=24`).catch(() => ({ points: [] })),
+              swarmFetch(`/api/metrics/anomalies?metric=${m.key}&hours=24`).catch(() => ({ anomalies: [] })),
+            ])
+          ));
+          const container = document.getElementById("intel-trends");
+          container.innerHTML = results.map(([hist, anom], i) =>
+            renderTrendChart(hist.points, TREND_METRICS[i].label, TREND_METRICS[i].color, anom.anomalies)).join("");
+          wireTrendHover(container);
+          const anomalyCount = results.reduce((sum, [, anom]) => sum + (anom.anomalies || []).length, 0);
+          document.getElementById("intel-anomaly-banner").innerHTML = anomalyCount
+            ? `<div class="notice notice-error">${anomalyCount} anomal${anomalyCount === 1 ? "y" : "ies"} flagged in the last 24h — points marked on the trend charts above deviate sharply from the window average.</div>`
+            : "";
+        } catch { /* ignore */ }
+      }
       async function loadIntel() {
         try {
-          const [metrics, stability, events] = await Promise.all([
+          const [metricsRes, stability, events] = await Promise.all([
             swarmFetch("/api/metrics"), swarmFetch("/api/stability"), swarmFetch("/api/events?limit=80"),
           ]);
-          document.getElementById("intel-metrics").innerHTML =
-            '<pre class="json-panel">' + JSON.stringify({ metrics, stability }, null, 2).replace(/</g, "&lt;") + "</pre>";
+          document.getElementById("intel-metrics").innerHTML = '<pre class="json-panel">' + JSON.stringify(metricsRes, null, 2).replace(/</g, "&lt;") + "</pre>";
+          document.getElementById("intel-stability").innerHTML = '<pre class="json-panel">' + JSON.stringify(stability, null, 2).replace(/</g, "&lt;") + "</pre>";
           const rows = (events.events || []).map((e) =>
             `<tr><td>${e.timestamp||""}</td><td>${(e.title||e.type||"").replace(/</g,"&lt;")}</td><td>${(e.level||"").replace(/</g,"&lt;")}</td></tr>`).join("");
           document.getElementById("intel-events").innerHTML =
@@ -361,7 +455,9 @@ function M.register(cfg)
         } catch (err) { swarmToast("Failed to load intel.", "error"); }
       }
       swarmLiveRefresh(loadIntel, 5000);
-    ]]
+      loadTrends();
+      swarmLiveRefresh(loadTrends, 60000);
+    ]=]
     return page_shell(req, a, "/intel", "Intel", body, script)
   end)
 

@@ -102,6 +102,48 @@ function M.get_metrics_snapshot(music_bots)
   return { generated_at = os.date("!%Y-%m-%dT%H:%M:%SZ"), totals = totals, bots = bots }
 end
 
+function M.record_metric_sample(metric_key, metric_value, guild_id)
+  -- The live swarm_metrics_history table has no DEFAULT on captured_at
+  -- (verified via information_schema.columns) -- an INSERT that omits it
+  -- leaves the column NULL, and get_metrics_history()'s
+  -- "captured_at > NOW() - interval" filter silently drops every NULL row,
+  -- so the chart would stay empty forever even though rows were being
+  -- written successfully. Set it explicitly instead of trusting a default
+  -- that doesn't exist.
+  local ok, err = pcall(db.execute,
+    "accountlogins",
+    "INSERT INTO swarm_metrics_history (captured_at, metric_key, metric_value, guild_id) VALUES (NOW(), %s, %s, %s)",
+    tostring(metric_key):sub(1, 60), tonumber(metric_value) or 0, guild_id and tostring(guild_id) or nil
+  )
+  if not ok then print("[swarmpanel-lua] failed to record metric sample " .. tostring(metric_key) .. ": " .. tostring(err)) end
+end
+
+-- Port of app/db/metrics_history.py's capture_metrics_snapshot(): samples a
+-- handful of key fleet totals into swarm_metrics_history so the Intel
+-- page's trend charts/anomaly detection have real data to read. This was
+-- explicitly NOT ported when the rest of metrics.lua's read paths were
+-- (the Lua rewrite had no background-task scheduler yet, see the module
+-- comment at the top of this file) -- swarm_metrics_history stopped
+-- receiving new rows the moment the Python app was retired, so every
+-- get_metrics_history()/get_metric_anomalies() call since has been
+-- querying a table that can never have anything newer than that cutover.
+function M.capture_metrics_snapshot(music_bots)
+  local ok, snapshot = pcall(M.get_metrics_snapshot, music_bots)
+  if not ok then
+    print("[swarmpanel-lua] capture_metrics_snapshot: metrics snapshot unavailable: " .. tostring(snapshot))
+    return
+  end
+  local totals = snapshot.totals or {}
+  local samples = {
+    active_bots = totals.bots, voice_connected = totals.voice_connected, playing = totals.playing,
+    queued_tracks = totals.queued_tracks, backup_tracks = totals.backup_tracks,
+    connected_guilds = totals.guilds, stale_metrics = totals.stale_metrics,
+  }
+  for key, value in pairs(samples) do
+    if value ~= nil then M.record_metric_sample(key, value) end
+  end
+end
+
 function M.get_stability_snapshot(music_bots)
   local metrics_result = {}
   pcall(function() metrics_result = M.get_metrics_snapshot(music_bots) end)

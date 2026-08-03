@@ -147,6 +147,7 @@ end
 
 function M.panel_class(prefs)
   prefs = prefs or M.DEFAULT_PREFERENCES
+  local notify_pos = choice(prefs, "notification_position", "br")
   return M.cls({
     "app-shell",
     "panel-theme-" .. choice(prefs, "theme_mode", "dark"),
@@ -162,6 +163,27 @@ function M.panel_class(prefs)
     "panel-stream-" .. choice(prefs, "stream_card_style", "telemetry"),
     "panel-dashboard-" .. choice(prefs, "dashboard_density", "command"),
     "panel-hover-" .. choice(prefs, "card_hover_effect", "lift"),
+    -- App.jsx applied notification_position as a SEPARATE class from
+    -- panelClassName()'s output (only added when non-default) -- matches
+    -- that exactly rather than folding it into a "panel-notify-br" no-op.
+    -- NOTE: every entry here must be a string (never bare `nil`) -- M.cls
+    -- iterates with ipairs(), which stops dead at the first hole in the
+    -- array, silently dropping every class listed after it. "" is the
+    -- correct "omit this one" value; M.cls already filters empty strings.
+    (notify_pos ~= "br") and ("panel-notify-" .. notify_pos) or "",
+    -- The following were saved/round-tripped by profiles.lua's
+    -- clean_panel_preferences and editable on /appearance, but had NO
+    -- class wiring anywhere -- not even in the original pre-rewrite React
+    -- app (verified via git history) -- so changing them never did
+    -- anything. Giving them real, if new, effect per the corresponding
+    -- CSS added below.
+    "panel-radius-" .. choice(prefs, "panel_radius", "medium"),
+    "panel-fontfamily-" .. choice(prefs, "panel_font_family", "system"),
+    "panel-nav-" .. choice(prefs, "sidebar_style", "full"),
+    "panel-detail-" .. choice(prefs, "bot_card_detail", "full"),
+    (prefs.show_bot_uptime == false) and "panel-hide-uptime" or "",
+    (prefs.show_queue_pressure == false) and "panel-hide-queue-pressure" or "",
+    (prefs.compact_sidebar == true) and "panel-compact-nav" or "",
   })
 end
 

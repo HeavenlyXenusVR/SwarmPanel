@@ -224,8 +224,69 @@ a {
   --surface-gap: 10px;
 }
 
+/* panel_radius ("Corner radius" on /appearance): saved and round-tripped by
+   profiles.lua since the field existed, but had no CSS anywhere -- not even
+   in the original pre-rewrite React app. Declared before .panel-shape-crisp
+   below so an explicit "Crisp" card-shape choice still wins for equal
+   selector specificity -- panel_radius is the general baseline, crisp is a
+   stronger, more specific opt-in for cards. */
+.panel-radius-sharp { --radius: 6px; }
+.panel-radius-medium { --radius: 14px; }
+.panel-radius-soft { --radius: 20px; }
+
 .panel-shape-crisp {
   --radius: 8px;
+}
+
+/* panel_font_family ("Panel font"): same story as panel_radius -- saved,
+   never applied. */
+.panel-fontfamily-serif { font-family: Georgia, "Times New Roman", serif; }
+.panel-fontfamily-mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+.panel-fontfamily-rounded { font-family: "Varela Round", "Segoe UI Rounded", ui-rounded, system-ui, sans-serif; }
+
+/* bot_card_detail ("Bot card detail"): compact mode drops the queue/backup
+   chip row and shrinks the thumbnail so more cards fit per row -- same
+   intent as panel-stream-compact but driven by its own preference field
+   instead of being folded into stream_card_style. */
+.panel-detail-compact .bot-card .chip-row {
+  display: none;
+}
+.panel-detail-compact .bot-card .bot-thumb,
+.panel-detail-compact .bot-card .bot-thumb-empty {
+  width: 40px;
+  height: 40px;
+}
+
+/* show_bot_uptime / show_queue_pressure ("Show bot uptime" / "Show queue
+   pressure" checkboxes on /appearance): both were saved but had no
+   corresponding UI element to hide in the first place. pages.lua's
+   dashboard now renders a real per-bot uptime stat and the existing queue
+   chip carries data-queue-pressure so these checkboxes have something real
+   to toggle. */
+.panel-hide-uptime [data-bot-uptime] {
+  display: none;
+}
+.panel-hide-queue-pressure [data-queue-pressure] {
+  display: none;
+}
+
+/* sidebar_style / compact_sidebar: the original design's config.js had both
+   fields (default "full"/false), but the app itself has only ever shipped a
+   topbar nav, never an actual sidebar -- these were never wired to
+   anything in the pre-rewrite app either. Repurposed onto the one nav that
+   does exist: sidebar_style controls the desktop topbar's label/icon
+   density (down to icon-only, or fully collapsed to just the mobile
+   hamburger even on desktop), compact_sidebar narrows the mobile slide-out
+   "More" sheet. Both are real, visible effects rather than reviving a
+   sidebar concept the UI doesn't have. */
+.panel-nav-compact .nav-desktop .nav-item span:not(.nav-glyph) {
+  display: none;
+}
+.panel-nav-hidden .nav-desktop {
+  display: none;
+}
+.panel-compact-nav .mobile-nav-sheet {
+  width: min(260px, 82vw);
 }
 
 .panel-font-large {
