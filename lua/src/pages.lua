@@ -304,11 +304,50 @@ function M.register(cfg)
       end
     end
 
+    -- Cross-bot Lavalink/NodeLink health (see dashboard.lua's
+    -- get_node_health() -- reads the shared Redis scoreboard every bot's
+    -- own Lavalink client writes to on every success/failure, so this is
+    -- one shared status, not per-bot). "degraded"/"stale" reuse the same
+    -- data-pill-danger/data-pill-off tones the bot cards above already use
+    -- for offline/idle, so a red pill here reads the same way it does
+    -- everywhere else on this page.
+    local NODE_HEALTH_TONE = { healthy = "live", degraded = "danger", stale = "off", unknown = "off" }
+    local NODE_HEALTH_LABEL = { healthy = "Healthy", degraded = "Degraded", stale = "Stale", unknown = "No data yet" }
+    local NODE_DISPLAY_NAME = { lavalink = "Lavalink (primary)", nodelink = "NodeLink (backup)" }
+    local node_pills = {}
+    for _, node_name in ipairs({ "lavalink", "nodelink" }) do
+      local h = (data.node_health or {})[node_name] or { status = "unknown" }
+      local tone = NODE_HEALTH_TONE[h.status] or "off"
+      local label = NODE_HEALTH_LABEL[h.status] or "Unknown"
+      local detail
+      if h.status == "healthy" and h.last_success_age_seconds then
+        detail = ("last success %ds ago"):format(h.last_success_age_seconds)
+      elseif h.consecutive_failures and h.consecutive_failures > 0 then
+        detail = ("%d consecutive failures"):format(h.consecutive_failures)
+      else
+        detail = "no recent activity"
+      end
+      node_pills[#node_pills + 1] = ([[
+        <div class="bot-card" style="--card-accent: #89b4fa">
+          <div class="bot-head">
+            <span class="bot-dot"></span>
+            <div class="bot-head-copy">
+              <h3>%s</h3>
+              <small>%s</small>
+            </div>
+            <span class="data-pill data-pill-%s">%s</span>
+          </div>
+        </div>
+      ]]):format(html.esc(NODE_DISPLAY_NAME[node_name] or node_name), html.esc(detail), tone, label)
+    end
+
     local body = html.page({
       title = "Dashboard",
       eyebrow = "Fleet Command",
       lede = "Live status across the swarm.",
       body = ([[
+        %s
+        <div class="bot-grid">%s</div>
         %s
         <div class="bot-grid" id="bot-cards">%s</div>
         %s
@@ -319,6 +358,7 @@ function M.register(cfg)
           </table>
         </div>
       ]]):format(
+        html.section_head("Audio Nodes"), html.join(node_pills),
         html.section_head("Bots"), html.join(bot_cards),
         html.section_head("Live Sessions"),
         #session_rows > 0 and html.join(session_rows) or ('<tr><td colspan="5">' .. html.esc("Nothing playing right now.") .. "</td></tr>")),

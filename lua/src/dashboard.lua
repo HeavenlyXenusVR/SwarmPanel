@@ -2,8 +2,85 @@
 -- app/db/helpers.py's _derive_session_state()/_detect_media_source().
 -- This is the core "GET /api/dashboard" data source.
 local db = require("db")
+local config = require("config")
+local Redis = require("swarmlua.redis")
 
 local M = {}
+
+-- Cross-bot node-health scoreboard (see Music/lua-shared/swarmlua/
+-- nodepool.lua) -- one shared Redis hash per Lavalink-protocol node
+-- ("swarm:node_health:lavalink" / "...:nodelink"), written by whichever of
+-- the 13 music bots most recently noticed a node degrade or recover. The
+-- panel only ever reads this (never writes) -- it's a dashboard widget, not
+-- a participant in node selection. Connects lazily and reconnects on
+-- demand (Redis.new() doesn't open a socket until first use), so a Redis
+-- outage degrades this one widget rather than the whole dashboard route
+-- (every call site below is pcall-wrapped).
+local NODE_NAMES = { "lavalink", "nodelink" }
+local _redis_client = nil
+local function redis_client()
+  if not _redis_client then
+    -- REDIS_HOST/REDIS_PORT (Music/.env) take priority; falls back to
+    -- parsing the pre-existing REDIS_URL (redis://host:port/db) so this
+    -- still works even against an older Music/.env that predates the
+    -- discrete host/port vars.
+    local host = config.env("REDIS_HOST", "")
+    local port = tonumber(config.env("REDIS_PORT", ""))
+    if host == "" or not port then
+      local url = config.env("REDIS_URL", "")
+      local url_host, url_port = url:match("^redis://([^:/]+):?(%d*)")
+      host = (host ~= "" and host) or url_host or "127.0.0.1"
+      port = port or tonumber(url_port) or 6379
+    end
+    _redis_client = Redis.new({ host = host, port = port })
+  end
+  return _redis_client
+end
+
+-- {lavalink = {status=, consecutive_failures=, last_success_age_seconds=,
+--              last_failure_age_seconds=, last_error=}, nodelink = {...}}
+-- status is "healthy" (a success within the last 5 minutes and no failure
+-- streak), "degraded" (>=3 consecutive failures within the last minute --
+-- matches nodepool.lua's own pick_best() threshold, so this label always
+-- agrees with which node the bots are actually preferring), or "unknown"
+-- (no data yet -- Redis unreachable, or this node has never been used).
+function M.get_node_health()
+  local out = {}
+  local ok, client = pcall(redis_client)
+  if not ok then
+    for _, name in ipairs(NODE_NAMES) do out[name] = { status = "unknown" } end
+    return out
+  end
+  local now = os.time()
+  for _, name in ipairs(NODE_NAMES) do
+    local hok, h = pcall(function() return client:hgetall("swarm:node_health:" .. name) end)
+    if not hok or not h or next(h) == nil then
+      out[name] = { status = "unknown" }
+    else
+      local failures = tonumber(h.consecutive_failures) or 0
+      local last_success_at = tonumber(h.last_success_at)
+      local last_failure_at = tonumber(h.last_failure_at)
+      local recent_failure = last_failure_at and (now - last_failure_at) < 60
+      local status = "unknown"
+      if recent_failure and failures >= 3 then
+        status = "degraded"
+      elseif last_success_at and (now - last_success_at) < 300 then
+        status = "healthy"
+      elseif last_success_at or last_failure_at then
+        status = "stale"
+      end
+      out[name] = {
+        status = status,
+        consecutive_failures = failures,
+        last_success_age_seconds = last_success_at and (now - last_success_at) or nil,
+        last_failure_age_seconds = last_failure_at and (now - last_failure_at) or nil,
+        last_error = h.last_error,
+        last_latency_ms = tonumber(h.last_latency_ms),
+      }
+    end
+  end
+  return out
+end
 
 -- home_channel_id is a snowflake and must stay a string end-to-end (see the
 -- precision note further down) — "truthy" here means non-nil/non-empty/not
@@ -65,11 +142,43 @@ local function derive_thumbnail_url(video_url)
   return "https://i.ytimg.com/vi/" .. video_id .. "/hqdefault.jpg"
 end
 
+-- Music/track-downloader (see Music/track-downloader/main.py) caches
+-- resolved YouTube tracks by video ID into /audiocache, shared read-only
+-- into this container (see docker-compose.yml's `- /mnt/fastssd/audiocache:
+-- /audiocache:ro` on the swarmpanel service -- mounted for exactly this,
+-- previously unused: nothing ever actually checked it, so every session
+-- showed as streaming live from YouTube even when it was really playing
+-- back from the local cache lib/swarmlua/lavalink.lua's _localize_track()
+-- transparently swaps in). video_id.* glob (extension varies by source
+-- format -- webm/opus/m4a all seen in practice) via a plain `ls`, not
+-- lfs.dir, since this project has no lfs dependency; cheap enough for a
+-- dashboard-scale (hundreds of rows) admin page.
+local AUDIOCACHE_DIR = "/audiocache"
+local function is_locally_cached(video_id)
+  if not video_id or video_id == "" then return false end
+  -- video_id only ever comes from extract_youtube_video_id()'s own
+  -- pattern captures (never raw user input reaching this file), but this
+  -- still guards against a shell-meaningful character reaching `ls` if
+  -- that ever changes.
+  if video_id:match("[^%w%-_]") then return false end
+  local ok, handle = pcall(io.popen, ("ls %s/%s.* 2>/dev/null"):format(AUDIOCACHE_DIR, video_id))
+  if not ok or not handle then return false end
+  local listing = handle:read("*l")
+  handle:close()
+  return listing ~= nil and listing ~= ""
+end
+
 local function detect_media_source(video_url)
   video_url = video_url or ""
   if video_url == "" then return { key = "unknown", label = "Unknown" } end
   local host = video_url:match("^https?://([^/]+)")
-  if host and YOUTUBE_HOSTS[host:lower()] then return { key = "youtube", label = "YouTube" } end
+  if host and YOUTUBE_HOSTS[host:lower()] then
+    local video_id = extract_youtube_video_id(video_url)
+    if is_locally_cached(video_id) then
+      return { key = "local_cache", label = "Cached (local)" }
+    end
+    return { key = "youtube", label = "YouTube" }
+  end
   if host and host:lower():match("soundcloud%.com$") then return { key = "soundcloud", label = "SoundCloud" } end
   if host then return { key = "link", label = "Direct Link" } end
   return { key = "search", label = "Search" }
@@ -606,9 +715,16 @@ function M.get_dashboard_data(music_bots)
     medic_summary = aria_medic_summary,
   }
 
+  -- pcall'd: Redis being unreachable must degrade to node_health.*=unknown,
+  -- not take the whole dashboard route down (get_node_health() already
+  -- pcalls its own Redis calls internally, but wrapping the call itself too
+  -- guards against a require-time/connection-construction failure).
+  local node_health_ok, node_health = pcall(M.get_node_health)
+
   return {
     generated_at = os.date("!%Y-%m-%dT%H:%M:%SZ"),
     bots = bots,
+    node_health = node_health_ok and node_health or { lavalink = { status = "unknown" }, nodelink = { status = "unknown" } },
   }
 end
 
