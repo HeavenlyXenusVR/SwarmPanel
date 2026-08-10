@@ -123,6 +123,81 @@ function M.send_discord_webhook_content(webhook_url, content, opts)
   return status < 400, status, raw
 end
 
+-- ---------------------------------------------------------------------------
+-- Bot-authenticated Discord REST calls (DM-based account verification).
+-- Distinct from the webhook path above: this uses a real bot identity
+-- (Authorization: Bot <token>) that can open a DM channel directly with any
+-- Discord user who shares a server with it and allows DMs from server
+-- members -- Discord does not allow bots to message arbitrary strangers
+-- with no shared server, and there is no way around that from this side.
+-- Mirrors the Image Gallery app's discord_bot.lua (same product, proven
+-- design), ported onto this file's ssl.https+copas client instead of
+-- copas.http since that's this codebase's established HTTP pattern.
+-- ---------------------------------------------------------------------------
+
+local function http_bot_call(method, path, token, payload)
+  local body = payload and cjson.encode(payload) or nil
+  local response_body = {}
+  local headers = {
+    ["Authorization"] = "Bot " .. tostring(token),
+    ["User-Agent"] = "SwarmPanel-Lua (https://github.com/, 1.0)",
+  }
+  if body then
+    headers["Content-Type"] = "application/json"
+    headers["Content-Length"] = tostring(#body)
+  end
+  local ok, status = https.request({
+    url = "https://discord.com/api/v10" .. path,
+    method = method,
+    headers = headers,
+    source = body and ltn12.source.string(body) or nil,
+    sink = ltn12.sink.table(response_body),
+  })
+  local raw = table.concat(response_body)
+  if not ok then return nil, "request failed: " .. tostring(status) end
+  local decode_ok, decoded = pcall(cjson.decode, raw ~= "" and raw or "{}")
+  return status, (decode_ok and type(decoded) == "table") and decoded or {}
+end
+
+-- Opens (or reuses) a DM channel with discord_user_id and sends `content`.
+-- Returns true on success, or false + a user-facing error message. Fails
+-- closed on any ambiguity (network error, non-2xx, missing channel id)
+-- rather than reporting false success -- same contract Image Gallery's
+-- discord_bot.lua already proved out.
+function M.send_discord_dm(bot_token, discord_user_id, content)
+  if not bot_token or bot_token == "" then
+    return false, "Discord DM verification isn't configured on this server yet."
+  end
+  local digits = tostring(discord_user_id or ""):match("^%d+$")
+  if not digits then
+    return false, "That doesn't look like a valid Discord User ID (numbers only)."
+  end
+  local status1, channel = http_bot_call("POST", "/users/@me/channels", bot_token, { recipient_id = digits })
+  local code1 = tonumber(status1) or 0
+  if code1 < 200 or code1 >= 300 or not channel.id then
+    return false, "Could not open a DM with that account -- make sure you share a server with the verification bot and allow direct messages from server members."
+  end
+  local status2, err_payload = http_bot_call("POST", "/channels/" .. channel.id .. "/messages", bot_token, { content = content })
+  local code2 = tonumber(status2) or 0
+  if code2 < 200 or code2 >= 300 then
+    local reason = err_payload and err_payload.message
+    return false, reason and ("Discord rejected the message: " .. reason) or ("Discord rejected the message: " .. tostring(status2))
+  end
+  return true, nil
+end
+
+-- Best-effort username lookup (cosmetic "Verified as @handle" display only)
+-- -- returns nil on any failure rather than erroring, since a successful
+-- DM-based verification must never be undone by a follow-up API hiccup on
+-- this purely cosmetic enrichment.
+function M.get_discord_username(bot_token, discord_user_id)
+  if not bot_token or bot_token == "" then return nil end
+  local status, payload = http_bot_call("GET", "/users/" .. tostring(discord_user_id), bot_token, nil)
+  local code = tonumber(status) or 0
+  if code < 200 or code >= 300 then return nil end
+  return payload.global_name or payload.username
+end
+
 -- Port of app/verification.py's _verify_guild_registration_proof(): resolves
 -- a webhook URL to its guild_id/channel_id/name via Discord's public
 -- (no bot-token-required) GET /webhooks/{id}/{token} endpoint, and confirms

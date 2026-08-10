@@ -59,7 +59,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    func register(username: String, guildId: String, password: String, email: String, verificationWebhookUrl: String) async {
+    func register(username: String, guildId: String, password: String, email: String, verificationWebhookUrl: String, discordUserId: String = "") async {
         errorMessage = nil
         do {
             let payload: SessionPayload = try await api.post(
@@ -69,7 +69,8 @@ final class AppState: ObservableObject {
                     guildId: guildId,
                     password: password,
                     email: email.isEmpty ? nil : email,
-                    verificationWebhookUrl: verificationWebhookUrl.isEmpty ? nil : verificationWebhookUrl
+                    verificationWebhookUrl: verificationWebhookUrl.isEmpty ? nil : verificationWebhookUrl,
+                    discordUserId: discordUserId.isEmpty ? nil : discordUserId
                 )
             )
             apply(payload)

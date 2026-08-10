@@ -1001,6 +1001,24 @@ function M.register(cfg)
       verification_sent = notify.send_verification_webhook_code(proof_url, verification_code, account.username, account.guild_id)
     end
 
+    -- Straight-to-account-owner alternative to the webhook proof above: if
+    -- no webhook was supplied but a Discord User ID was, verify via DM
+    -- instead -- mutually exclusive with the webhook path (a fresh account
+    -- only needs one proof of ownership), same as /api/session/verification-*
+    -- treats them post-registration.
+    local discord_user_id = tostring(body.discord_user_id or ""):match("^%s*(.-)%s*$")
+    if not verification_sent and discord_user_id ~= "" then
+      local dm_ok = pcall(accounts.update_account_discord_user_id, account.username, account.guild_id, discord_user_id)
+      if dm_ok then
+        accounts.issue_account_discord_dm_verification_code(account.username, account.guild_id, verification_code)
+        verification_sent = notify.send_discord_dm(
+          settings.discord_bot_token, discord_user_id,
+          string.format("SwarmPanel verification code: **%s**\nEnter this code in SwarmPanel to verify your account. It expires in %d minutes.",
+            verification_code, math.floor(settings.discord_dm_verification_ttl_seconds / 60))
+        ) and true or false
+      end
+    end
+
     local token = auth.issue_api_token(settings.session_secret, account.username, {
       role = "account", guild_id = account.guild_id, admin_mode = false, site_owner = false, moderator = false,
       ttl_seconds = settings.api_token_ttl_seconds,
@@ -1020,7 +1038,7 @@ function M.register(cfg)
   -- Rate limiting (_rate_limit_auth in the Python original) is now ported
   -- via ratelimit.lua, with the same per-route keys/limits as session.py.
   local function verification_is_complete(profile)
-    return profile ~= nil and (profile.webhook_verified == true or profile.email_verified == true)
+    return profile ~= nil and (profile.webhook_verified == true or profile.email_verified == true or profile.discord_dm_verified == true)
   end
 
   httpd.route("POST", "/api/session/resend-verification", function(req)
@@ -1035,16 +1053,66 @@ function M.register(cfg)
 
     local profile = accounts.get_account_profile(username, scoped_gid)
     if not profile then return 404, { detail = "Account profile not found" } end
-    if not profile.verification_webhook_url or profile.verification_webhook_url == "" then
-      return 400, { detail = "Set a Discord verification webhook before requesting a code." }
+    local has_webhook = profile.verification_webhook_url and profile.verification_webhook_url ~= ""
+    local has_discord = profile.discord_user_id and profile.discord_user_id ~= ""
+    if not has_webhook and not has_discord then
+      return 400, { detail = "Set a Discord verification webhook or Discord User ID before requesting a code." }
     end
     if verification_is_complete(profile) then
       return 200, { ok = true, verification_sent = false, already_verified = true }
     end
     local code = auth.verification_code()
-    profile = accounts.issue_account_webhook_verification_code(username, scoped_gid, code)
-    local sent = profile ~= nil and notify.send_verification_webhook_code(profile.verification_webhook_url, code, username, scoped_gid)
+    local sent
+    if has_webhook then
+      profile = accounts.issue_account_webhook_verification_code(username, scoped_gid, code)
+      sent = profile ~= nil and notify.send_verification_webhook_code(profile.verification_webhook_url, code, username, scoped_gid)
+    else
+      profile = accounts.issue_account_discord_dm_verification_code(username, scoped_gid, code)
+      local dm_ok = profile ~= nil and notify.send_discord_dm(
+        settings.discord_bot_token, profile.discord_user_id,
+        string.format("SwarmPanel verification code: **%s**\nEnter this code in SwarmPanel to verify your account. It expires in %d minutes.",
+          code, math.floor(settings.discord_dm_verification_ttl_seconds / 60))
+      )
+      sent = dm_ok and true or false
+    end
     return 200, { ok = sent and true or false, verification_sent = sent and true or false, already_verified = false }
+  end)
+
+  -- Discord DM verification enrollment: sets/clears the account's
+  -- discord_user_id and (if non-empty) immediately sends a fresh code via
+  -- notify.send_discord_dm -- direct counterpart to
+  -- /api/session/verification-webhook just below, for operators who'd
+  -- rather prove ownership of their own Discord account than stand up a
+  -- guild webhook.
+  httpd.route("POST", "/api/session/verification-discord", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local scoped_gid = account_guild_id(a)
+    local username = tostring(a.username or "")
+    if not scoped_gid or username == "" then return 403, { detail = "Guild account access required" } end
+    local rl_status, rl_body = ratelimit.check(
+      ("session-verification-discord:%s"):format(username:lower()), 8, 3600)
+    if rl_status then return rl_status, rl_body end
+
+    local body = req.json or {}
+    local discord_user_id = tostring(body.discord_user_id or ""):match("^%s*(.-)%s*$")
+
+    local ok, profile = pcall(accounts.update_account_discord_user_id, username, scoped_gid, discord_user_id)
+    if not ok then return 400, { detail = tostring(profile):gsub("^.-:%d+:%s*", "") } end
+    if not profile then return 404, { detail = "Account profile not found" } end
+    if discord_user_id == "" then
+      return 200, { ok = true, profile = profile, verification_sent = false }
+    end
+
+    local code = auth.verification_code()
+    profile = accounts.issue_account_discord_dm_verification_code(username, scoped_gid, code)
+    local sent, send_err = notify.send_discord_dm(
+      settings.discord_bot_token, discord_user_id,
+      string.format("SwarmPanel verification code: **%s**\nEnter this code in SwarmPanel to verify your account. It expires in %d minutes.",
+        code, math.floor(settings.discord_dm_verification_ttl_seconds / 60))
+    )
+    if not sent then return 400, { detail = send_err or "Could not send the DM." } end
+    return 200, { ok = true, profile = profile, verification_sent = true }
   end)
 
   httpd.route("POST", "/api/session/verification-webhook", function(req)
@@ -1106,8 +1174,24 @@ function M.register(cfg)
     if rl_status then return rl_status, rl_body end
     local body = req.json or {}
     local code = tostring(body.code or ""):gsub("%D+", ""):sub(1, 16)
-    if code == "" then return 400, { detail = "Enter the verification code from your Discord webhook message." } end
+    if code == "" then return 400, { detail = "Enter the verification code you received." } end
+    -- Tries both pending-code stores -- a given account only ever has one
+    -- actually populated at a time (issuing a webhook code never touches
+    -- the discord_dm_* columns and vice versa), so trying both here lets
+    -- this stay the single "enter your code" endpoint for either method.
     local profile = accounts.verify_account_webhook_code(username, scoped_gid, code, settings.email_verification_ttl_seconds)
+    if not profile then
+      -- Best-effort cosmetic username lookup ("Verified as @handle") done
+      -- BEFORE the actual verify call, since verify_account_discord_dm_code
+      -- clears discord_user_id's pending state as soon as it succeeds --
+      -- looking it up after would have nothing left to look up against on
+      -- a fresh get_account_profile, and a failed lookup here must never
+      -- block the verification itself succeeding.
+      local pending = accounts.get_account_profile(username, scoped_gid)
+      local handle = pending and pending.discord_user_id
+        and notify.get_discord_username(settings.discord_bot_token, pending.discord_user_id) or nil
+      profile = accounts.verify_account_discord_dm_code(username, scoped_gid, code, settings.discord_dm_verification_ttl_seconds, handle)
+    end
     if not profile then return 400, { detail = "Invalid verification code." } end
     return 200, { ok = true, profile = profile }
   end)

@@ -192,6 +192,15 @@ function M.load()
     end)(),
     smtp_use_tls = M.env_bool("PANEL_SMTP_USE_TLS", M.env_bool("SMTP_USE_TLS", true)),
     email_verification_ttl_seconds = math.max(300, tonumber(M.env("PANEL_EMAIL_VERIFICATION_TTL_SECONDS", "86400")) or 86400),
+
+    -- Discord DM account verification (notify.lua's send_discord_dm): a real
+    -- bot identity, distinct from the webhook-proof flow above, that can DM
+    -- a verification code straight to a user who supplies their own Discord
+    -- User ID -- same bot used for Image Gallery's DM verification. Blank by
+    -- default; every call site degrades to "not configured" rather than
+    -- erroring until PANEL_DISCORD_BOT_TOKEN is set.
+    discord_bot_token = M.env("PANEL_DISCORD_BOT_TOKEN", ""),
+    discord_dm_verification_ttl_seconds = math.max(60, tonumber(M.env("PANEL_DISCORD_DM_VERIFICATION_TTL_SECONDS", "600")) or 600),
   }
 
   if M.settings.session_secret == "" then

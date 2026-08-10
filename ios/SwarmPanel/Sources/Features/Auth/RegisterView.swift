@@ -12,7 +12,15 @@ struct RegisterView: View {
     @State private var password = ""
     @State private var email = ""
     @State private var verificationWebhookUrl = ""
+    @State private var discordUserId = ""
+    @State private var proofMethod: ProofMethod = .webhook
     @State private var isSubmitting = false
+
+    private enum ProofMethod: String, CaseIterable, Identifiable {
+        case webhook = "Server Webhook"
+        case discord = "Discord DM"
+        var id: String { rawValue }
+    }
 
     private var canSubmit: Bool {
         !username.isEmpty && !guildId.isEmpty && password.count >= 8 && !isSubmitting
@@ -46,16 +54,30 @@ struct RegisterView: View {
                 }
 
                 Section {
-                    HStack {
-                        IconChip(systemName: "link", tint: .purple)
-                        TextField("Discord webhook URL", text: $verificationWebhookUrl)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
+                    Picker("Proof method", selection: $proofMethod) {
+                        ForEach(ProofMethod.allCases) { method in Text(method.rawValue).tag(method) }
+                    }
+                    .pickerStyle(.segmented)
+                    if proofMethod == .webhook {
+                        HStack {
+                            IconChip(systemName: "link", tint: .purple)
+                            TextField("Discord webhook URL", text: $verificationWebhookUrl)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                        }
+                    } else {
+                        HStack {
+                            IconChip(systemName: "at", tint: .purple)
+                            TextField("Your Discord User ID", text: $discordUserId)
+                                .keyboardType(.numberPad)
+                        }
                     }
                 } header: {
                     Text("Guild ownership proof")
                 } footer: {
-                    Text("Create a webhook in your Discord server (Server Settings → Integrations → Webhooks) and paste its URL here — SwarmPanel uses it to confirm you control this guild before creating the account.")
+                    Text(proofMethod == .webhook
+                        ? "Create a webhook in your Discord server (Server Settings → Integrations → Webhooks) and paste its URL here — SwarmPanel uses it to confirm you control this guild before creating the account."
+                        : "SwarmPanel's verification bot DMs a code straight to this Discord account. Enable Developer Mode (Settings → Advanced), then right-click your name → Copy User ID. The bot can only DM accounts that share a server with it.")
                 }
 
                 if let error = appState.errorMessage {
@@ -102,7 +124,8 @@ struct RegisterView: View {
             guildId: guildId,
             password: password,
             email: email,
-            verificationWebhookUrl: verificationWebhookUrl
+            verificationWebhookUrl: proofMethod == .webhook ? verificationWebhookUrl : "",
+            discordUserId: proofMethod == .discord ? discordUserId : ""
         )
         if appState.isAuthenticated { dismiss() }
     }

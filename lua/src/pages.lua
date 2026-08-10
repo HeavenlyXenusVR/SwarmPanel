@@ -61,21 +61,41 @@ function M.register(cfg)
         <label class="field"><span>Password</span><input type="password" name="password" autocomplete="current-password"></label>
         <div data-auth-register hidden>
           <label class="field"><span>Guild ID</span><input type="text" name="guild_id"></label>
-          <label class="field"><span>Email</span><input type="email" name="email"></label>
-          <label class="field"><span>Discord Verification Webhook</span><input type="text" name="verification_webhook_url" placeholder="https://discord.com/api/webhooks/..."></label>
-          <div class="auth-proof-guide">
-            <div class="auth-proof-head">
-              <div><strong>How webhook proof works</strong>
-              <p>SwarmPanel verifies that the webhook URL belongs to the same Discord server as the guild ID you entered, then sends your real verification code there.</p></div>
+          <label class="field"><span>Email (optional)</span><input type="email" name="email"></label>
+          <div class="segmented" role="tablist">
+            <button type="button" class="active" data-auth-proof-mode="webhook">Server Webhook</button>
+            <button type="button" data-auth-proof-mode="discord">Discord DM</button>
+          </div>
+          <div data-auth-proof-webhook>
+            <label class="field"><span>Discord Verification Webhook</span><input type="text" name="verification_webhook_url" placeholder="https://discord.com/api/webhooks/..."></label>
+            <div class="auth-proof-guide">
+              <div class="auth-proof-head">
+                <div><strong>How webhook proof works</strong>
+                <p>SwarmPanel verifies that the webhook URL belongs to the same Discord server as the guild ID you entered, then sends your real verification code there.</p></div>
+              </div>
+              <div class="auth-proof-steps">
+                <article><span>1</span><div><strong>Open your Discord server settings</strong><p>Go to the server you want to register, then open a text channel you manage.</p></div></article>
+                <article><span>2</span><div><strong>Create a temporary webhook</strong><p>Channel Settings &rarr; Integrations &rarr; Webhooks &rarr; New Webhook. Copy the URL.</p></div></article>
+                <article><span>3</span><div><strong>Paste the URL here and register</strong><p>Remove the webhook after you finish verification.</p></div></article>
+              </div>
+              <div class="auth-proof-footnote">
+                <span>This prevents someone else from claiming your guild by typing its ID first.</span>
+                <span>The webhook only needs to stay active until the verification code is confirmed.</span>
+              </div>
             </div>
-            <div class="auth-proof-steps">
-              <article><span>1</span><div><strong>Open your Discord server settings</strong><p>Go to the server you want to register, then open a text channel you manage.</p></div></article>
-              <article><span>2</span><div><strong>Create a temporary webhook</strong><p>Channel Settings &rarr; Integrations &rarr; Webhooks &rarr; New Webhook. Copy the URL.</p></div></article>
-              <article><span>3</span><div><strong>Paste the URL here and register</strong><p>Remove the webhook after you finish verification.</p></div></article>
-            </div>
-            <div class="auth-proof-footnote">
-              <span>This prevents someone else from claiming your guild by typing its ID first.</span>
-              <span>The webhook only needs to stay active until the verification code is confirmed.</span>
+          </div>
+          <div data-auth-proof-discord hidden>
+            <label class="field"><span>Your Discord User ID</span><input type="text" name="discord_user_id" placeholder="1234567890123456"></label>
+            <div class="auth-proof-guide">
+              <div class="auth-proof-head">
+                <div><strong>How Discord DM proof works</strong>
+                <p>SwarmPanel's verification bot sends a real code straight to your Discord DMs. Enter it after registering to finish verifying.</p></div>
+              </div>
+              <div class="auth-proof-steps">
+                <article><span>1</span><div><strong>Enable Developer Mode</strong><p>Discord Settings &rarr; Advanced &rarr; Developer Mode.</p></div></article>
+                <article><span>2</span><div><strong>Copy your User ID</strong><p>Right-click your own name or avatar anywhere in Discord &rarr; Copy User ID.</p></div></article>
+                <article><span>3</span><div><strong>Share a server with the bot first</strong><p>Bots can only DM accounts that share a server with them and allow DMs from server members.</p></div></article>
+              </div>
             </div>
           </div>
         </div>
@@ -87,7 +107,28 @@ function M.register(cfg)
         const authLede = document.getElementById("auth-lede");
         const authSubmit = document.getElementById("auth-submit");
         const registerFields = document.querySelector("[data-auth-register]");
+        const proofWebhookBox = document.querySelector("[data-auth-proof-webhook]");
+        const proofDiscordBox = document.querySelector("[data-auth-proof-discord]");
         let authMode = "login";
+        let proofMode = "webhook";
+        function applyProofMode() {
+          proofWebhookBox.hidden = proofMode !== "webhook";
+          proofDiscordBox.hidden = proofMode !== "discord";
+          authForm.verification_webhook_url.required = authMode === "register" && proofMode === "webhook";
+          authForm.discord_user_id.required = authMode === "register" && proofMode === "discord";
+          authLede.textContent = authMode === "login"
+            ? "Sign in to reach fleet command."
+            : proofMode === "webhook"
+              ? "Register your guild identity with a Discord webhook that proves guild ownership and receives your verification code."
+              : "Register your guild identity, then verify straight from Discord DMs -- no webhook needed.";
+        }
+        document.querySelectorAll("[data-auth-proof-mode]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            proofMode = btn.getAttribute("data-auth-proof-mode");
+            document.querySelectorAll("[data-auth-proof-mode]").forEach((b) => b.classList.toggle("active", b === btn));
+            applyProofMode();
+          });
+        });
         document.querySelectorAll("[data-auth-mode]").forEach((btn) => {
           btn.addEventListener("click", () => {
             authMode = btn.getAttribute("data-auth-mode");
@@ -95,10 +136,7 @@ function M.register(cfg)
             registerFields.hidden = authMode !== "register";
             authForm.password.required = authMode === "login";
             authForm.guild_id.required = authMode === "register";
-            authForm.verification_webhook_url.required = authMode === "register";
-            authLede.textContent = authMode === "login"
-              ? "Sign in to reach fleet command."
-              : "Register your guild identity with a Discord webhook that proves guild ownership and receives your verification code.";
+            applyProofMode();
             authSubmit.textContent = authMode === "login" ? "Login" : "Create Account";
           });
         });

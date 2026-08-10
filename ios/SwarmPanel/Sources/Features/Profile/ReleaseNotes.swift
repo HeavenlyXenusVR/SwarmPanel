@@ -16,6 +16,9 @@ let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"
 /// Static changelog shown on the "What's New" screen — updated by hand
 /// alongside each ios/vX.Y.Z tag, mirroring the tag's own release notes.
 let releaseNotes: [ReleaseNote] = [
+    ReleaseNote(version: "0.12.0", highlights: [
+        "Registration now offers Discord DM verification as an alternative to the server-webhook proof -- enter your Discord User ID and get a code sent straight to your DMs",
+    ]),
     ReleaseNote(version: "0.11.6", highlights: [
         "Controls now shows a plain-language preview of exactly what Send Control will do before you send it",
     ]),

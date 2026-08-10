@@ -14,6 +14,24 @@ local M = {}
 local SCHEMA = "accountlogins"
 local TABLE = "users"
 
+-- Discord DM verification columns, added self-healing (same
+-- ADD COLUMN IF NOT EXISTS-on-first-use pattern control.lua's
+-- ensure_overrides_table already established) rather than a one-shot
+-- migration script, since this module has no startup migration hook of its
+-- own to run one from. Cheap metadata-only ALTERs, safe to repeat on every
+-- call; pcall'd so a permissions hiccup degrades to "column doesn't exist
+-- yet" (caller sees the DB error) rather than taking down the request.
+local discord_columns_ensured = false
+local function ensure_discord_dm_columns()
+  if discord_columns_ensured then return end
+  pcall(db.execute, SCHEMA, "ALTER TABLE " .. TABLE .. " ADD COLUMN IF NOT EXISTS discord_user_id VARCHAR(32)")
+  pcall(db.execute, SCHEMA, "ALTER TABLE " .. TABLE .. " ADD COLUMN IF NOT EXISTS discord_username VARCHAR(120)")
+  pcall(db.execute, SCHEMA, "ALTER TABLE " .. TABLE .. " ADD COLUMN IF NOT EXISTS discord_dm_verified_at TIMESTAMP")
+  pcall(db.execute, SCHEMA, "ALTER TABLE " .. TABLE .. " ADD COLUMN IF NOT EXISTS discord_dm_verification_code_hash CHAR(64)")
+  pcall(db.execute, SCHEMA, "ALTER TABLE " .. TABLE .. " ADD COLUMN IF NOT EXISTS discord_dm_verification_sent_at TIMESTAMP")
+  discord_columns_ensured = true
+end
+
 local USERNAME_PATTERN = "^[%w_.-]+$"
 local EMAIL_PATTERN = "^[^@%s]+@[^@%s]+%.[^@%s]+$"
 
@@ -121,6 +139,7 @@ local PROFILE_COLUMNS = table.concat({
   "id", "username", "guild_id", "email", "email_verified_at",
   "verification_webhook_url", "verification_webhook_channel_id", "verification_webhook_name",
   "webhook_verified_at", "webhook_verification_sent_at",
+  "discord_user_id", "discord_username", "discord_dm_verified_at", "discord_dm_verification_sent_at",
   "password_hash", "display_name", "avatar_url", "bio",
   "profile_headline", "profile_tags", "profile_links", "profile_banner_url", "profile_banner_mode", "profile_card_style", "profile_social_mode",
   "favorite_bot", "theme_accent",
@@ -156,8 +175,10 @@ local function serialize_profile(row)
   profile.display_name = profile.display_name or profile.username
   profile.public_profile = db.tobool(profile.public_profile)
   profile.webhook_verified = profile.webhook_verified_at ~= nil
-  profile.verification_verified = (profile.webhook_verified_at ~= nil) or (profile.email_verified_at ~= nil)
-  profile.verification_pending = (profile.verification_webhook_url ~= nil and profile.verification_webhook_url ~= "") and not profile.verification_verified
+  profile.discord_dm_verified = profile.discord_dm_verified_at ~= nil
+  profile.verification_verified = (profile.webhook_verified_at ~= nil) or (profile.email_verified_at ~= nil) or (profile.discord_dm_verified_at ~= nil)
+  profile.verification_pending = ((profile.verification_webhook_url ~= nil and profile.verification_webhook_url ~= "")
+    or (profile.discord_user_id ~= nil and profile.discord_user_id ~= "")) and not profile.verification_verified
   profile.verification_webhook_configured = profile.verification_webhook_url ~= nil and profile.verification_webhook_url ~= ""
   profile.email_verified = profile.verification_verified
   profile.has_password = profile.password_hash ~= nil
@@ -789,6 +810,83 @@ function M.verify_account_webhook_code(username, guild_id, code, max_age_seconds
         webhook_verification_sent_at = NULL
       WHERE username = %s AND guild_id = %s]],
     row.username, row.guild_id
+  )
+  return M.get_account_profile(row.username, row.guild_id)
+end
+
+-- Discord DM verification: straight-to-account-owner alternative to the
+-- guild-webhook flow above, for operators who'd rather prove ownership of
+-- their own Discord account than stand up a channel webhook. Same
+-- code+TTL shape as the webhook path, just keyed on discord_user_id instead
+-- of verification_webhook_url, so /api/session/verification/verify (below)
+-- can check both in one query.
+function M.update_account_discord_user_id(username, guild_id, discord_user_id)
+  ensure_discord_dm_columns()
+  local uname = normalize_username(username)
+  if not uname then return nil end
+  local normalized_id = tostring(discord_user_id or ""):match("^%s*(.-)%s*$")
+  if normalized_id ~= "" and not normalized_id:match("^%d+$") then
+    error("Discord User ID must be numbers only.", 0)
+  end
+  if normalized_id == "" then normalized_id = nil end
+  db.execute(
+    SCHEMA,
+    [[UPDATE ]] .. TABLE .. [[ SET
+        discord_user_id = %s, discord_username = NULL,
+        discord_dm_verified_at = NULL, discord_dm_verification_code_hash = NULL, discord_dm_verification_sent_at = NULL
+      WHERE username = %s AND guild_id = %s]],
+    normalized_id, uname, guild_id
+  )
+  return M.get_account_profile(uname, guild_id)
+end
+
+function M.issue_account_discord_dm_verification_code(username, guild_id, code)
+  ensure_discord_dm_columns()
+  local uname = normalize_username(username)
+  if not uname then return nil end
+  local code_hash = auth.verification_token_hash(code)
+  db.execute(
+    SCHEMA,
+    [[UPDATE ]] .. TABLE .. [[ SET
+        discord_dm_verification_code_hash = %s,
+        discord_dm_verification_sent_at = CURRENT_TIMESTAMP
+      WHERE username = %s AND guild_id = %s
+        AND discord_user_id IS NOT NULL AND discord_user_id != ''
+        AND discord_dm_verified_at IS NULL]],
+    code_hash, uname, guild_id
+  )
+  return M.get_account_profile(uname, guild_id)
+end
+
+-- Port-alike of verify_account_webhook_code() for the DM path; also records
+-- discord_username (cosmetic "Verified as @handle" display) when the caller
+-- passes one along (best-effort lookup, see notify.lua's send_discord_dm doc).
+function M.verify_account_discord_dm_code(username, guild_id, code, max_age_seconds, discord_username)
+  ensure_discord_dm_columns()
+  local uname = normalize_username(username)
+  if not uname then return nil end
+  local code_hash = auth.verification_token_hash(code)
+  local row = db.fetchone(
+    SCHEMA,
+    [[SELECT username, guild_id FROM ]] .. TABLE .. [[
+      WHERE username = %s AND guild_id = %s
+        AND discord_user_id IS NOT NULL AND discord_user_id != ''
+        AND discord_dm_verification_code_hash = %s
+        AND discord_dm_verification_sent_at IS NOT NULL
+        AND discord_dm_verification_sent_at >= NOW() - (%s || ' seconds')::interval
+      LIMIT 1]],
+    uname, guild_id, code_hash, tostring(math.max(1, tonumber(max_age_seconds) or 1))
+  )
+  if not row then return nil end
+  db.execute(
+    SCHEMA,
+    [[UPDATE ]] .. TABLE .. [[ SET
+        discord_dm_verified_at = CURRENT_TIMESTAMP,
+        discord_username = COALESCE(%s, discord_username),
+        discord_dm_verification_code_hash = NULL,
+        discord_dm_verification_sent_at = NULL
+      WHERE username = %s AND guild_id = %s]],
+    discord_username, row.username, row.guild_id
   )
   return M.get_account_profile(row.username, row.guild_id)
 end

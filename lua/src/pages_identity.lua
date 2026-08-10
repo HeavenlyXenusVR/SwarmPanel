@@ -286,6 +286,27 @@ function M.register(cfg)
               <label class="field">New password<input type="password" name="password" minlength="8"></label>
               <button type="submit">Change password</button>
             </form>
+            <h3>Verification</h3>
+            <div class="panel form-panel" id="verification-panel">
+              <div id="verification-status"></div>
+              <div class="segmented" role="tablist">
+                <button type="button" class="active" data-verify-mode="webhook">Server Webhook</button>
+                <button type="button" data-verify-mode="discord">Discord DM</button>
+              </div>
+              <form id="verify-webhook-form" data-verify-webhook>
+                <label class="field">Discord Verification Webhook<input type="text" name="verification_webhook_url" placeholder="https://discord.com/api/webhooks/..."></label>
+                <button type="submit">Save &amp; Send Code</button>
+              </form>
+              <form id="verify-discord-form" data-verify-discord hidden>
+                <label class="field">Your Discord User ID<input type="text" name="discord_user_id" placeholder="1234567890123456"></label>
+                <button type="submit">Save &amp; Send Code</button>
+              </form>
+              <form id="verify-code-form">
+                <label class="field">Verification code<input type="text" name="code" inputmode="numeric" placeholder="123456"></label>
+                <button type="submit">Verify</button>
+                <button type="button" id="verify-resend">Resend Code</button>
+              </form>
+            </div>
           </div>
           </div>
         ]]):format(html.join(link_fields)),
@@ -325,8 +346,70 @@ function M.register(cfg)
               if (urlEl) urlEl.value = link.url || "";
             });
             updateProfilePreview();
+            renderVerificationStatus(p);
           } catch { /* ignore */ }
         })();
+        // Verification panel: both /api/session/verification-webhook and the
+        // newer /api/session/verification-discord (straight-DM alternative)
+        // had zero UI reaching them before this -- registration was the
+        // only place a webhook could ever be entered, and there was no way
+        // at all to add/change a verification method or enter a code after
+        // registering.
+        function renderVerificationStatus(p) {
+          const box = document.getElementById("verification-status");
+          if (p.verification_verified) {
+            box.innerHTML = '<div class="notice notice-success">Verified.</div>';
+          } else if (p.verification_pending) {
+            box.innerHTML = '<div class="notice">Verification pending -- enter the code you received below.</div>';
+          } else {
+            box.innerHTML = '<div class="notice">Not verified yet.</div>';
+          }
+          const wf = document.getElementById("verify-webhook-form");
+          if (wf.elements.verification_webhook_url) wf.elements.verification_webhook_url.value = p.verification_webhook_url || "";
+          const df = document.getElementById("verify-discord-form");
+          if (df.elements.discord_user_id) df.elements.discord_user_id.value = p.discord_user_id || "";
+        }
+        document.querySelectorAll("[data-verify-mode]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            document.querySelectorAll("[data-verify-mode]").forEach((b) => b.classList.toggle("active", b === btn));
+            const mode = btn.getAttribute("data-verify-mode");
+            document.querySelector("[data-verify-webhook]").hidden = mode !== "webhook";
+            document.querySelector("[data-verify-discord]").hidden = mode !== "discord";
+          });
+        });
+        document.getElementById("verify-webhook-form").addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const url = e.target.elements.verification_webhook_url.value.trim();
+          try {
+            const res = await swarmFetch("/api/session/verification-webhook", { method: "POST", body: JSON.stringify({ verification_webhook_url: url }) });
+            swarmToast(res.verification_sent ? "Code sent to your webhook." : "Saved.", "success");
+            renderVerificationStatus(res.profile || {});
+          } catch (err) { swarmToast(err.message, "error"); }
+        });
+        document.getElementById("verify-discord-form").addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const id = e.target.elements.discord_user_id.value.trim();
+          try {
+            const res = await swarmFetch("/api/session/verification-discord", { method: "POST", body: JSON.stringify({ discord_user_id: id }) });
+            swarmToast(res.verification_sent ? "Code sent via Discord DM." : "Saved.", "success");
+            renderVerificationStatus(res.profile || {});
+          } catch (err) { swarmToast(err.message, "error"); }
+        });
+        document.getElementById("verify-code-form").addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const code = e.target.elements.code.value.trim();
+          try {
+            const res = await swarmFetch("/api/session/verification/verify", { method: "POST", body: JSON.stringify({ code }) });
+            swarmToast("Verified.", "success");
+            renderVerificationStatus(res.profile || {});
+          } catch (err) { swarmToast(err.message, "error"); }
+        });
+        document.getElementById("verify-resend").addEventListener("click", async () => {
+          try {
+            const res = await swarmFetch("/api/session/resend-verification", { method: "POST" });
+            swarmToast(res.already_verified ? "Already verified." : (res.verification_sent ? "Code resent." : "Could not resend."), res.verification_sent || res.already_verified ? "success" : "error");
+          } catch (err) { swarmToast(err.message, "error"); }
+        });
         // Live preview -- public-profile-preview/-preview-card had CSS but no
         // consumer. Reads the CURRENT (unsaved) form state, same pattern as
         // Appearance's draft preview, so the operator sees roughly how the
@@ -483,6 +566,11 @@ function M.register(cfg)
                 <span>This is roughly how cards and accents will look with your current draft settings.</span>
               </div>
             </div>
+            <div class="chip-row" id="preview-mini-stats">
+              <span class="appearance-mini-stat" id="preview-accent-stat">Accent --</span>
+              <span class="appearance-mini-stat" id="preview-shape-stat">Cards --</span>
+              <span class="appearance-mini-stat" id="preview-hover-stat">Hover --</span>
+            </div>
             <p class="appearance-preview-note">Updates live as you edit below. Nothing is applied anywhere else until you hit Save.</p>
           </div>
         </div>
@@ -584,6 +672,11 @@ function M.register(cfg)
         document.getElementById("preview-theme-pill").textContent = themeMode.charAt(0).toUpperCase() + themeMode.slice(1);
         const density = f.elements.density ? f.elements.density.value : "comfortable";
         document.getElementById("preview-density-pill").textContent = density.charAt(0).toUpperCase() + density.slice(1);
+        document.getElementById("preview-accent-stat").textContent = "Accent " + accent;
+        const cardShape = f.elements.card_shape ? f.elements.card_shape.value : "soft";
+        document.getElementById("preview-shape-stat").textContent = "Cards " + (cardShape.charAt(0).toUpperCase() + cardShape.slice(1));
+        const hoverEffect = f.elements.card_hover_effect ? f.elements.card_hover_effect.value : "lift";
+        document.getElementById("preview-hover-stat").textContent = "Hover " + (hoverEffect.charAt(0).toUpperCase() + hoverEffect.slice(1));
       }
       document.getElementById("appearance-form").addEventListener("input", () => { markDirty(); updatePreview(); });
       document.getElementById("appearance-form").addEventListener("submit", async (e) => {

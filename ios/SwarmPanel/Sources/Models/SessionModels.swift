@@ -14,6 +14,10 @@ struct RegisterRequest: Encodable {
     let password: String
     let email: String?
     let verificationWebhookUrl: String?
+    /// Straight-to-account-owner alternative proof: the backend DMs a
+    /// verification code to this Discord User ID instead of a webhook when
+    /// verificationWebhookUrl is nil/empty and this is set.
+    let discordUserId: String?
 }
 
 /// Covers the response shape shared by GET /api/session, POST
