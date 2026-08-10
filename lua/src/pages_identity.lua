@@ -561,6 +561,7 @@ function M.register(cfg)
                 <span>Warm ember backdrop, red accent, crisp cards.</span>
               </button>
             </div>
+            <div class="appearance-preset-grid" id="server-preset-grid"></div>
           </div>
           <h3>Theme</h3>
           %s%s
@@ -677,19 +678,40 @@ function M.register(cfg)
         aurora_glass: { theme_mode: "dark", background_mode: "aurora", accent_color: "#7ee787", card_shape: "soft", card_hover_effect: "glow" },
         ember_signal: { theme_mode: "dark", background_mode: "ember", accent_color: "#f38ba8", card_shape: "crisp", card_hover_effect: "border" },
       };
-      document.querySelectorAll("[data-preset]").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const preset = APPEARANCE_PRESETS[btn.getAttribute("data-preset")];
-          if (!preset) return;
-          const f = document.getElementById("appearance-form");
-          for (const [key, value] of Object.entries(preset)) {
-            if (f.elements[key]) f.elements[key].value = value;
-          }
-          updatePreview();
-          markDirty();
-          swarmToast("Preset applied -- Save to keep it.", "success");
-        });
+      // Delegated (not per-button) so server-provided presets fetched below
+      // -- added to the grid well after this script runs -- still work.
+      document.getElementById("appearance-form").addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-preset]");
+        if (!btn) return;
+        const preset = APPEARANCE_PRESETS[btn.getAttribute("data-preset")];
+        if (!preset) return;
+        const f = document.getElementById("appearance-form");
+        for (const [key, value] of Object.entries(preset)) {
+          if (f.elements[key]) f.elements[key].value = value;
+        }
+        updatePreview();
+        markDirty();
+        swarmToast("Preset applied -- Save to keep it.", "success");
       });
+      // Server-owned presets (looks.lua's PANEL_LOOKS, "new look bundles ship
+      // without a frontend redeploy") extend the three hardcoded ones above
+      // rather than replacing them -- GET /api/appearance/presets existed
+      // with no frontend caller at all until this.
+      (async () => {
+        try {
+          const res = await swarmFetch("/api/appearance/presets");
+          const grid = document.getElementById("server-preset-grid");
+          (res.panel || []).forEach((preset) => {
+            APPEARANCE_PRESETS[preset.id] = preset.patch;
+            const card = document.createElement("button");
+            card.type = "button";
+            card.className = "appearance-preset-card";
+            card.setAttribute("data-preset", preset.id);
+            card.innerHTML = `<strong>${preset.title.replace(/</g, "&lt;")}</strong><span>${(preset.note || "").replace(/</g, "&lt;")}</span>`;
+            grid.appendChild(card);
+          });
+        } catch { /* server presets are additive -- the 3 built-in ones still work */ }
+      })();
       const draftPill = document.getElementById("appearance-draft-pill");
       function markDirty() {
         draftPill.textContent = "Unsaved changes";
