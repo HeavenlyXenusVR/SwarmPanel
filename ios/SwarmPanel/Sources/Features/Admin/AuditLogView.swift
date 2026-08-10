@@ -105,7 +105,27 @@ private struct AuditLogRow: View {
                         .font(.caption2)
                         .foregroundStyle(SwarmTheme.textMuted)
                 }
-                if let details = entry.details, !details.isEmpty {
+                if let pairs = entry.diffPairs {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(pairs, id: \.key) { pair in
+                            HStack(spacing: 6) {
+                                Text(pair.key)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(SwarmTheme.textMuted)
+                                Text(pair.before)
+                                    .font(.caption2)
+                                    .strikethrough()
+                                    .foregroundStyle(SwarmTheme.danger)
+                                Image(systemName: "arrow.right")
+                                    .font(.caption2)
+                                    .foregroundStyle(SwarmTheme.textMuted)
+                                Text(pair.after)
+                                    .font(.caption2.bold())
+                                    .foregroundStyle(SwarmTheme.ok)
+                            }
+                        }
+                    }
+                } else if let details = entry.details, !details.isEmpty {
                     Text(details)
                         .font(.caption2)
                         .foregroundStyle(SwarmTheme.textMuted)

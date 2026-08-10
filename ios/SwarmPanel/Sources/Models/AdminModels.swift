@@ -19,6 +19,27 @@ struct AuditLogEntry: Decodable, Identifiable {
     let targetId: String?
     let details: String?
     let createdAt: String?
+
+    /// One row per changed field. `details` is server-produced JSON of the
+    /// shape `{"before": {...}, "after": {...}}` (audit.lua's diff_details) --
+    /// mirrors the web panel's Audit Log diff rendering (added after the raw
+    /// `details` string was previously just dumped verbatim, unreadable for
+    /// anything but the shortest actions). Returns nil (caller falls back to
+    /// showing the raw string) for any entry whose details aren't that shape,
+    /// e.g. plain string details like "succeeded_ids=3 failed=0".
+    var diffPairs: [(key: String, before: String, after: String)]? {
+        guard let details, let data = details.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([String: JSONValue].self, from: data),
+              case .object(let before)? = decoded["before"],
+              case .object(let after)? = decoded["after"] else {
+            return nil
+        }
+        let keys = Set(before.keys).union(after.keys).sorted()
+        guard !keys.isEmpty else { return nil }
+        return keys.map { key in
+            (key: key, before: before[key]?.displayString ?? "—", after: after[key]?.displayString ?? "—")
+        }
+    }
 }
 
 // MARK: - Alert Rules (GET /api/alert-rules) — read: moderator + admin;

@@ -16,6 +16,9 @@ let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"
 /// Static changelog shown on the "What's New" screen — updated by hand
 /// alongside each ios/vX.Y.Z tag, mirroring the tag's own release notes.
 let releaseNotes: [ReleaseNote] = [
+    ReleaseNote(version: "0.11.1", highlights: [
+        "Audit Log entries now show a readable before -> after diff for each changed field instead of a raw JSON blob",
+    ]),
     ReleaseNote(version: "0.11.0", highlights: [
         "Fleet Topology: \"Recover All\" sends RECOVER to every bot/guild session currently pending recovery in one tap, instead of one at a time",
         "Gallery Moderation: select multiple comments and delete them in one action",

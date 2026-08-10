@@ -237,6 +237,8 @@ function M.register(cfg)
         title = "Profile", eyebrow = "Account", lede = "Edit how you appear across the panel.",
         body = ([[
           <section class="profile-dashboard-grid" id="profile-stats"></section>
+          <div class="dashboard-grid profile-workbench operator-layout-command">
+          <div class="profile-editor">
           <form id="profile-form" class="panel form-panel">
             <h3>Identity</h3>
             <label class="field">Display name<input name="display_name" maxlength="80"></label>
@@ -265,15 +267,27 @@ function M.register(cfg)
             <button type="submit" class="button-link primary">Save</button>
           </form>
           <div id="profile-msg"></div>
-          <h3>Account</h3>
-          <form id="account-form" class="panel form-panel">
-            <label class="field">Email<input type="email" name="email"></label>
-            <button type="submit">Update email</button>
-          </form>
-          <form id="password-form" class="panel form-panel">
-            <label class="field">New password<input type="password" name="password" minlength="8"></label>
-            <button type="submit">Change password</button>
-          </form>
+          </div>
+          <div class="profile-account-panel">
+            <div class="panel public-profile-preview public-profile-preview-card" id="profile-preview-panel">
+              <p class="page-lede">Live Preview</p>
+              <div id="profile-live-preview">
+                <strong id="preview-display-name">—</strong>
+                <p id="preview-headline"></p>
+                <p id="preview-bio" class="muted"></p>
+              </div>
+            </div>
+            <h3>Account</h3>
+            <form id="account-form" class="panel form-panel">
+              <label class="field">Email<input type="email" name="email"></label>
+              <button type="submit">Update email</button>
+            </form>
+            <form id="password-form" class="panel form-panel">
+              <label class="field">New password<input type="password" name="password" minlength="8"></label>
+              <button type="submit">Change password</button>
+            </form>
+          </div>
+          </div>
         ]]):format(html.join(link_fields)),
       })
       script = [[
@@ -310,8 +324,22 @@ function M.register(cfg)
               if (labelEl) labelEl.value = link.label || "";
               if (urlEl) urlEl.value = link.url || "";
             });
+            updateProfilePreview();
           } catch { /* ignore */ }
         })();
+        // Live preview -- public-profile-preview/-preview-card had CSS but no
+        // consumer. Reads the CURRENT (unsaved) form state, same pattern as
+        // Appearance's draft preview, so the operator sees roughly how the
+        // public profile will read before committing to Save.
+        function updateProfilePreview() {
+          const f = document.getElementById("profile-form");
+          if (!f) return;
+          document.getElementById("profile-preview-panel").style.setProperty("--accent", f.theme_accent.value || "#89b4fa");
+          document.getElementById("preview-display-name").textContent = f.display_name.value || "Unnamed Operator";
+          document.getElementById("preview-headline").textContent = f.profile_headline.value || "";
+          document.getElementById("preview-bio").textContent = f.bio.value || "No bio yet.";
+        }
+        document.getElementById("profile-form").addEventListener("input", updateProfilePreview);
         document.getElementById("profile-form").addEventListener("submit", async (e) => {
           e.preventDefault();
           const f = e.target;
