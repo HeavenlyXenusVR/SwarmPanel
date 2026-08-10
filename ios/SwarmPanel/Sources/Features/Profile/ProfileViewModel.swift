@@ -8,6 +8,8 @@ final class ProfileViewModel: ObservableObject {
     @Published var isSaving = false
     @Published var errorMessage: String?
     @Published var statusMessage: String?
+    @Published var isVerified = false
+    @Published var hasAvatar = false
 
     private let api = APIClient.shared
 
@@ -17,6 +19,8 @@ final class ProfileViewModel: ObservableObject {
             displayName = response.profile.displayName ?? ""
             bio = response.profile.bio ?? ""
             isPublic = response.profile.publicProfile ?? true
+            isVerified = response.profile.verificationVerified ?? false
+            hasAvatar = !(response.profile.avatarUrl ?? "").isEmpty
         } catch {
             guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to load profile."

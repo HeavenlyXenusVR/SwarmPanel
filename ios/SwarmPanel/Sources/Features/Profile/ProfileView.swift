@@ -105,6 +105,17 @@ struct ProfileView: View {
                 }
                 .listRowBackground(SwarmTheme.panel)
 
+                Section {
+                    ChecklistRow(label: "Account verified", done: viewModel.isVerified)
+                    ChecklistRow(label: "Display name set", done: !viewModel.displayName.isEmpty)
+                    ChecklistRow(label: "Avatar set", done: viewModel.hasAvatar)
+                    ChecklistRow(label: "Bio written", done: !viewModel.bio.isEmpty)
+                    ChecklistRow(label: "Profile is public", done: viewModel.isPublic)
+                } header: {
+                    SectionLabel(title: "Getting Started")
+                }
+                .listRowBackground(SwarmTheme.panel)
+
                 if let error = viewModel.errorMessage {
                     Section { ErrorBanner(message: error) }
                         .listRowBackground(SwarmTheme.panel)
@@ -226,6 +237,22 @@ struct ProfileView: View {
                 await appState.refreshSession()
             }
             .notificationsBell(notificationsViewModel)
+        }
+    }
+}
+
+/// Read-only checklist row for the Getting Started section -- mirrors the
+/// web panel's check-row (CSS existed there too, also newly wired this
+/// round).
+private struct ChecklistRow: View {
+    let label: String
+    let done: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(done ? SwarmTheme.ok : SwarmTheme.textMuted)
+            Text(label).foregroundStyle(SwarmTheme.textPrimary)
         }
     }
 }

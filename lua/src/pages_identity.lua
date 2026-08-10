@@ -277,6 +277,8 @@ function M.register(cfg)
                 <p id="preview-bio" class="muted"></p>
               </div>
             </div>
+            <h3>Getting Started</h3>
+            <div class="panel form-panel" id="profile-checklist"></div>
             <h3>Account</h3>
             <form id="account-form" class="panel form-panel">
               <label class="field">Email<input type="email" name="email"></label>
@@ -347,6 +349,7 @@ function M.register(cfg)
             });
             updateProfilePreview();
             renderVerificationStatus(p);
+            renderProfileChecklist(p);
           } catch { /* ignore */ }
         })();
         // Verification panel: both /api/session/verification-webhook and the
@@ -368,6 +371,21 @@ function M.register(cfg)
           if (wf.elements.verification_webhook_url) wf.elements.verification_webhook_url.value = p.verification_webhook_url || "";
           const df = document.getElementById("verify-discord-form");
           if (df.elements.discord_user_id) df.elements.discord_user_id.value = p.discord_user_id || "";
+        }
+        // check-row had CSS (a compact labeled-checkbox row) but nothing
+        // ever rendered it -- a quick-glance setup checklist for a new
+        // account, read-only checkboxes reflecting real profile state.
+        function renderProfileChecklist(p) {
+          const items = [
+            ["Account verified", !!p.verification_verified],
+            ["Display name set", !!(p.display_name && p.display_name !== p.username)],
+            ["Avatar set", !!p.avatar_url],
+            ["Bio written", !!p.bio],
+            ["Profile is public", !!p.public_profile],
+          ];
+          document.getElementById("profile-checklist").innerHTML = items.map(([label, done]) => `
+            <label class="check-row"><input type="checkbox" disabled ${done ? "checked" : ""}><span>${label}</span></label>
+          `).join("");
         }
         document.querySelectorAll("[data-verify-mode]").forEach((btn) => {
           btn.addEventListener("click", () => {

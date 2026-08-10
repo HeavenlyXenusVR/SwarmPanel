@@ -16,6 +16,9 @@ let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"
 /// Static changelog shown on the "What's New" screen — updated by hand
 /// alongside each ios/vX.Y.Z tag, mirroring the tag's own release notes.
 let releaseNotes: [ReleaseNote] = [
+    ReleaseNote(version: "0.12.4", highlights: [
+        "Profile has a new Getting Started checklist showing verification/avatar/bio/visibility status at a glance",
+    ]),
     ReleaseNote(version: "0.12.3", highlights: [
         "Saved Queues can now be renamed (swipe on Controls), on both the app and the web panel",
     ]),
