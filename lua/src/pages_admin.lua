@@ -128,12 +128,63 @@ function M.register(cfg)
         <div class="panel form-panel">
           <label class="field">Schema<select id="db-schema"></select></label>
           <label class="field">Table<select id="db-table"></select></label>
-          <a id="db-csv" class="button-link" target="_blank">Export CSV</a>
+          <div class="actions-row">
+            <a id="db-csv" class="button-link" target="_blank">Export CSV</a>
+            <button type="button" id="db-truncate-table-btn" class="danger">Truncate Table</button>
+            <button type="button" id="db-truncate-schema-btn" class="danger">Truncate Schema</button>
+          </div>
         </div>
+        <div id="db-truncate-form"></div>
         <div id="db-data"></div>
       ]],
     })
+    -- Truncate Table/Schema previously had a full, double-confirmation-gated
+    -- backend (POST /api/database/truncate-table|schema, already used by the
+    -- iOS app's Database Viewer) with zero web UI reaching it at all.
+    -- Mirrors the same two-phrase confirmation the app requires exactly
+    -- (routes.lua's literal "TRUNCATE schema.table" / "TRUNCATE ALL schema"
+    -- text, plus an optional server-configured owner phrase).
     local script = [[
+      function renderTruncateForm(kind) {
+        const schema = document.getElementById("db-schema").value;
+        const table = document.getElementById("db-table").value;
+        const box = document.getElementById("db-truncate-form");
+        if (!schema || (kind === "table" && !table)) { box.innerHTML = ""; return; }
+        const expected = kind === "table" ? `TRUNCATE ${schema}.${table}` : `TRUNCATE ALL ${schema}`;
+        box.innerHTML = `
+          <form class="panel form-panel" data-truncate-kind="${kind}">
+            <div class="notice notice-error">This permanently deletes ${kind === "table" ? `every row in ${schema}.${table}` : `every table in the ${schema} schema`}. This cannot be undone.</div>
+            <label class="field">Type exactly: <code>${expected}</code><input type="text" name="confirm_text" required autocomplete="off"></label>
+            <label class="field">Owner confirmation phrase (if one is configured on this server)<input type="text" name="owner_confirm_text" autocomplete="off"></label>
+            <div class="actions-row">
+              <button type="submit" class="danger">Confirm Truncate</button>
+              <button type="button" id="db-truncate-cancel">Cancel</button>
+            </div>
+          </form>`;
+      }
+      document.getElementById("db-truncate-table-btn").addEventListener("click", () => renderTruncateForm("table"));
+      document.getElementById("db-truncate-schema-btn").addEventListener("click", () => renderTruncateForm("schema"));
+      document.getElementById("db-truncate-form").addEventListener("click", (e) => {
+        if (e.target.id === "db-truncate-cancel") document.getElementById("db-truncate-form").innerHTML = "";
+      });
+      document.getElementById("db-truncate-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const kind = e.target.getAttribute("data-truncate-kind");
+        const schema = document.getElementById("db-schema").value;
+        const table = document.getElementById("db-table").value;
+        const confirmText = e.target.elements.confirm_text.value;
+        const ownerConfirmText = e.target.elements.owner_confirm_text.value;
+        try {
+          const path = kind === "table" ? "/api/database/truncate-table" : "/api/database/truncate-schema";
+          const body = kind === "table"
+            ? { schema_name: schema, table_name: table, confirm_text: confirmText, owner_confirm_text: ownerConfirmText }
+            : { schema_name: schema, confirm_text: confirmText, owner_confirm_text: ownerConfirmText };
+          const res = await swarmFetch(path, { method: "POST", body: JSON.stringify(body) });
+          swarmToast(res.message || "Truncated.", "success");
+          document.getElementById("db-truncate-form").innerHTML = "";
+          loadTableData();
+        } catch (err) { swarmToast(err.message, "error"); }
+      });
       async function loadSchemas() {
         try {
           const res = await swarmFetch("/api/databases?include_tables=true");
@@ -187,8 +238,10 @@ function M.register(cfg)
             <div id="gallery-summary"></div>
             <div class="panel form-panel">
               <label class="field">Table<select id="gallery-table"></select></label>
-              <a id="gallery-csv-media" class="button-link" href="/api/image-gallery/admin/media/export.csv" target="_blank">Export Media CSV</a>
-              <a id="gallery-csv-users" class="button-link" href="/api/image-gallery/admin/users/export.csv" target="_blank">Export Users CSV</a>
+              <div class="actions-row">
+                <a id="gallery-csv-media" class="button-link" href="/api/image-gallery/admin/media/export.csv" target="_blank">Export Media CSV</a>
+                <a id="gallery-csv-users" class="button-link" href="/api/image-gallery/admin/users/export.csv" target="_blank">Export Users CSV</a>
+              </div>
             </div>
             <div id="gallery-bulk-actions" class="bulk-actions-bar" data-bulk-actions hidden>
               <button type="button" id="gallery-bulk-delete" class="danger">Delete selected</button>
