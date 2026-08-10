@@ -61,7 +61,7 @@ function M.register(cfg)
           const res = await swarmFetch("/api/swarm-accounts/admin?query=" + encodeURIComponent(q || "") + "&limit=100");
           const rows = ((res.data && res.data.users) || []).map((acc) => `
             <tr>
-              <td><input type="checkbox" data-select-row value="${acc.id}"></td>
+              <td class="table-cell-select"><input type="checkbox" data-select-row value="${acc.id}"></td>
               <td>${(acc.username||"").replace(/</g,"&lt;")}</td>
               <td>${acc.email_verified ? "verified" : "unverified"}</td>
               <td>${acc.panel_role||"user"}</td>
@@ -241,7 +241,7 @@ function M.register(cfg)
           const deletable = currentGalleryDeleteConfig();
           const thead = (deletable ? '<th><input type="checkbox" data-select-all></th>' : "") + cols.map((c) => `<th>${c}</th>`).join("") + (deletable ? "<th>Actions</th>" : "");
           const tbody = rows.map((r) => "<tr>"
-            + (deletable ? `<td><input type="checkbox" data-select-row value="${r.id}"></td>` : "")
+            + (deletable ? `<td class="table-cell-select"><input type="checkbox" data-select-row value="${r.id}"></td>` : "")
             + cols.map((c) => swarmTableCell(c, r[c])).join("")
             + (deletable ? `<td><button type="button" data-gallery-delete-row="${r.id}">Delete</button></td>` : "")
             + "</tr>").join("");

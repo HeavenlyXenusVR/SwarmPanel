@@ -48,7 +48,19 @@ enum JSONValue: Decodable {
     /// scalar as a nested object.
     var displayString: String {
         switch self {
-        case .string(let value): return value
+        case .string(let value):
+            // Postgres text columns storing JSON (panel_preferences,
+            // profile_tags/links, and similar) decode as a plain .string --
+            // this was previously shown as one unreadable run-on line in
+            // Database Viewer, the exact same gap the web panel's
+            // swarmTableCell() just got fixed for.
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.count > 2, trimmed.first == "{" || trimmed.first == "[",
+               let data = trimmed.data(using: .utf8),
+               let nested = try? JSONDecoder().decode(JSONValue.self, from: data) {
+                return nested.prettyPrinted
+            }
+            return value
         case .bool(let value): return value ? "true" : "false"
         case .null: return "—"
         case .number(let value):

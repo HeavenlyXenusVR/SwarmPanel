@@ -61,6 +61,22 @@ function swarmTableCell(colName, rawValue) {
   if (SWARM_MONO_COLUMN_RE.test(colName)) {
     return `<td class="table-cell-mono"><span class="table-mono">${text}</span></td>`;
   }
+  // JSON-shaped text columns (panel_preferences, profile_tags/links, and
+  // similar) previously rendered as one unreadable run-on line -- table-code/
+  // -cell-wide/-chip-row all had CSS with no consumer. A JSON array of plain
+  // strings/numbers becomes a chip row; anything else JSON-shaped becomes a
+  // formatted code block; everything else is unchanged.
+  const trimmed = typeof rawValue === "string" ? rawValue.trim() : "";
+  if (trimmed.length > 2 && (trimmed[0] === "{" || trimmed[0] === "[")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed) && parsed.every((v) => typeof v === "string" || typeof v === "number")) {
+        const chips = parsed.map((v) => `<span class="data-pill data-pill-off">${String(v).replace(/</g, "&lt;")}</span>`).join("");
+        return `<td class="table-cell-wide"><div class="chip-row table-chip-row">${chips || "—"}</div></td>`;
+      }
+      return `<td class="table-cell-wide"><pre class="table-code">${JSON.stringify(parsed, null, 2).replace(/</g, "&lt;")}</pre></td>`;
+    } catch { /* not actually JSON -- fall through to plain text */ }
+  }
   return `<td>${text}</td>`;
 }
 window.swarmTableCell = swarmTableCell;

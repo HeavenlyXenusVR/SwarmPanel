@@ -16,6 +16,9 @@ let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"
 /// Static changelog shown on the "What's New" screen — updated by hand
 /// alongside each ios/vX.Y.Z tag, mirroring the tag's own release notes.
 let releaseNotes: [ReleaseNote] = [
+    ReleaseNote(version: "0.12.6", highlights: [
+        "Database Viewer now pretty-prints JSON-shaped text columns instead of showing one unreadable run-on line",
+    ]),
     ReleaseNote(version: "0.12.5", highlights: [
         "Saved Queues can now be shared (swipe on Controls) as a track list",
     ]),
