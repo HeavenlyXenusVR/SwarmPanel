@@ -572,6 +572,78 @@ function M.register(cfg)
   end)
 
   -- -----------------------------------------------------------------
+  -- Learning (GET /api/music-intelligence) -- a fully-built backend
+  -- (dashboard.get_music_intelligence_summary: learned-track counts,
+  -- plays/finishes/skips/likes/dislikes totals, smart-recommendation
+  -- counts, and per-bot top-tracks-by-smart-score) with no page anywhere
+  -- that ever called it.
+  -- -----------------------------------------------------------------
+  httpd.route("GET", "/learning", function(req)
+    local a, status, headers = cfg.require_auth_page(req)
+    if not a then return status, "", headers end
+    local data = dashboard.get_dashboard_data(music_bots)
+    local bot_options = { '<option value="">All bots</option>' }
+    for _, bot in ipairs(data.bots) do
+      if bot.kind == "music" then
+        bot_options[#bot_options + 1] = ("<option value=\"%s\">%s</option>"):format(html.esc(bot.key), html.esc(bot.display_name))
+      end
+    end
+    local own_guild_id = (not a.admin_mode) and a.guild_id or nil
+    local guild_field = own_guild_id
+      and ('<label class="field">Guild ID<input type="text" name="guild_id" value="%s" readonly></label>'):format(html.esc(own_guild_id))
+      or '<label class="field">Guild ID (optional -- fleet-wide if blank)<input type="text" name="guild_id"></label>'
+
+    local body = html.page({
+      title = "Learning", eyebrow = "Music Intelligence", lede = "What the swarm's smart-recommendation engine has learned.",
+      body = ([[
+        <form id="learn-form" class="panel form-panel">
+          <label class="field">Bot<select name="bot_key">%s</select></label>
+          %s
+          <button type="submit" class="button-link primary">Load</button>
+        </form>
+        <div class="metric-grid" id="learn-totals"></div>
+        %s
+        <div id="learn-bots">%s</div>
+      ]]):format(html.join(bot_options), guild_field, html.section_head("By Bot"),
+        html.section_loading("Loading music intelligence", "Aggregating learned-track stats across the fleet.", 3)),
+    })
+    local script = [[
+      const learnForm = document.getElementById("learn-form");
+      async function loadIntelligence() {
+        const fd = new FormData(learnForm);
+        const params = new URLSearchParams();
+        if (fd.get("bot_key")) params.set("bot_key", fd.get("bot_key"));
+        if (fd.get("guild_id")) params.set("guild_id", fd.get("guild_id"));
+        try {
+          const res = await swarmFetch(`/api/music-intelligence?${params.toString()}`);
+          const t = (res.data && res.data.totals) || {};
+          document.getElementById("learn-totals").innerHTML = [
+            ["Learned Tracks", t.learned_tracks], ["Plays", t.plays], ["Finishes", t.finishes],
+            ["Skips", t.skips], ["Likes", t.likes], ["Dislikes", t.dislikes], ["Smart Recs", t.recommendations],
+          ].map(([label, value]) => `<div class="metric"><span class="metric-value">${value || 0}</span><span class="metric-label">${label}</span></div>`).join("");
+          const bots = (res.data && res.data.bots) || [];
+          document.getElementById("learn-bots").innerHTML = bots.length ? bots.map((bot) => `
+            <div class="panel wide">
+              <div class="section-head"><h2>${(bot.bot_display || bot.bot_key).replace(/</g, "&lt;")}</h2><p>${bot.learned_tracks || 0} learned tracks, ${bot.recommendations || 0} smart recommendations</p></div>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead><tr><th>Track</th><th>Plays</th><th>Finishes</th><th>Skips</th><th>Likes</th><th>Smart Score</th></tr></thead>
+                  <tbody>${(bot.top_tracks || []).map((tr) => `
+                    <tr><td>${(tr.title || "Unknown").replace(/</g, "&lt;")}</td><td>${tr.play_count || 0}</td><td>${tr.finish_count || 0}</td><td>${tr.skip_count || 0}</td><td>${tr.like_count || 0}</td><td>${tr.smart_score || 0}</td></tr>
+                  `).join("") || '<tr><td colspan="6">No learned tracks yet.</td></tr>'}</tbody>
+                </table>
+              </div>
+            </div>
+          `).join("") : '<div class="empty-state">No music intelligence data yet.</div>';
+        } catch (err) { swarmToast(err.message, "error"); }
+      }
+      learnForm.addEventListener("submit", (e) => { e.preventDefault(); loadIntelligence(); });
+      loadIntelligence();
+    ]]
+    return page_shell(req, a, "/learning", "Learning", body, script)
+  end)
+
+  -- -----------------------------------------------------------------
   -- Users
   -- -----------------------------------------------------------------
   httpd.route("GET", "/users", function(req)

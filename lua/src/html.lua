@@ -64,6 +64,7 @@ local NAV_ITEMS = {
   { to = "/", label = "Dashboard", glyph = "◧" },
   { to = "/controls", label = "Controls", glyph = "▶" },
   { to = "/leaderboard", label = "Leaderboard", glyph = "🏆" },
+  { to = "/learning", label = "Learning", glyph = "🧠" },
   { to = "/invites", label = "Invites", glyph = "🔗" },
   { to = "/users", label = "Users", glyph = "👥" },
   { to = "/friends", label = "Friends", glyph = "🙂" },
