@@ -70,8 +70,8 @@ function M.register(cfg)
       end
     end
     local guild_field = own_guild_id
-      and ('<label class="field">Guild ID<input type="text" name="guild_id" value="%s" readonly></label>'):format(html.esc(own_guild_id))
-      or ('<label class="field">Guild ID<input type="text" name="guild_id" required value="%s" placeholder="1247394560007471134"></label>'):format(html.esc(default_guild_id or ""))
+      and ('<label class="field field-inline">Guild ID<input type="text" name="guild_id" id="control-guild-id" value="%s" readonly><button type="button" class="field-inline-action" data-copy-target="#control-guild-id">Copy</button></label>'):format(html.esc(own_guild_id))
+      or ('<label class="field field-inline">Guild ID<input type="text" name="guild_id" id="control-guild-id" required value="%s" placeholder="1247394560007471134"><button type="button" class="field-inline-action" data-copy-target="#control-guild-id">Copy</button></label>'):format(html.esc(default_guild_id or ""))
 
     local body = html.page({
       title = "Controls", eyebrow = "Direct Control", lede = "Send a direct order to any bot in any guild.",
@@ -100,6 +100,12 @@ function M.register(cfg)
             <option value="radio">Radio</option>
             <option value="cinema">Cinema</option>
           </select></label>
+          <div class="command-preview-grid">
+            <div class="preview-card"><span>Bot</span><strong id="cmd-preview-bot">--</strong></div>
+            <div class="preview-card"><span>Action</span><strong id="cmd-preview-action">--</strong></div>
+            <div class="preview-card"><span>Guild</span><strong id="cmd-preview-guild">--</strong></div>
+            <div class="preview-card command-preview-primary" id="cmd-preview-summary">Choose a bot, action, and guild above to preview the order before sending.</div>
+          </div>
           <button type="submit" class="button-link primary">Send</button>
         </form>
         <div id="control-result"></div>
@@ -129,6 +135,30 @@ function M.register(cfg)
         FILTER: ["filter_mode"],
       };
       const form = document.getElementById("control-form");
+      // command-preview-grid/-primary had CSS but nothing rendered it -- a
+      // plain-language readout of what the form will actually send, kept in
+      // sync with every field change so it's accurate right up to submit.
+      function updateCommandPreview() {
+        const botLabel = form.bot_key.selectedOptions[0] ? form.bot_key.selectedOptions[0].textContent : "--";
+        const action = form.action.value || "--";
+        const guildId = form.guild_id.value || "--";
+        document.getElementById("cmd-preview-bot").textContent = botLabel;
+        document.getElementById("cmd-preview-action").textContent = action;
+        document.getElementById("cmd-preview-guild").textContent = guildId;
+        const summary = document.getElementById("cmd-preview-summary");
+        if (form.bot_key.value && form.guild_id.value) {
+          let detail = "";
+          if (action === "PLAY" && form.source_url.value) detail = ` with "${form.source_url.value}"`;
+          else if (action === "LOOP") detail = ` (${form.loop_mode.value})`;
+          else if (action === "FILTER") detail = ` (${form.filter_mode.value})`;
+          summary.textContent = `${botLabel} will run ${action}${detail} in guild ${guildId}.`;
+        } else {
+          summary.textContent = "Choose a bot, action, and guild above to preview the order before sending.";
+        }
+      }
+      form.addEventListener("input", updateCommandPreview);
+      form.addEventListener("change", updateCommandPreview);
+      updateCommandPreview();
       form.addEventListener("submit", async (e) => {
         e.preventDefault();
         const fd = new FormData(form);

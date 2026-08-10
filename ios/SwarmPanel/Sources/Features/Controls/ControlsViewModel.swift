@@ -26,6 +26,23 @@ final class ControlsViewModel: ObservableObject {
         guilds.first(where: { $0.id == guildId })?.channels?.filter(\.isVoice) ?? []
     }
 
+    /// Plain-language readout of exactly what Send Control will do, kept in
+    /// sync with every @Published field above since it's a computed
+    /// property -- mirrors the web panel's command-preview readout on the
+    /// same Controls page.
+    var commandPreviewSummary: String {
+        let botLabel = bots.first(where: { $0.key == selectedBotKey })?.label ?? selectedBotKey
+        var detail = ""
+        if action == .play, !sourceURL.isEmpty {
+            detail = " with \"\(sourceURL)\""
+        } else if action == .loop {
+            detail = " (\(loopMode))"
+        } else if action == .filter {
+            detail = " (\(filterMode))"
+        }
+        return "\(botLabel) will run \(action.rawValue)\(detail) in guild \(guildId)."
+    }
+
     func loadBots(defaultGuildId: String?) async {
         isLoadingBots = true
         defer { isLoadingBots = false }

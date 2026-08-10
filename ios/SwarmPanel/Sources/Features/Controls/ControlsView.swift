@@ -89,6 +89,11 @@ struct ControlsView: View {
                             ForEach(filterModes, id: \.self) { mode in Text(mode.capitalized).tag(mode) }
                         }
                     }
+                    if !viewModel.selectedBotKey.isEmpty && !viewModel.guildId.isEmpty {
+                        Text(viewModel.commandPreviewSummary)
+                            .font(.caption)
+                            .foregroundStyle(SwarmTheme.textMuted)
+                    }
                     Button {
                         Task { await viewModel.sendAction() }
                     } label: {

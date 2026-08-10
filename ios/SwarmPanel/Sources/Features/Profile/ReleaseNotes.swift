@@ -16,6 +16,9 @@ let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"
 /// Static changelog shown on the "What's New" screen — updated by hand
 /// alongside each ios/vX.Y.Z tag, mirroring the tag's own release notes.
 let releaseNotes: [ReleaseNote] = [
+    ReleaseNote(version: "0.11.6", highlights: [
+        "Controls now shows a plain-language preview of exactly what Send Control will do before you send it",
+    ]),
     ReleaseNote(version: "0.11.5", highlights: [
         "Accounts admin now shows a verified/unverified/moderator summary above the list, matching the web panel",
     ]),

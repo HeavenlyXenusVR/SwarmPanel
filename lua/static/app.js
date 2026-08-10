@@ -304,6 +304,22 @@ document.addEventListener("DOMContentLoaded", () => {
     document.addEventListener("mouseup", onUp);
   });
 
+  // Generic copy-to-clipboard button. Element contract:
+  // <button data-copy-target="#some-input-or-element-id">Copy</button>
+  // Delegated so it works for buttons added dynamically after
+  // DOMContentLoaded too.
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-copy-target]");
+    if (!btn) return;
+    const target = document.querySelector(btn.getAttribute("data-copy-target"));
+    if (!target) return;
+    const text = "value" in target ? target.value : target.textContent;
+    navigator.clipboard.writeText(text || "").then(
+      () => swarmToast("Copied.", "success"),
+      () => swarmToast("Copy failed.", "error")
+    );
+  });
+
   // Debounced search input helper. Element contract:
   // <input data-debounced-search>, dispatches a "swarm:search" CustomEvent
   // with {detail:{query}} on the input after 220ms. Delegated so inputs
