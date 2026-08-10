@@ -454,6 +454,29 @@ function M.register(cfg)
         busiest_bot = bot
       end
     end
+    -- Real Now Playing widget for the spotlight card (bot-playback-head/
+    -- dashboard-playback CSS existed with no consumer) -- the first session
+    -- actually playing right now, not just the deepest queue.
+    local spotlight_session = nil
+    for _, s in ipairs(all_sessions) do
+      if s.is_playing then spotlight_session = s; break end
+    end
+    local spotlight_playback = ""
+    if spotlight_session then
+      local duration = math.floor(spotlight_session.duration_seconds or 0)
+      local pct = (duration > 0) and math.min(100, math.floor(100 * (spotlight_session.position_seconds or 0) / duration)) or 0
+      spotlight_playback = ([[
+        <div class="bot-playback dashboard-playback" data-playback-counter data-position="%s" data-observed-at="%s" data-duration="%s" data-playing="true">
+          <div class="bot-playback-head"><strong>%s</strong><small>%s</small></div>
+          <div class="bot-playback-bar"><span data-playback-bar style="width:%d%%"></span></div>
+          <small data-playback-label></small>
+        </div>
+      ]]):format(
+        tostring(spotlight_session.position_seconds or 0), tostring(spotlight_session.position_observed_at or 0), tostring(spotlight_session.duration_seconds or 0),
+        html.esc(spotlight_session.title or "Now Playing"), html.esc(spotlight_session.bot_display or ""), pct
+      )
+    end
+
     local queue_leaders_bots = {}
     for _, bot in ipairs(data.bots) do
       if bot.kind == "music" and (bot.queue_depth or 0) > 0 then queue_leaders_bots[#queue_leaders_bots + 1] = bot end
@@ -478,6 +501,7 @@ function M.register(cfg)
           </div>
           <strong>%s</strong>
           <p>%s</p>
+          %s
           <div class="dashboard-spotlight-metrics">
             <article><span>Bots Online</span><strong>%d / %d</strong><small>heartbeat within 120s</small></article>
             <article><span>Live Sessions</span><strong>%d</strong><small>currently playing</small></article>
@@ -496,6 +520,7 @@ function M.register(cfg)
       live_count > 0 and " live" or " idle", live_count > 0 and "Active" or "Idle",
       busiest_bot and (busiest_bot.display_name .. (live_count > 0 and " is carrying live playback" or " has the deepest queue")) or "Fleet is quiet right now",
       busiest_bot and ("%d queued, %d live guild(s)"):format(busiest_bot.queue_depth or 0, busiest_bot.active_playing_count or 0) or "No active bot to highlight.",
+      spotlight_playback,
       online_bots, #data.bots, live_count, total_queue, total_backup, total_guilds,
       ((data.node_health or {}).lavalink or {}).status == "healthy" and "Healthy" or "Checking",
       (function()
