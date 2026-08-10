@@ -494,6 +494,25 @@ function M.register(cfg)
     -- of the panel's per-user look customization was simply unreachable
     -- even though the backend (profiles.lua/routes.lua) already accepted
     -- and stored all of them.
+    -- Admin mode already had a toggle in the topbar (data-admin-toggle,
+    -- html.lua's layout()) -- this is a second entry point to the exact
+    -- same /api/session/admin-mode call for operators who look for it in
+    -- Settings instead, not a new permission surface. Still site-owner-only
+    -- server-side (routes.lua's is_site_owner check) regardless of what
+    -- renders here.
+    local admin_toggle_section = a.site_owner and ([[
+      <div class="appearance-cluster">
+        <div class="appearance-cluster-head">
+          <h3>Admin Mode</h3>
+          <p>Switch between your normal guild-scoped view and the unrestricted admin view.</p>
+        </div>
+        <label class="field field-inline">
+          <span>Admin mode</span>
+          <input type="checkbox" id="settings-admin-mode-toggle" %s>
+        </label>
+      </div>
+    ]]):format(a.admin_mode and "checked" or "") or ""
+
     local body = html.page({
       title = "Appearance", eyebrow = "Look", lede = "Customize theme, layout, and motion.",
       body = ([[
@@ -502,6 +521,7 @@ function M.register(cfg)
             <span class="appearance-draft-pill clean" id="appearance-draft-pill">Saved</span>
           </div>
         </div>
+        %s
         <div class="dashboard-grid appearance-layout">
         <form id="appearance-form" class="panel form-panel appearance-form">
           <div class="appearance-cluster">
@@ -577,6 +597,7 @@ function M.register(cfg)
         </div>
         <div id="appearance-msg"></div>
       ]]):format(
+        admin_toggle_section,
         select_field("theme_mode", "Theme", { "dark", "light", "system" }),
         select_field("font_scale", "Font scale", { "normal", "large", "dense" }),
         select_field("panel_font_family", "Panel font", { "system", "serif", "mono", "rounded" }),
@@ -695,6 +716,20 @@ function M.register(cfg)
         } catch (err) { document.getElementById("appearance-msg").innerHTML = '<div class="notice notice-error">' + err.message + "</div>"; }
       });
       updatePreview();
+      const adminModeToggle = document.getElementById("settings-admin-mode-toggle");
+      if (adminModeToggle) {
+        adminModeToggle.addEventListener("change", async () => {
+          const enabled = adminModeToggle.checked;
+          try {
+            await swarmFetch("/api/session/admin-mode", { method: "POST", body: JSON.stringify({ enabled }) });
+            swarmToast(enabled ? "Admin mode on." : "Admin mode off.", "success");
+            window.location.reload();
+          } catch (err) {
+            adminModeToggle.checked = !enabled;
+            swarmToast(err.message, "error");
+          }
+        });
+      }
     ]]
     return page_shell(req, a, "/appearance", "Appearance", body, script)
   end)

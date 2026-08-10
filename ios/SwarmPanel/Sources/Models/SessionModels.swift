@@ -20,6 +20,11 @@ struct RegisterRequest: Encodable {
     let discordUserId: String?
 }
 
+/// Body for POST /api/session/admin-mode.
+struct AdminModeRequest: Encodable {
+    let enabled: Bool
+}
+
 /// Covers the response shape shared by GET /api/session, POST
 /// /api/session/login, and POST /api/session/register — all three return a
 /// superset/subset of the same fields (see app/routers/session.py), so one

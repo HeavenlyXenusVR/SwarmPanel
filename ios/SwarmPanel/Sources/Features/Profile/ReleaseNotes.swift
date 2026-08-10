@@ -16,6 +16,9 @@ let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"
 /// Static changelog shown on the "What's New" screen — updated by hand
 /// alongside each ios/vX.Y.Z tag, mirroring the tag's own release notes.
 let releaseNotes: [ReleaseNote] = [
+    ReleaseNote(version: "0.12.1", highlights: [
+        "Profile now has an Admin Mode toggle for owner accounts, matching the web panel's topbar switch",
+    ]),
     ReleaseNote(version: "0.12.0", highlights: [
         "Registration now offers Discord DM verification as an alternative to the server-webhook proof -- enter your Discord User ID and get a code sent straight to your DMs",
     ]),

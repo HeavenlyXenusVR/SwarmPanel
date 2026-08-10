@@ -49,6 +49,20 @@ struct ProfileView: View {
                 // is the reason they're in this app; burying it at the
                 // bottom of a long Form scroll under Account/Appearance/
                 // Discover made it easy to miss it was even there.
+                if appState.isOwner {
+                    Section {
+                        Toggle(isOn: Binding(
+                            get: { appState.isAdmin },
+                            set: { newValue in Task { await appState.setAdminMode(newValue) } }
+                        )) {
+                            IconRow(icon: "shield.lefthalf.filled", tint: .red, title: "Admin Mode")
+                        }
+                    } footer: {
+                        Text("Switches between your normal guild-scoped view and the unrestricted admin view.")
+                    }
+                    .listRowBackground(SwarmTheme.panel)
+                }
+
                 if appState.isAdmin || appState.isModerator || appState.canGallery {
                     Section {
                         if appState.isAdmin || appState.isModerator {

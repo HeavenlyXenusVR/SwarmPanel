@@ -80,6 +80,21 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Site-owner-only (routes.lua's /api/session/admin-mode enforces this
+    /// server-side regardless of what the app shows) toggle between the
+    /// normal guild-scoped view and the unrestricted admin view -- the web
+    /// panel's topbar has had this for a while; the app never did.
+    func setAdminMode(_ enabled: Bool) async {
+        errorMessage = nil
+        do {
+            let payload: SessionPayload = try await api.post("/api/session/admin-mode", body: AdminModeRequest(enabled: enabled))
+            apply(payload)
+        } catch {
+            guard !error.isCancellation else { return }
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to change admin mode."
+        }
+    }
+
     func logout() {
         api.token = nil
         stopRefreshLoop()

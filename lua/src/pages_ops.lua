@@ -69,9 +69,15 @@ function M.register(cfg)
         if first and first.guild_id then default_guild_id = first.guild_id; break end
       end
     end
+    -- Shows the guild's real NAME (resolved client-side from the bot's
+    -- Discord inventory, same data the voice/text channel pickers already
+    -- use) instead of a bare numeric ID -- the ID is still exactly what
+    -- gets submitted (this <select>'s value), just never what's displayed.
+    -- A scoped account gets exactly one <option> (its own guild) -- enabled,
+    -- not disabled, since a disabled field is excluded from FormData.
     local guild_field = own_guild_id
-      and ('<label class="field field-inline">Guild ID<input type="text" name="guild_id" id="control-guild-id" value="%s" readonly><button type="button" class="field-inline-action" data-copy-target="#control-guild-id">Copy</button></label>'):format(html.esc(own_guild_id))
-      or ('<label class="field field-inline">Guild ID<input type="text" name="guild_id" id="control-guild-id" required value="%s" placeholder="1247394560007471134"><button type="button" class="field-inline-action" data-copy-target="#control-guild-id">Copy</button></label>'):format(html.esc(default_guild_id or ""))
+      and ('<label class="field field-inline">Guild<select name="guild_id" id="control-guild-id" data-scoped="1"><option value="%s">Guild %s</option></select><button type="button" class="field-inline-action" data-copy-target="#control-guild-id">Copy ID</button></label>'):format(html.esc(own_guild_id), html.esc(own_guild_id))
+      or ('<label class="field field-inline">Guild<select name="guild_id" id="control-guild-id" required><option value="%s">%s</option></select><button type="button" class="field-inline-action" data-copy-target="#control-guild-id">Copy ID</button></label>'):format(html.esc(default_guild_id or ""), default_guild_id and ("Guild " .. html.esc(default_guild_id)) or "Choose a guild")
 
     local body = html.page({
       title = "Controls", eyebrow = "Direct Control", lede = "Send a direct order to any bot in any guild.",
@@ -141,17 +147,17 @@ function M.register(cfg)
       function updateCommandPreview() {
         const botLabel = form.bot_key.selectedOptions[0] ? form.bot_key.selectedOptions[0].textContent : "--";
         const action = form.action.value || "--";
-        const guildId = form.guild_id.value || "--";
+        const guildLabel = form.guild_id.selectedOptions[0] ? form.guild_id.selectedOptions[0].textContent : "--";
         document.getElementById("cmd-preview-bot").textContent = botLabel;
         document.getElementById("cmd-preview-action").textContent = action;
-        document.getElementById("cmd-preview-guild").textContent = guildId;
+        document.getElementById("cmd-preview-guild").textContent = guildLabel;
         const summary = document.getElementById("cmd-preview-summary");
         if (form.bot_key.value && form.guild_id.value) {
           let detail = "";
           if (action === "PLAY" && form.source_url.value) detail = ` with "${form.source_url.value}"`;
           else if (action === "LOOP") detail = ` (${form.loop_mode.value})`;
           else if (action === "FILTER") detail = ` (${form.filter_mode.value})`;
-          summary.textContent = `${botLabel} will run ${action}${detail} in guild ${guildId}.`;
+          summary.textContent = `${botLabel} will run ${action}${detail} in ${guildLabel}.`;
         } else {
           summary.textContent = "Choose a bot, action, and guild above to preview the order before sending.";
         }
@@ -241,10 +247,15 @@ function M.register(cfg)
         } catch { /* fall through */ }
         return null;
       }
+      let pendingGuildId = "";
       form.bot_key.addEventListener("change", async () => {
-        if (!form.guild_id.readOnly) {
-          const guild = await pickGuildForBot(form.bot_key.value);
-          if (guild) form.guild_id.value = guild;
+        if (form.guild_id.dataset.scoped !== "1") {
+          // Setting .value directly here would silently no-op -- the new
+          // bot's guild options (real names) haven't loaded yet, so there's
+          // no matching <option> to select. Stash it; loadChannels() below
+          // applies it once fillGuildSelect() has real options to match
+          // against, same pattern the voice/text channel selects already use.
+          pendingGuildId = (await pickGuildForBot(form.bot_key.value)) || "";
         }
         refreshControlState();
         loadChannels();
@@ -269,6 +280,26 @@ function M.register(cfg)
       function applyPendingChannelValue(select, value) {
         if (value && [...select.options].some((o) => o.value === String(value))) select.value = value;
       }
+      // Real guild NAMES (from the bot's Discord inventory) instead of bare
+      // IDs -- the <select>'s value stays the ID either way, only the
+      // visible <option> text changes. A scoped account's select only ever
+      // has its own single guild, so it's left alone here (repopulating it
+      // from the bot's full guild list would leak other guilds' names into
+      // an account that's not supposed to see them) -- just its one
+      // option's label gets the real name once inventory has it.
+      function fillGuildSelect(guilds) {
+        const select = form.guild_id;
+        if (select.dataset.scoped === "1") {
+          const own = guilds.find((g) => String(g.id) === select.value);
+          if (own && select.options[0]) select.options[0].textContent = own.name || select.options[0].textContent;
+          return;
+        }
+        const current = pendingGuildId || select.value;
+        select.innerHTML = guilds.map((g) => `<option value="${g.id}">${(g.name || g.id).toString().replace(/</g, "&lt;")}</option>`).join("")
+          || `<option value="">No guilds found</option>`;
+        if (current && guilds.some((g) => String(g.id) === String(current))) select.value = current;
+        pendingGuildId = "";
+      }
       async function loadChannels() {
         const botKey = form.bot_key.value, guildId = form.guild_id.value;
         if (!botKey || !guildId) return;
@@ -280,11 +311,14 @@ function M.register(cfg)
         try {
           const inv = await swarmFetch(`/api/bots/${botKey}/inventory`);
           if (requestId !== channelsRequestId) return;
-          const guild = (inv.guilds || []).find((g) => String(g.id) === String(guildId));
+          fillGuildSelect(inv.guilds || []);
+          const resolvedGuildId = form.guild_id.value;
+          const guild = (inv.guilds || []).find((g) => String(g.id) === String(resolvedGuildId));
           const channels = (guild && guild.channels) || [];
           fillChannelSelect(form.voice_channel_id, channels.filter((c) => VOICE_TYPES.has(Number(c.type))), pendingVoiceChannelId);
           fillChannelSelect(form.text_channel_id, channels.filter((c) => TEXT_TYPES.has(Number(c.type))), pendingTextChannelId);
           pendingVoiceChannelId = ""; pendingTextChannelId = "";
+          updateCommandPreview();
         } catch { /* bot token/inventory unavailable -- selects just stay empty */ }
       }
       loadChannels();
