@@ -20,8 +20,17 @@ final class FleetTopologyViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var statusMessage: String?
     @Published var restartingBotKey: String?
+    @Published var isRecoveringAll = false
 
     private let api = APIClient.shared
+
+    /// Every (bot, guild) session currently in "Recovery Pending" fleet-wide
+    /// -- mirrors the web panel's Controls > "Recover All Stale Sessions".
+    var recoverableSessions: [(bot: DashboardBot, session: DashboardSession)] {
+        bots.flatMap { bot in
+            (bot.sessions ?? []).filter { $0.sessionState == "recovering" && $0.guildId != nil }.map { (bot, $0) }
+        }
+    }
 
     var overlaps: [GuildOverlap] {
         var byGuild: [String: [(bot: String, label: String)]] = [:]
@@ -52,6 +61,32 @@ final class FleetTopologyViewModel: ObservableObject {
                 errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to load fleet topology."
             }
         }
+    }
+
+    /// Fires RECOVER at every currently-recovering (bot, guild) session,
+    /// same as the web panel's bulk action -- sequential (this fleet is a
+    /// handful of bots, not hundreds), then a single reload at the end.
+    func recoverAllStale() async {
+        let targets = recoverableSessions
+        guard !targets.isEmpty else { return }
+        isRecoveringAll = true
+        defer { isRecoveringAll = false }
+        var succeeded = 0
+        for (bot, session) in targets {
+            guard let guildId = session.guildId else { continue }
+            do {
+                let _: OKResponse = try await api.post(
+                    "/api/bots/control",
+                    body: BotControlRequest(botKey: bot.key, guildId: guildId, action: "RECOVER", payload: [:])
+                )
+                succeeded += 1
+            } catch {
+                // best-effort -- keep going through the rest of the targets
+            }
+        }
+        Haptics.success()
+        statusMessage = "Recovered \(succeeded)/\(targets.count) session(s)."
+        await load()
     }
 
     /// RESTART is process-wide, not per-guild — the backend fixes guild_id

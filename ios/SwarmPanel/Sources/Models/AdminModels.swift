@@ -134,6 +134,10 @@ struct GalleryCommentDeleteBody: Encodable {
     let commentId: Int
 }
 
+struct GalleryBulkDeleteBody: Encodable {
+    let ids: [Int]
+}
+
 struct GalleryReportStatusBody: Encodable {
     let reportId: Int
     let status: String

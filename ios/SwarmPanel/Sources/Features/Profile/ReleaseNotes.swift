@@ -16,6 +16,10 @@ let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"
 /// Static changelog shown on the "What's New" screen — updated by hand
 /// alongside each ios/vX.Y.Z tag, mirroring the tag's own release notes.
 let releaseNotes: [ReleaseNote] = [
+    ReleaseNote(version: "0.11.0", highlights: [
+        "Fleet Topology: \"Recover All\" sends RECOVER to every bot/guild session currently pending recovery in one tap, instead of one at a time",
+        "Gallery Moderation: select multiple comments and delete them in one action",
+    ]),
     ReleaseNote(version: "0.10.1", highlights: [
         "Fixed Dashboard (the app's first tab) doing a full reconnect and re-fetch every time you switched away to another tab and back — it was tearing down a perfectly good live connection on ordinary navigation, not just when the app actually backgrounded, which made the app feel like it took forever to reload",
     ]),

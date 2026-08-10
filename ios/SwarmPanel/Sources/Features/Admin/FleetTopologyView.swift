@@ -6,6 +6,7 @@ import SwiftUI
 struct FleetTopologyView: View {
     @StateObject private var viewModel = FleetTopologyViewModel()
     @State private var restartTarget: DashboardBot?
+    @State private var confirmingRecoverAll = false
 
     var body: some View {
         ScrollView {
@@ -51,6 +52,35 @@ struct FleetTopologyView: View {
                             .padding(.horizontal)
                     }
 
+                    if !viewModel.recoverableSessions.isEmpty {
+                        PanelCard {
+                            HStack(spacing: 12) {
+                                IconChip(systemName: "arrow.triangle.2.circlepath", tint: SwarmTheme.warn)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("\(viewModel.recoverableSessions.count) session(s) pending recovery")
+                                        .font(.subheadline.bold())
+                                        .foregroundStyle(SwarmTheme.textPrimary)
+                                    Text("Send RECOVER to every one at once.")
+                                        .font(.caption)
+                                        .foregroundStyle(SwarmTheme.textMuted)
+                                }
+                                Spacer()
+                                Button {
+                                    confirmingRecoverAll = true
+                                } label: {
+                                    if viewModel.isRecoveringAll {
+                                        ProgressView()
+                                    } else {
+                                        Text("Recover All")
+                                    }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(viewModel.isRecoveringAll)
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+
                     VStack(alignment: .leading, spacing: 10) {
                         SectionLabel(title: "Bots", count: viewModel.bots.count)
                         PanelCard(padding: 0) {
@@ -91,6 +121,16 @@ struct FleetTopologyView: View {
             Button("Cancel", role: .cancel) { restartTarget = nil }
         } message: {
             Text("This restarts the bot process fleet-wide, not just one guild. Every guild it's currently serving will briefly disconnect.")
+        }
+        .confirmationDialog(
+            "Recover \(viewModel.recoverableSessions.count) session(s)?",
+            isPresented: $confirmingRecoverAll,
+            titleVisibility: .visible
+        ) {
+            Button("Recover All") { Task { await viewModel.recoverAllStale() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Sends RECOVER to every bot/guild session currently pending recovery.")
         }
     }
 }

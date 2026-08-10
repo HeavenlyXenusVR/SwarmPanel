@@ -386,7 +386,13 @@ function M.register(cfg)
     local body = html.page({
       title = "Appearance", eyebrow = "Look", lede = "Customize theme, layout, and motion.",
       body = ([[
-        <form id="appearance-form" class="panel form-panel">
+        <div class="appearance-header-row">
+          <div class="appearance-status-row">
+            <span class="appearance-draft-pill clean" id="appearance-draft-pill">Saved</span>
+          </div>
+        </div>
+        <div class="dashboard-grid appearance-layout">
+        <form id="appearance-form" class="panel form-panel appearance-form">
           <h3>Theme</h3>
           %s%s
           <label class="field">Accent color<input type="color" name="accent_color"></label>
@@ -406,9 +412,33 @@ function M.register(cfg)
           %s
           <h3>Misc</h3>
           %s%s%s
-          <button type="submit" class="button-link primary">Save</button>
-          <button type="button" id="appearance-reset" class="button-link">Reset to defaults</button>
+          <div class="appearance-form-actions">
+            <button type="submit" class="button-link primary">Save</button>
+            <button type="button" id="appearance-reset" class="button-link">Reset to defaults</button>
+          </div>
         </form>
+        <div class="panel appearance-preview">
+          <div class="appearance-preview-shell">
+            <div class="preview-topline"><span></span><strong>Live Preview</strong></div>
+            <div class="appearance-preview-hero">
+              <div class="preview-tabs"><span>Dashboard</span><span>Controls</span><span>Users</span></div>
+              <h3>SwarmPanel</h3>
+              <div class="appearance-preview-meta">
+                <span class="appearance-value-pill" id="preview-theme-pill">Dark</span>
+                <span class="appearance-value-pill" id="preview-density-pill">Comfortable</span>
+              </div>
+            </div>
+            <div class="appearance-preview-shell-panel">
+              <div class="appearance-preview-shell-topbar"><span>Fleet Command</span><span class="data-pill data-pill-live">Live</span></div>
+              <div class="preview-card">
+                <strong>Sample Bot Card</strong>
+                <span>This is roughly how cards and accents will look with your current draft settings.</span>
+              </div>
+            </div>
+            <p class="appearance-preview-note">Updates live as you edit below. Nothing is applied anywhere else until you hit Save.</p>
+          </div>
+        </div>
+        </div>
         <div id="appearance-msg"></div>
       ]]):format(
         select_field("theme_mode", "Theme", { "dark", "light", "system" }),
@@ -464,8 +494,32 @@ function M.register(cfg)
           const res = await swarmFetch("/api/users/preferences");
           applyPrefs(res.preferences || {});
         } catch { applyPrefs({}); }
+        updatePreview();
       })();
-      document.getElementById("appearance-reset").addEventListener("click", () => applyPrefs({}));
+      document.getElementById("appearance-reset").addEventListener("click", () => { applyPrefs({}); updatePreview(); markDirty(); });
+      const draftPill = document.getElementById("appearance-draft-pill");
+      function markDirty() {
+        draftPill.textContent = "Unsaved changes";
+        draftPill.className = "appearance-draft-pill dirty";
+      }
+      function markClean() {
+        draftPill.textContent = "Saved";
+        draftPill.className = "appearance-draft-pill clean";
+      }
+      // Live preview: reads the CURRENT (possibly unsaved) form state so an
+      // operator sees roughly how their draft looks before committing to
+      // Save -- appearance-preview-* had full CSS with no consumer.
+      function updatePreview() {
+        const f = document.getElementById("appearance-form");
+        const shell = document.querySelector(".appearance-preview-shell");
+        const accent = f.elements.accent_color ? f.elements.accent_color.value : "#89b4fa";
+        if (shell) shell.style.setProperty("--accent", accent);
+        const themeMode = f.elements.theme_mode ? f.elements.theme_mode.value : "dark";
+        document.getElementById("preview-theme-pill").textContent = themeMode.charAt(0).toUpperCase() + themeMode.slice(1);
+        const density = f.elements.density ? f.elements.density.value : "comfortable";
+        document.getElementById("preview-density-pill").textContent = density.charAt(0).toUpperCase() + density.slice(1);
+      }
+      document.getElementById("appearance-form").addEventListener("input", () => { markDirty(); updatePreview(); });
       document.getElementById("appearance-form").addEventListener("submit", async (e) => {
         e.preventDefault();
         const f = e.target;
@@ -476,10 +530,12 @@ function M.register(cfg)
         }
         try {
           await swarmFetch("/api/users/preferences", { method: "POST", body: JSON.stringify(payload) });
+          markClean();
           document.getElementById("appearance-msg").innerHTML = '<div class="notice notice-success">Saved. Reloading...</div>';
           setTimeout(() => window.location.reload(), 600);
         } catch (err) { document.getElementById("appearance-msg").innerHTML = '<div class="notice notice-error">' + err.message + "</div>"; }
       });
+      updatePreview();
     ]]
     return page_shell(req, a, "/appearance", "Appearance", body, script)
   end)

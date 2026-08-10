@@ -3,6 +3,8 @@ import SwiftUI
 struct GalleryModerationView: View {
     @StateObject private var viewModel = GalleryModerationViewModel()
     @State private var deleteTarget: GalleryComment?
+    @State private var isSelecting = false
+    @State private var confirmingBulkDelete = false
 
     var body: some View {
         List {
@@ -30,6 +32,10 @@ struct GalleryModerationView: View {
                 } else {
                     ForEach(viewModel.comments) { comment in
                         HStack(alignment: .top, spacing: 12) {
+                            if isSelecting {
+                                Image(systemName: viewModel.selectedCommentIds.contains(comment.id) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(viewModel.selectedCommentIds.contains(comment.id) ? SwarmTheme.accent : SwarmTheme.textMuted)
+                            }
                             IconChip(systemName: "bubble.left.fill", tint: .teal)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(comment.body ?? "").font(.caption).foregroundStyle(SwarmTheme.textPrimary).lineLimit(2)
@@ -39,11 +45,17 @@ struct GalleryModerationView: View {
                             }
                             Spacer()
                         }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            if isSelecting { viewModel.toggleSelection(comment) }
+                        }
                         .swipeActions(edge: .trailing) {
-                            Button(role: .destructive) {
-                                deleteTarget = comment
-                            } label: {
-                                Label("Delete", systemImage: "trash")
+                            if !isSelecting {
+                                Button(role: .destructive) {
+                                    deleteTarget = comment
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
                             }
                         }
                     }
@@ -56,6 +68,31 @@ struct GalleryModerationView: View {
         .scrollContentBackground(.hidden)
         .background(SwarmTheme.background)
         .navigationTitle("Gallery Moderation")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(isSelecting ? "Done" : "Select") {
+                    isSelecting.toggle()
+                    if !isSelecting { viewModel.selectedCommentIds.removeAll() }
+                }
+                .disabled(viewModel.comments.isEmpty)
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if isSelecting && !viewModel.selectedCommentIds.isEmpty {
+                HStack {
+                    Text("\(viewModel.selectedCommentIds.count) selected").font(.caption).foregroundStyle(SwarmTheme.textMuted)
+                    Spacer()
+                    Button(role: .destructive) {
+                        confirmingBulkDelete = true
+                    } label: {
+                        if viewModel.isBulkDeleting { ProgressView() } else { Text("Delete Selected") }
+                    }
+                    .disabled(viewModel.isBulkDeleting)
+                }
+                .padding(12)
+                .background(SwarmTheme.panel)
+            }
+        }
         .task { await viewModel.load() }
         .refreshable {
             Haptics.light()
@@ -72,6 +109,19 @@ struct GalleryModerationView: View {
                 deleteTarget = nil
             }
             Button("Cancel", role: .cancel) { deleteTarget = nil }
+        }
+        .confirmationDialog(
+            "Delete \(viewModel.selectedCommentIds.count) comment(s)?",
+            isPresented: $confirmingBulkDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                Task {
+                    await viewModel.bulkDeleteSelectedComments()
+                    isSelecting = false
+                }
+            }
+            Button("Cancel", role: .cancel) {}
         }
     }
 }
