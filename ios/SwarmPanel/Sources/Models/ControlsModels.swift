@@ -157,6 +157,11 @@ struct SavedQueueDeleteBody: Encodable {
     let guildId: String
 }
 
+struct SavedQueueRenameBody: Encodable {
+    let guildId: String
+    let name: String
+}
+
 // MARK: - Control actions
 
 enum ControlAction: String, CaseIterable, Identifiable {

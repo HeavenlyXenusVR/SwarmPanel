@@ -251,4 +251,16 @@ final class ControlsViewModel: ObservableObject {
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to delete queue."
         }
     }
+
+    func renameSavedQueue(_ queue: SavedQueue, to newName: String) async {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        do {
+            let _: SavedQueueEnvelope = try await api.post("/api/queues/\(queue.id)/rename", body: SavedQueueRenameBody(guildId: guildId, name: trimmed))
+            await loadControlStateAndQueues()
+        } catch {
+            guard !error.isCancellation else { return }
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to rename queue."
+        }
+    }
 }

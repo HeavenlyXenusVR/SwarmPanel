@@ -1698,6 +1698,19 @@ function M.register(cfg)
     return 200, { ok = true, queue = queue }
   end)
 
+  httpd.route("POST", "/api/queues/:queue_id/rename", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local body = req.json or {}
+    if not body.guild_id or tostring(body.guild_id) == "" then return 400, { detail = "guild_id is required" } end
+    local gerr_status, gerr_body = require_guild_scope(req, a, body.guild_id)
+    if gerr_status then return gerr_status, gerr_body end
+    local ok, queue = pcall(queues.rename_saved_queue, req.params.queue_id, body.guild_id, body.name)
+    if not ok then return 400, { detail = tostring(queue):gsub("^.-:%d+:%s*", "") } end
+    audit.record_audit_log(a.username, "saved_queue_rename", { target_type = "saved_queue", target_id = req.params.queue_id, details = "name=" .. tostring(body.name) })
+    return 200, { ok = true, queue = queue }
+  end)
+
   httpd.route("POST", "/api/queues/:queue_id/delete", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end

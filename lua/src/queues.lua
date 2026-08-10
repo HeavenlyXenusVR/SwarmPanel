@@ -73,4 +73,11 @@ function M.delete_saved_queue(queue_id, guild_id)
   db.execute(SCHEMA, "DELETE FROM " .. TABLE .. " WHERE id = %s AND guild_id = %s", tostring(queue_id), tostring(guild_id))
 end
 
+function M.rename_saved_queue(queue_id, guild_id, name)
+  local safe_name = tostring(name or ""):match("^%s*(.-)%s*$"):sub(1, 120)
+  if safe_name == "" then error("Name cannot be empty.", 0) end
+  db.execute(SCHEMA, "UPDATE " .. TABLE .. " SET name = %s WHERE id = %s AND guild_id = %s", safe_name, tostring(queue_id), tostring(guild_id))
+  return row_out(db.fetchone(SCHEMA, "SELECT id, guild_id, bot_key, name, created_by_username, items, created_at FROM " .. TABLE .. " WHERE id = %s", tostring(queue_id)))
+end
+
 return M

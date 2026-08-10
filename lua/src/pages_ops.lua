@@ -333,6 +333,7 @@ function M.register(cfg)
           const rows = savedQueues.map((q) => `
             <div class="collection-row" data-load-queue="${q.id}">
               <span><strong>${(q.name || "").replace(/</g, "&lt;")}</strong><small>${(q.items || []).length} track${(q.items || []).length === 1 ? "" : "s"}</small></span>
+              <button type="button" class="icon-button" data-rename-queue="${q.id}" title="Rename">&#9998;</button>
               <button type="button" class="icon-button" data-delete-queue="${q.id}" title="Delete">&times;</button>
             </div>`
           ).join("");
@@ -348,6 +349,29 @@ function M.register(cfg)
           loadQueues();
           return;
         }
+        // Inline rename: swaps the row's display for a mini-form
+        // (mini-row/mini-input CSS existed, unused) instead of a full page
+        // or a native prompt(), matching the rest of this codebase's
+        // no-prompt() convention.
+        const renameId = e.target.getAttribute("data-rename-queue");
+        if (renameId) {
+          e.stopPropagation();
+          const row = e.target.closest("[data-load-queue]");
+          const queue = savedQueues.find((q) => String(q.id) === renameId);
+          if (!row || !queue) return;
+          row.innerHTML = `
+            <form class="mini-form" data-rename-form="${renameId}">
+              <div class="mini-row">
+                <input class="mini-input" name="name" value="${(queue.name || "").replace(/"/g, "&quot;")}" maxlength="120" required>
+                <button type="submit">Save</button>
+                <button type="button" data-cancel-rename>Cancel</button>
+              </div>
+            </form>`;
+          row.querySelector("input").focus();
+          return;
+        }
+        if (e.target.hasAttribute("data-cancel-rename")) { e.stopPropagation(); loadQueues(); return; }
+        if (e.target.closest("[data-rename-form]")) return;
         // "Load" a saved queue: previously a dead button (data-load-queue
         // rendered but never listened for) -- replays every saved track by
         // sending each as its own PLAY order in sequence, same as manually
@@ -369,6 +393,19 @@ function M.register(cfg)
         }
         swarmToast(`Queued ${queued}/${queue.items.length} track(s) from "${queue.name}".`, queued ? "success" : "error");
         refreshControlState();
+      });
+      document.getElementById("saved-queues").addEventListener("submit", async (e) => {
+        const renameForm = e.target.closest("[data-rename-form]");
+        if (!renameForm) return;
+        e.preventDefault();
+        const id = renameForm.getAttribute("data-rename-form");
+        const name = renameForm.elements.name.value.trim();
+        if (!name) return;
+        try {
+          await swarmFetch(`/api/queues/${id}/rename`, { method: "POST", body: JSON.stringify({ guild_id: form.guild_id.value, name }) });
+          swarmToast("Renamed.", "success");
+          loadQueues();
+        } catch (err) { swarmToast(err.message, "error"); }
       });
     ]] .. [[
       const recoverAllBtn = document.getElementById("recover-all-btn");

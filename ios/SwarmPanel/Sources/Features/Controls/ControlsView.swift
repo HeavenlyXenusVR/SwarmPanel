@@ -7,6 +7,8 @@ struct ControlsView: View {
     @StateObject private var viewModel = ControlsViewModel()
     @State private var newQueueName = ""
     @State private var deleteQueueTarget: SavedQueue?
+    @State private var renameQueueTarget: SavedQueue?
+    @State private var renameText = ""
 
     var body: some View {
         NavigationStack {
@@ -210,6 +212,13 @@ struct ControlsView: View {
                                 } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
+                                Button {
+                                    renameText = queue.name
+                                    renameQueueTarget = queue
+                                } label: {
+                                    Label("Rename", systemImage: "pencil")
+                                }
+                                .tint(.blue)
                             }
                         }
                     }
@@ -252,6 +261,17 @@ struct ControlsView: View {
                     deleteQueueTarget = nil
                 }
                 Button("Cancel", role: .cancel) { deleteQueueTarget = nil }
+            }
+            .alert(
+                "Rename Queue",
+                isPresented: Binding(get: { renameQueueTarget != nil }, set: { if !$0 { renameQueueTarget = nil } })
+            ) {
+                TextField("Queue name", text: $renameText)
+                Button("Save") {
+                    if let target = renameQueueTarget { Task { await viewModel.renameSavedQueue(target, to: renameText) } }
+                    renameQueueTarget = nil
+                }
+                Button("Cancel", role: .cancel) { renameQueueTarget = nil }
             }
         }
     }
