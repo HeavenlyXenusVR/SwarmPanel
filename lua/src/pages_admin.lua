@@ -313,6 +313,7 @@ function M.register(cfg)
         media_items: { idKey: "media_id", single: "/api/image-gallery/media/delete", bulk: "/api/image-gallery/admin/media/bulk-delete" },
         media_comments: { idKey: "comment_id", single: "/api/image-gallery/comments/delete", bulk: "/api/image-gallery/admin/comments/bulk-delete" },
       };
+      const GALLERY_STATUSES = ["open", "reviewed", "dismissed"];
       async function loadGallery() {
         try {
           const summary = await swarmFetch("/api/image-gallery/admin");
@@ -339,23 +340,38 @@ function M.register(cfg)
           if (!rows.length) { document.getElementById("gallery-data").innerHTML = "<p>No rows.</p>"; return; }
           const cols = Object.keys(rows[0]).slice(0, 9);
           const deletable = currentGalleryDeleteConfig();
-          const thead = (deletable ? '<th><input type="checkbox" data-select-all></th>' : "") + cols.map((c) => `<th>${c}</th>`).join("") + (deletable ? "<th>Actions</th>" : "");
+          const isReports = table === "media_reports";
+          const thead = (deletable ? '<th><input type="checkbox" data-select-all></th>' : "") + cols.map((c) => `<th>${c}</th>`).join("") + (deletable || isReports ? "<th>Actions</th>" : "");
           const tbody = rows.map((r) => "<tr>"
             + (deletable ? `<td class="table-cell-select"><input type="checkbox" data-select-row value="${r.id}"></td>` : "")
             + cols.map((c) => swarmTableCell(c, r[c])).join("")
             + (deletable ? `<td><button type="button" data-gallery-delete-row="${r.id}">Delete</button></td>` : "")
+            + (isReports ? `<td class="table-actions">
+                <select data-report-status="${r.id}">${GALLERY_STATUSES.map((s) => `<option value="${s}" ${s === r.status ? "selected" : ""}>${s}</option>`).join("")}</select>
+                <button type="button" data-report-save="${r.id}">Save</button>
+              </td>` : "")
             + "</tr>").join("");
           document.getElementById("gallery-data").innerHTML = `<table class="data-table" id="gallery-table-el"><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>`;
         } catch (err) { swarmToast("Failed to load table.", "error"); }
       }
       document.getElementById("gallery-table").addEventListener("change", loadGalleryTable);
       document.getElementById("gallery-data").addEventListener("click", async (e) => {
-        const id = e.target.getAttribute("data-gallery-delete-row");
-        if (!id) return;
+        const deleteId = e.target.getAttribute("data-gallery-delete-row");
+        const saveId = e.target.getAttribute("data-report-save");
+        if (saveId) {
+          const status = document.querySelector(`[data-report-status="${saveId}"]`).value;
+          try {
+            await swarmFetch("/api/image-gallery/reports/status", { method: "POST", body: JSON.stringify({ report_id: saveId, status }) });
+            swarmToast("Report updated.", "success");
+            loadGalleryTable();
+          } catch (err) { swarmToast(err.message, "error"); }
+          return;
+        }
+        if (!deleteId) return;
         const cfg = currentGalleryDeleteConfig();
         if (!cfg || !confirm("Delete this row? This cannot be undone.")) return;
         try {
-          await swarmFetch(cfg.single, { method: "POST", body: JSON.stringify({ [cfg.idKey]: id }) });
+          await swarmFetch(cfg.single, { method: "POST", body: JSON.stringify({ [cfg.idKey]: deleteId }) });
           swarmToast("Deleted.", "success");
           loadGalleryTable();
         } catch (err) { swarmToast(err.message, "error"); }
