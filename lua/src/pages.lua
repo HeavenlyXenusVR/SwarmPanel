@@ -395,11 +395,78 @@ function M.register(cfg)
       ((data.node_health or {}).lavalink or {}).status == "healthy" and "Healthy" or "Checking"
     )
 
+    -- Fleet Overview spotlight: dashboard-spotlight/-metrics/-mini-metrics/
+    -- -queue-leaders/-queue-card all had full CSS with no HTML ever built
+    -- for them. Real aggregates from the same data.bots the cards below
+    -- already render from, not fabricated numbers.
+    local total_queue, total_backup, total_guilds = 0, 0, 0
+    local busiest_bot = nil
+    for _, bot in ipairs(data.bots) do
+      total_queue = total_queue + (bot.queue_depth or 0)
+      total_backup = total_backup + (bot.backup_queue_depth or 0)
+      total_guilds = total_guilds + (bot.known_guild_count or 0)
+      if bot.kind == "music" and (not busiest_bot or (bot.queue_depth or 0) > (busiest_bot.queue_depth or 0)) then
+        busiest_bot = bot
+      end
+    end
+    local queue_leaders_bots = {}
+    for _, bot in ipairs(data.bots) do
+      if bot.kind == "music" and (bot.queue_depth or 0) > 0 then queue_leaders_bots[#queue_leaders_bots + 1] = bot end
+    end
+    table.sort(queue_leaders_bots, function(x, y) return (x.queue_depth or 0) > (y.queue_depth or 0) end)
+    local queue_leader_cards = {}
+    for i = 1, math.min(4, #queue_leaders_bots) do
+      local bot = queue_leaders_bots[i]
+      queue_leader_cards[#queue_leader_cards + 1] = ([[
+        <div class="dashboard-queue-card bot-card">
+          <div class="bot-head"><span class="bot-dot"></span><div class="bot-head-copy"><h3>%s</h3></div><span class="data-pill data-pill-off">%d queued</span></div>
+        </div>
+      ]]):format(html.esc(bot.display_name), bot.queue_depth or 0)
+    end
+
+    local spotlight = ([[
+      <div class="dashboard-brief-panel">
+        <div class="dashboard-spotlight">
+          <div class="dashboard-spotlight-head">
+            <span class="dashboard-eyebrow">Fleet Overview</span>
+            <span class="dashboard-state-badge%s">%s</span>
+          </div>
+          <strong>%s</strong>
+          <p>%s</p>
+          <div class="dashboard-spotlight-metrics">
+            <article><span>Bots Online</span><strong>%d / %d</strong><small>heartbeat within 120s</small></article>
+            <article><span>Live Sessions</span><strong>%d</strong><small>currently playing</small></article>
+            <article><span>Queue Depth</span><strong>%d</strong><small>%d in backup</small></article>
+            <article><span>Guilds Served</span><strong>%d</strong><small>across the fleet</small></article>
+          </div>
+        </div>
+      </div>
+      <div class="dashboard-mini-metrics">
+        <article><span>Audio Nodes</span><strong>%s</strong></article>
+        <article><span>Aria Orchestrator</span><strong>%s</strong></article>
+      </div>
+      %s
+      <div class="dashboard-queue-leaders">%s</div>
+    ]]):format(
+      live_count > 0 and " live" or " idle", live_count > 0 and "Active" or "Idle",
+      busiest_bot and (busiest_bot.display_name .. (live_count > 0 and " is carrying live playback" or " has the deepest queue")) or "Fleet is quiet right now",
+      busiest_bot and ("%d queued, %d live guild(s)"):format(busiest_bot.queue_depth or 0, busiest_bot.active_playing_count or 0) or "No active bot to highlight.",
+      online_bots, #data.bots, live_count, total_queue, total_backup, total_guilds,
+      ((data.node_health or {}).lavalink or {}).status == "healthy" and "Healthy" or "Checking",
+      (function()
+        for _, bot in ipairs(data.bots) do if bot.key == "aria" then return bot.status or "Unknown" end end
+        return "Unknown"
+      end)(),
+      #queue_leader_cards > 0 and html.section_head("Queue Leaders") or "",
+      html.join(queue_leader_cards)
+    )
+
     local body = html.page({
       title = "Dashboard",
       eyebrow = "Fleet Command",
       lede = "Live status across the swarm.",
       body = ([[
+        %s
         %s
         <div class="bot-grid">%s</div>
         %s
@@ -412,6 +479,7 @@ function M.register(cfg)
           </table>
         </div>
       ]]):format(
+        spotlight,
         html.section_head("Audio Nodes"), html.join(node_pills),
         html.section_head("Bots"), html.join(bot_cards),
         html.section_head("Live Sessions"),

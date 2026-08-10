@@ -43,7 +43,7 @@ function M.register(cfg)
       title = "Accounts", eyebrow = "Admin", lede = "Recover and manage swarm accounts.",
       body = [[
         <input type="search" placeholder="Search accounts..." data-debounced-search id="acct-search">
-        <div id="bulk-actions" data-bulk-actions hidden>
+        <div id="bulk-actions" class="bulk-actions-bar" data-bulk-actions hidden>
           <button type="button" id="bulk-verify">Verify selected</button>
           <button type="button" id="bulk-delete">Delete selected</button>
         </div>
@@ -176,10 +176,24 @@ function M.register(cfg)
           <a id="gallery-csv-media" class="button-link" href="/api/image-gallery/admin/media/export.csv" target="_blank">Export Media CSV</a>
           <a id="gallery-csv-users" class="button-link" href="/api/image-gallery/admin/users/export.csv" target="_blank">Export Users CSV</a>
         </div>
+        <div id="gallery-bulk-actions" class="bulk-actions-bar" data-bulk-actions hidden>
+          <button type="button" id="gallery-bulk-delete" class="danger">Delete selected</button>
+        </div>
         <div id="gallery-data"></div>
       ]],
     })
     local script = [[
+      // Row deletion only exists on the backend for these three tables
+      // (users/media_items/media_comments -- see gallery.lua's
+      // delete_image_gallery_user/media/comment) -- other browsable tables
+      // (categories, media_reports, media_collections) stay read-only here,
+      // same as they always were, rather than pointing a delete button at
+      // an endpoint that doesn't exist.
+      const GALLERY_DELETE_CONFIG = {
+        users: { idKey: "user_id", single: "/api/image-gallery/users/delete", bulk: "/api/image-gallery/admin/users/bulk-delete" },
+        media_items: { idKey: "media_id", single: "/api/image-gallery/media/delete", bulk: "/api/image-gallery/admin/media/bulk-delete" },
+        media_comments: { idKey: "comment_id", single: "/api/image-gallery/comments/delete", bulk: "/api/image-gallery/admin/comments/bulk-delete" },
+      };
       async function loadGallery() {
         try {
           const summary = await swarmFetch("/api/image-gallery/admin");
@@ -192,20 +206,50 @@ function M.register(cfg)
           loadGalleryTable();
         } catch { /* ignore */ }
       }
+      function currentGalleryDeleteConfig() {
+        return GALLERY_DELETE_CONFIG[document.getElementById("gallery-table").value];
+      }
       async function loadGalleryTable() {
         const table = document.getElementById("gallery-table").value;
         if (!table) return;
+        document.getElementById("gallery-bulk-actions").hidden = true;
         try {
           const res = await swarmFetch(`/api/image-gallery/table-data?table_name=${table}&limit=100`);
           const rows = res.rows || [];
           if (!rows.length) { document.getElementById("gallery-data").innerHTML = "<p>No rows.</p>"; return; }
           const cols = Object.keys(rows[0]).slice(0, 9);
-          const thead = cols.map((c) => `<th>${c}</th>`).join("");
-          const tbody = rows.map((r) => "<tr>" + cols.map((c) => `<td>${String(r[c] ?? "").replace(/</g,"&lt;")}</td>`).join("") + "</tr>").join("");
-          document.getElementById("gallery-data").innerHTML = `<table class="data-table"><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>`;
+          const deletable = currentGalleryDeleteConfig();
+          const thead = (deletable ? '<th><input type="checkbox" data-select-all></th>' : "") + cols.map((c) => `<th>${c}</th>`).join("") + (deletable ? "<th>Actions</th>" : "");
+          const tbody = rows.map((r) => "<tr>"
+            + (deletable ? `<td><input type="checkbox" data-select-row value="${r.id}"></td>` : "")
+            + cols.map((c) => `<td>${String(r[c] ?? "").replace(/</g,"&lt;")}</td>`).join("")
+            + (deletable ? `<td><button type="button" data-gallery-delete-row="${r.id}">Delete</button></td>` : "")
+            + "</tr>").join("");
+          document.getElementById("gallery-data").innerHTML = `<table class="data-table" id="gallery-table-el"><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>`;
         } catch (err) { swarmToast("Failed to load table.", "error"); }
       }
       document.getElementById("gallery-table").addEventListener("change", loadGalleryTable);
+      document.getElementById("gallery-data").addEventListener("click", async (e) => {
+        const id = e.target.getAttribute("data-gallery-delete-row");
+        if (!id) return;
+        const cfg = currentGalleryDeleteConfig();
+        if (!cfg || !confirm("Delete this row? This cannot be undone.")) return;
+        try {
+          await swarmFetch(cfg.single, { method: "POST", body: JSON.stringify({ [cfg.idKey]: id }) });
+          swarmToast("Deleted.", "success");
+          loadGalleryTable();
+        } catch (err) { swarmToast(err.message, "error"); }
+      });
+      document.getElementById("gallery-bulk-delete").addEventListener("click", async () => {
+        const cfg = currentGalleryDeleteConfig();
+        const ids = Array.from(document.querySelectorAll("#gallery-table-el [data-select-row]:checked")).map((b) => b.value);
+        if (!cfg || !ids.length || !confirm(`Delete ${ids.length} selected row(s)? This cannot be undone.`)) return;
+        try {
+          await swarmFetch(cfg.bulk, { method: "POST", body: JSON.stringify({ ids }) });
+          swarmToast("Deleted.", "success");
+          loadGalleryTable();
+        } catch (err) { swarmToast(err.message, "error"); }
+      });
       loadGallery();
     ]]
     return page_shell(req, a, "/gallery-admin", "Gallery Admin", body, script)
