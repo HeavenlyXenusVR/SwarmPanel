@@ -404,6 +404,15 @@ function M.empty_state(text)
   return ('<div class="empty-state">%s</div>'):format(M.esc(text))
 end
 
+-- Shimmer placeholder grid (skeleton-grid/-card had full CSS -- shimmer
+-- keyframe, sizing -- but nothing ever rendered it; every async section
+-- placeholder was just empty_state("Loading...") plain text).
+function M.skeleton_grid(count)
+  local cards = {}
+  for _ = 1, (count or 6) do cards[#cards + 1] = '<div class="skeleton-card"></div>' end
+  return '<div class="skeleton-grid">' .. table.concat(cards, "") .. "</div>"
+end
+
 -- Generic auto-column table (mirrors swarm.jsx's DataTable). rows: array of
 -- plain tables; columns: optional array of column names to force ordering
 -- (defaults to the keys of the first row, capped at 9, matching the React

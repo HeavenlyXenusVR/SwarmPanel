@@ -47,7 +47,7 @@ function M.register(cfg)
           <button type="button" id="bulk-verify">Verify selected</button>
           <button type="button" id="bulk-delete">Delete selected</button>
         </div>
-        <div id="accounts-table"></div>
+        <div id="accounts-table">]] .. html.skeleton_grid(4) .. [[</div>
       ]],
     })
     local script = [[
@@ -179,7 +179,7 @@ function M.register(cfg)
         <div id="gallery-bulk-actions" class="bulk-actions-bar" data-bulk-actions hidden>
           <button type="button" id="gallery-bulk-delete" class="danger">Delete selected</button>
         </div>
-        <div id="gallery-data"></div>
+        <div id="gallery-data">]] .. html.skeleton_grid(4) .. [[</div>
       ]],
     })
     local script = [[
@@ -441,6 +441,7 @@ function M.register(cfg)
               <path d="${areaPath}" fill="url(#${gid})" stroke="none"/>
               <path d="${linePath}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
               ${anomalyCircles}
+              <line class="trend-chart-crosshair" data-crosshair y1="${TREND_PAD.top}" y2="${TREND_PAD.top + innerH}" x1="0" x2="0" visibility="hidden"/>
             </svg>
             <div class="trend-chart-tooltip trend-chart-tooltip-muted"><span>Hover the chart for a point-in-time reading.</span></div>
           </div>
@@ -450,6 +451,7 @@ function M.register(cfg)
         container.querySelectorAll("[data-trend-chart]").forEach((chart) => {
           const svg = chart.querySelector("svg");
           const tooltip = chart.querySelector(".trend-chart-tooltip");
+          const crosshair = chart.querySelector("[data-crosshair]");
           const points = JSON.parse(chart.getAttribute("data-points") || "[]");
           if (!points.length) return;
           svg.addEventListener("mousemove", (e) => {
@@ -460,10 +462,15 @@ function M.register(cfg)
             const p = points[nearest];
             tooltip.className = "trend-chart-tooltip";
             tooltip.innerHTML = `<strong>${p.value}</strong><span>${intelEsc(fmtTime(p.time))}</span>`;
+            if (crosshair) {
+              crosshair.setAttribute("x1", p.x); crosshair.setAttribute("x2", p.x);
+              crosshair.setAttribute("visibility", "visible");
+            }
           });
           svg.addEventListener("mouseleave", () => {
             tooltip.className = "trend-chart-tooltip trend-chart-tooltip-muted";
             tooltip.innerHTML = "<span>Hover the chart for a point-in-time reading.</span>";
+            if (crosshair) crosshair.setAttribute("visibility", "hidden");
           });
         });
       }

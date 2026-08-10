@@ -246,7 +246,7 @@ function M.register(cfg)
             <label class="field">Tags (comma separated)<input name="profile_tags_text" placeholder="tag1, tag2, tag3"></label>
             <label class="field">Favorite bot<select name="favorite_bot" id="favorite-bot-select"><option value="">None</option></select></label>
             <h3>Links</h3>
-            %s
+            <div class="link-editor">%s</div>
             <h3>Server</h3>
             <label class="field">Server name<input name="server_name" maxlength="120"></label>
             <label class="field">Discord invite<input name="server_invite_url" placeholder="https://discord.gg/..."></label>

@@ -449,7 +449,7 @@ function M.register(cfg)
           <input type="search" placeholder="Search users..." data-debounced-search id="user-search">
           <div class="directory-summary" id="user-summary"></div>
         </div>
-        <div id="user-results" class="user-grid">]] .. html.empty_state("Start typing to search.") .. [[</div>
+        <div id="user-results" class="user-grid">]] .. html.skeleton_grid(6) .. [[</div>
       ]],
     })
     local script = [[
