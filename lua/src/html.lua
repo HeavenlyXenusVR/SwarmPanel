@@ -416,6 +416,21 @@ function M.skeleton_grid(count)
   return '<div class="skeleton-grid">' .. table.concat(cards, "") .. "</div>"
 end
 
+-- Titled loading placeholder for a whole section (section-loading-* had
+-- full CSS -- copy block + a shimmer card grid -- but nothing rendered it;
+-- sections either had no placeholder at all before their first fetch
+-- resolved, or fell back to the plain skeleton_grid() above).
+function M.section_loading(title, note, count)
+  local cards = {}
+  for _ = 1, (count or 3) do cards[#cards + 1] = '<div class="section-loading-card"></div>' end
+  return ([[
+    <div class="section-loading-screen">
+      <div class="section-loading-copy"><strong>%s</strong><p>%s</p></div>
+      <div class="section-loading-grid">%s</div>
+    </div>
+  ]]):format(M.esc(title), M.esc(note or ""), table.concat(cards, ""))
+end
+
 -- Generic auto-column table (mirrors swarm.jsx's DataTable). rows: array of
 -- plain tables; columns: optional array of column names to force ordering
 -- (defaults to the keys of the first row, capped at 9, matching the React

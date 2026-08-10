@@ -16,6 +16,9 @@ let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"
 /// Static changelog shown on the "What's New" screen — updated by hand
 /// alongside each ios/vX.Y.Z tag, mirroring the tag's own release notes.
 let releaseNotes: [ReleaseNote] = [
+    ReleaseNote(version: "0.11.5", highlights: [
+        "Accounts admin now shows a verified/unverified/moderator summary above the list, matching the web panel",
+    ]),
     ReleaseNote(version: "0.11.4", highlights: [
         "Alert Rules: the New Rule form can now set an escalation window and email escalation directly, instead of only being settable from the web panel",
     ]),

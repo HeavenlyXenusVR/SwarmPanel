@@ -30,6 +30,13 @@ struct AccountsAdminView: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     SectionLabel(title: "Accounts", count: viewModel.accounts.count)
+                    if !viewModel.accounts.isEmpty {
+                        let verifiedCount = viewModel.accounts.filter { $0.verificationVerified == true }.count
+                        let modCount = viewModel.accounts.filter(\.isModerator).count
+                        Text("\(verifiedCount) verified, \(viewModel.accounts.count - verifiedCount) unverified, \(modCount) moderator\(modCount == 1 ? "" : "s")")
+                            .font(.caption)
+                            .foregroundStyle(SwarmTheme.textMuted)
+                    }
                     if viewModel.accounts.isEmpty {
                         PanelCard { EmptyStateView(icon: "person.crop.circle.badge.questionmark", title: "No accounts found.") }
                     } else {

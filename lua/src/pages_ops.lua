@@ -259,24 +259,52 @@ function M.register(cfg)
       }
       loadChannels();
 
+      let savedQueues = [];
       async function loadQueues() {
         const botKey = form.bot_key.value, guildId = form.guild_id.value;
         if (!botKey || !guildId) return;
         try {
           const res = await swarmFetch(`/api/queues?guild_id=${encodeURIComponent(guildId)}&bot_key=${botKey}`);
-          const rows = (res.queues || []).map((q) =>
-            `<li>${q.name} <button type="button" data-load-queue="${q.id}">Load</button> <button type="button" data-delete-queue="${q.id}">Delete</button></li>`
+          savedQueues = res.queues || [];
+          const rows = savedQueues.map((q) => `
+            <div class="collection-row" data-load-queue="${q.id}">
+              <span><strong>${(q.name || "").replace(/</g, "&lt;")}</strong><small>${(q.items || []).length} track${(q.items || []).length === 1 ? "" : "s"}</small></span>
+              <button type="button" class="icon-button" data-delete-queue="${q.id}" title="Delete">&times;</button>
+            </div>`
           ).join("");
-          document.getElementById("saved-queues").innerHTML = "<ul>" + (rows || "<li>No saved queues.</li>") + "</ul>";
+          document.getElementById("saved-queues").innerHTML = `<div class="list-panel">${rows || '<div class="empty-state">No saved queues.</div>'}</div>`;
         } catch { /* ignore */ }
       }
       swarmLiveRefresh(loadQueues, 30000);
       document.getElementById("saved-queues").addEventListener("click", async (e) => {
         const del = e.target.getAttribute("data-delete-queue");
         if (del) {
+          e.stopPropagation();
           await swarmFetch(`/api/queues/${del}/delete`, { method: "POST" }).catch(() => {});
           loadQueues();
+          return;
         }
+        // "Load" a saved queue: previously a dead button (data-load-queue
+        // rendered but never listened for) -- replays every saved track by
+        // sending each as its own PLAY order in sequence, same as manually
+        // re-queueing them one at a time from the form above.
+        const row = e.target.closest("[data-load-queue]");
+        if (!row) return;
+        const queue = savedQueues.find((q) => String(q.id) === row.getAttribute("data-load-queue"));
+        if (!queue || !(queue.items || []).length) return;
+        const botKey = form.bot_key.value, guildId = form.guild_id.value;
+        let queued = 0;
+        for (const item of queue.items) {
+          try {
+            await swarmFetch("/api/bots/control", {
+              method: "POST",
+              body: JSON.stringify({ bot_key: botKey, guild_id: guildId, action: "PLAY", payload: { source_url: item.video_url } }),
+            });
+            queued++;
+          } catch { /* keep going through the rest of the queue */ }
+        }
+        swarmToast(`Queued ${queued}/${queue.items.length} track(s) from "${queue.name}".`, queued ? "success" : "error");
+        refreshControlState();
       });
     ]] .. [[
       const recoverAllBtn = document.getElementById("recover-all-btn");
@@ -402,11 +430,13 @@ function M.register(cfg)
           <button type="submit" class="button-link primary">Load</button>
         </form>
         %s
-        <div id="lb-results"></div>
+        <div id="lb-results">%s</div>
         %s
-        <div id="lb-swarm"></div>
+        <div id="lb-swarm">%s</div>
       ]]):format(html.join(bot_options), guild_field, html.section_head("Guild Leaderboard"),
-        a.admin_mode and html.section_head("Swarm-wide (admin)") or ""),
+        html.section_loading("Loading leaderboard", "Fetching top tracks and listeners for this guild.", 3),
+        a.admin_mode and html.section_head("Swarm-wide (admin)") or "",
+        a.admin_mode and html.section_loading("Loading swarm-wide leaderboard", "Aggregating top tracks across every bot's database.", 3) or ""),
     })
     local script = ([[
       const lbForm = document.getElementById("lb-form");
