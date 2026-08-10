@@ -152,7 +152,7 @@ function M.register(cfg)
           if (!rows.length) { document.getElementById("db-data").innerHTML = "<p>No rows.</p>"; return; }
           const cols = Object.keys(rows[0]).slice(0, 9);
           const thead = cols.map((c) => `<th>${c}</th>`).join("");
-          const tbody = rows.map((r) => "<tr>" + cols.map((c) => `<td>${String(r[c] ?? "").replace(/</g,"&lt;")}</td>`).join("") + "</tr>").join("");
+          const tbody = rows.map((r) => "<tr>" + cols.map((c) => swarmTableCell(c, r[c])).join("") + "</tr>").join("");
           document.getElementById("db-data").innerHTML = `<table class="data-table"><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>`;
         } catch (err) { swarmToast("Failed to load table.", "error"); }
       }
@@ -233,7 +233,7 @@ function M.register(cfg)
           const thead = (deletable ? '<th><input type="checkbox" data-select-all></th>' : "") + cols.map((c) => `<th>${c}</th>`).join("") + (deletable ? "<th>Actions</th>" : "");
           const tbody = rows.map((r) => "<tr>"
             + (deletable ? `<td><input type="checkbox" data-select-row value="${r.id}"></td>` : "")
-            + cols.map((c) => `<td>${String(r[c] ?? "").replace(/</g,"&lt;")}</td>`).join("")
+            + cols.map((c) => swarmTableCell(c, r[c])).join("")
             + (deletable ? `<td><button type="button" data-gallery-delete-row="${r.id}">Delete</button></td>` : "")
             + "</tr>").join("");
           document.getElementById("gallery-data").innerHTML = `<table class="data-table" id="gallery-table-el"><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>`;

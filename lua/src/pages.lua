@@ -204,17 +204,24 @@ function M.register(cfg)
         -- el.querySelector() scoped to the counter element, so a sibling
         -- bar (as this used to be) is never found and its width just
         -- freezes at whatever the server rendered on page load.
+        -- bot-seek-thumb/-times had CSS (a drag handle riding the fill, plus
+        -- a split current/duration time row) but the seek bar only ever
+        -- rendered the bare track/fill -- no handle, and the single inline
+        -- data-playback-label wasn't split the way .bot-seek-times expects.
         playback_block = ([[
           <div class="bot-playback-wrap" data-playback-counter data-position="%s" data-observed-at="%s" data-duration="%s" data-playing="%s">
             <div class="bot-seek-bar" data-seek-bar data-bot-key="%s" data-guild-id="%s" data-duration="%d">
-              <div class="bot-seek-track"><div class="bot-seek-fill" data-playback-bar style="width:%d%%"></div></div>
+              <div class="bot-seek-track">
+                <div class="bot-seek-fill" data-playback-bar style="width:%d%%"></div>
+                <div class="bot-seek-thumb" data-seek-thumb style="left:%d%%"></div>
+              </div>
             </div>
-            <span data-playback-label></span>
+            <div class="bot-seek-times"><span data-seek-current></span><span data-seek-duration></span></div>
           </div>
         ]]):format(
           tostring(session.position_seconds or 0), tostring(session.position_observed_at or 0),
           tostring(session.duration_seconds or 0), tostring(session.is_playing == true),
-          html.esc(bot.key), html.esc(session.guild_id), duration, pct)
+          html.esc(bot.key), html.esc(session.guild_id), duration, pct, pct)
       end
 
       local offline_overlay = bot_is_offline(bot)

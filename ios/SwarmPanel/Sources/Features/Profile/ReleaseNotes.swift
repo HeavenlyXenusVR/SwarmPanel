@@ -16,6 +16,9 @@ let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"
 /// Static changelog shown on the "What's New" screen — updated by hand
 /// alongside each ios/vX.Y.Z tag, mirroring the tag's own release notes.
 let releaseNotes: [ReleaseNote] = [
+    ReleaseNote(version: "0.11.2", highlights: [
+        "Database Viewer: id/hash/token-shaped columns are now shown in a monospaced, accent-tinted style so they read as identifiers at a glance",
+    ]),
     ReleaseNote(version: "0.11.1", highlights: [
         "Audit Log entries now show a readable before -> after diff for each changed field instead of a raw JSON blob",
     ]),

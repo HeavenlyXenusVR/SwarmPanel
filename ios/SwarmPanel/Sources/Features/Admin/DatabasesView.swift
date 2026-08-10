@@ -1,5 +1,15 @@
 import SwiftUI
 
+/// Mirrors the web panel's SWARM_MONO_COLUMN_RE (static/app.js) -- id/hash/
+/// token/uuid-shaped columns get a monospaced, accent-tinted treatment so
+/// they read as identifiers rather than ordinary text at a glance.
+private func isIdLikeColumn(_ name: String) -> Bool {
+    let lower = name.lowercased()
+    return lower == "id" || lower == "uuid"
+        || lower.hasSuffix("_id") || lower.hasSuffix("_hash")
+        || lower.hasSuffix("_token") || lower.hasSuffix("_uuid")
+}
+
 struct DatabasesView: View {
     @StateObject private var viewModel = DatabasesViewModel()
     @State private var shareURL: IdentifiableURL?
@@ -103,8 +113,8 @@ struct DatabasesView: View {
                                     Text(key).font(.caption.bold()).foregroundStyle(SwarmTheme.textMuted)
                                     Spacer()
                                     Text(row[key]?.displayString ?? "—")
-                                        .font(.caption)
-                                        .foregroundStyle(SwarmTheme.textPrimary)
+                                        .font(isIdLikeColumn(key) ? .caption.monospaced() : .caption)
+                                        .foregroundStyle(isIdLikeColumn(key) ? SwarmTheme.accent : SwarmTheme.textPrimary)
                                         .multilineTextAlignment(.trailing)
                                 }
                             }

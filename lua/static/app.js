@@ -46,6 +46,26 @@ async function swarmFetch(path, opts) {
 window.swarmFetch = swarmFetch;
 
 // ---------------------------------------------------------------------------
+// Rich table cell formatting for the generic schema-table browsers
+// (Databases, Gallery Admin) -- table-number/table-mono/table-cell-* had CSS
+// (tabular-nums for numbers, monospace + wrap-anywhere for id/hash-looking
+// values) but every raw-table renderer just String()'d every cell the same
+// way, so a UUID and a display name looked identical.
+// ---------------------------------------------------------------------------
+const SWARM_MONO_COLUMN_RE = /(^id$|_id$|_hash$|_token$|_uuid$|^uuid$)/i;
+function swarmTableCell(colName, rawValue) {
+  const text = String(rawValue ?? "").replace(/</g, "&lt;");
+  if (rawValue !== null && rawValue !== "" && !Number.isNaN(Number(rawValue)) && typeof rawValue !== "boolean") {
+    return `<td class="table-cell-number"><span class="table-number">${text}</span></td>`;
+  }
+  if (SWARM_MONO_COLUMN_RE.test(colName)) {
+    return `<td class="table-cell-mono"><span class="table-mono">${text}</span></td>`;
+  }
+  return `<td>${text}</td>`;
+}
+window.swarmTableCell = swarmTableCell;
+
+// ---------------------------------------------------------------------------
 // Visibility/online-aware polling helper (mirrors hooks/useLiveRefresh.js)
 // ---------------------------------------------------------------------------
 function swarmLiveRefresh(fn, intervalMs) {
@@ -170,8 +190,15 @@ function tickPlaybackCounters() {
     pos = Math.max(0, duration ? Math.min(pos, duration) : pos);
     const label = el.querySelector("[data-playback-label]");
     if (label) label.textContent = formatDuration(pos) + (duration ? " / " + formatDuration(duration) : "");
+    const pct = duration ? Math.min(100, (pos / duration) * 100) : 0;
     const bar = el.querySelector("[data-playback-bar]");
-    if (bar && duration) bar.style.width = Math.min(100, (pos / duration) * 100) + "%";
+    if (bar && duration) bar.style.width = pct + "%";
+    const thumb = el.querySelector("[data-seek-thumb]");
+    if (thumb && duration) thumb.style.left = pct + "%";
+    const current = el.querySelector("[data-seek-current]");
+    if (current) current.textContent = formatDuration(pos);
+    const total = el.querySelector("[data-seek-duration]");
+    if (total) total.textContent = duration ? formatDuration(duration) : "--:--";
   });
 }
 setInterval(tickPlaybackCounters, 1000);
@@ -239,20 +266,28 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!bar) return;
     const duration = parseFloat(bar.getAttribute("data-duration") || "0");
     if (!duration) return;
-    bar.classList.add("dragging");
+    // CSS's hover/active thumb-reveal rule is keyed off .bot-seek-seeking
+    // (static/app.css), not .dragging -- the thumb never actually got shown
+    // while dragging before this matched the class name up.
+    bar.classList.add("bot-seek-seeking");
     function fractionFromEvent(evt) {
       const rect = bar.getBoundingClientRect();
       return Math.min(1, Math.max(0, (evt.clientX - rect.left) / rect.width));
     }
     function onMove(evt) {
       const frac = fractionFromEvent(evt);
+      const pct = frac * 100 + "%";
       const fill = bar.querySelector("[data-playback-bar]");
-      if (fill) fill.style.width = frac * 100 + "%";
+      if (fill) fill.style.width = pct;
+      const thumb = bar.querySelector("[data-seek-thumb]");
+      if (thumb) thumb.style.left = pct;
+      const current = bar.parentElement && bar.parentElement.querySelector("[data-seek-current]");
+      if (current) current.textContent = formatDuration(frac * duration);
     }
     function onUp(evt) {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
-      bar.classList.remove("dragging");
+      bar.classList.remove("bot-seek-seeking");
       const frac = fractionFromEvent(evt);
       const seconds = Math.round(frac * duration);
       swarmFetch("/api/bots/control", {
