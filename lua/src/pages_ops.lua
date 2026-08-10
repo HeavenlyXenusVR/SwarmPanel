@@ -427,8 +427,13 @@ function M.register(cfg)
     if not a then return status, "", headers end
     local body = html.page({
       title = "Users", eyebrow = "Directory", lede = "Find other operators in the swarm.",
-      body = '<input type="search" placeholder="Search users..." data-debounced-search id="user-search">'
-        .. '<div id="user-results" class="user-grid">' .. html.empty_state("Start typing to search.") .. "</div>",
+      body = [[
+        <div class="directory-toolbar">
+          <input type="search" placeholder="Search users..." data-debounced-search id="user-search">
+          <div class="directory-summary" id="user-summary"></div>
+        </div>
+        <div id="user-results" class="user-grid">]] .. html.empty_state("Start typing to search.") .. [[</div>
+      ]],
     })
     local script = [[
       function escUser(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
@@ -487,6 +492,11 @@ function M.register(cfg)
             </article>`;
           }).join("");
           document.getElementById("user-results").innerHTML = cards || "<p>No users found.</p>";
+          const users = res.users || [];
+          const onlineCount = users.filter((u) => u.is_online).length;
+          document.getElementById("user-summary").innerHTML = users.length
+            ? `<span>${users.length} shown</span><span>${onlineCount} online</span>`
+            : "";
         } catch (err) { swarmToast("Search failed.", "error"); }
       }
       document.getElementById("user-search").addEventListener("swarm:search", (e) => renderUsers(e.detail.query));

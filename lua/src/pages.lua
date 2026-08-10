@@ -341,6 +341,60 @@ function M.register(cfg)
       ]]):format(html.esc(NODE_DISPLAY_NAME[node_name] or node_name), html.esc(detail), tone, label)
     end
 
+    -- Boot screen (swarm-loading-*) uses real numbers already computed
+    -- above, not placeholders -- an operator landing on the dashboard sees
+    -- an accurate snapshot for the ~1s the panel is visible, not a fake
+    -- progress bar. Fades itself out client-side (fully rendered content is
+    -- already behind it since this is a server-rendered page, not an
+    -- actual loading gate).
+    local online_bots, live_count = 0, 0
+    for _, bot in ipairs(data.bots) do
+      if not bot_is_offline(bot) then online_bots = online_bots + 1 end
+    end
+    for _, s in ipairs(all_sessions) do
+      if s.is_playing then live_count = live_count + 1 end
+    end
+    local boot_screen = ([[
+      <div class="swarm-loading-screen" id="boot-screen">
+        <div class="swarm-loading-backdrop"></div>
+        <div class="swarm-loading-panel">
+          <div class="swarm-loading-hero">
+            <div class="swarm-loading-radar">
+              <div class="swarm-loading-ring ring-a"></div>
+              <div class="swarm-loading-ring ring-b"></div>
+              <div class="swarm-loading-ring ring-c"></div>
+              <div class="swarm-loading-sweep"></div>
+              <div class="swarm-loading-core"></div>
+            </div>
+            <div class="swarm-loading-copy">
+              <span class="swarm-loading-kicker">Fleet Command</span>
+              <strong>SwarmPanel</strong>
+              <p>Syncing with the swarm...</p>
+            </div>
+          </div>
+          <div class="swarm-loading-status-grid">
+            <article><span>Bots Online</span><strong>%d / %d</strong><small>heartbeat within 120s</small></article>
+            <article><span>Live Sessions</span><strong>%d</strong><small>currently playing</small></article>
+            <article><span>Audio Nodes</span><strong>%s</strong><small>Lavalink / NodeLink</small></article>
+          </div>
+          <div class="swarm-loading-progress"><span></span></div>
+        </div>
+      </div>
+      <script>
+        (function () {
+          var el = document.getElementById("boot-screen");
+          if (!el) return;
+          setTimeout(function () {
+            el.classList.add("is-leaving");
+            setTimeout(function () { el.remove(); }, 420);
+          }, 650);
+        })();
+      </script>
+    ]]):format(
+      online_bots, #data.bots, live_count,
+      ((data.node_health or {}).lavalink or {}).status == "healthy" and "Healthy" or "Checking"
+    )
+
     local body = html.page({
       title = "Dashboard",
       eyebrow = "Fleet Command",
@@ -364,7 +418,7 @@ function M.register(cfg)
         #session_rows > 0 and html.join(session_rows) or ('<tr><td colspan="5">' .. html.esc("Nothing playing right now.") .. "</td></tr>")),
     })
 
-    body = body .. [[
+    body = boot_screen .. body .. [[
       <script>
         swarmDashboardStream((msg) => {
           if (msg.type === "dashboard_snapshot") {

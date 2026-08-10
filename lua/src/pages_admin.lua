@@ -481,7 +481,18 @@ function M.register(cfg)
             let diff = "";
             try {
               const d = JSON.parse(e.details || "{}");
-              diff = `<pre class="json-panel">before: ${JSON.stringify(d.before)}\nafter: ${JSON.stringify(d.after)}</pre>`;
+              if (d && typeof d === "object" && (d.before || d.after)) {
+                const keys = Array.from(new Set([...Object.keys(d.before || {}), ...Object.keys(d.after || {})])).sort();
+                diff = keys.length ? `<div class="audit-diff">${keys.map((k) => `
+                  <div class="audit-diff-row">
+                    <code>${k.replace(/</g, "&lt;")}</code>
+                    <span class="audit-diff-before">${JSON.stringify((d.before || {})[k])}</span>
+                    <span class="audit-diff-arrow">&rarr;</span>
+                    <span class="audit-diff-after">${JSON.stringify((d.after || {})[k])}</span>
+                  </div>`).join("")}</div>` : "";
+              } else {
+                diff = `<pre class="json-panel">${JSON.stringify(d, null, 2).replace(/</g, "&lt;")}</pre>`;
+              }
             } catch { diff = (e.details || "").replace(/</g, "&lt;"); }
             return `<div class="audit-row">
               <strong>${(e.action||"").replace(/</g,"&lt;")}</strong> by ${(e.actor_username||"").replace(/</g,"&lt;")} at ${e.created_at||""}
