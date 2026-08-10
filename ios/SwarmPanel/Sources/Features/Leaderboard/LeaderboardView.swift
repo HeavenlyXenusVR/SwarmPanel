@@ -222,6 +222,15 @@ struct LeaderboardView: View {
             }
             .background(SwarmTheme.background)
             .navigationTitle(viewModel.scope == .swarm && appState.isAdmin ? "Swarm Leaderboard" : "Leaderboard")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    NavigationLink {
+                        LearningView()
+                    } label: {
+                        Image(systemName: "brain.head.profile")
+                    }
+                }
+            }
             .task {
                 if viewModel.guildId.isEmpty { viewModel.guildId = appState.guildId ?? "" }
                 await viewModel.loadBots()

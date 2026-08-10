@@ -55,3 +55,56 @@ struct SwarmLeaderboardTrack: Decodable, Identifiable {
 
     var id: String { (botKey ?? "") + (videoUrl ?? title ?? UUID().uuidString) }
 }
+
+// MARK: - Music Intelligence (GET /api/music-intelligence) —
+// dashboard.get_music_intelligence_summary(): what the swarm's smart-
+// recommendation engine has learned (learned-track counts, plays/finishes/
+// skips/likes/dislikes totals, recommendation counts, per-bot top tracks by
+// smart score). Any account can reach their own guild's data; admins can
+// omit guild_id for a fleet-wide view.
+
+struct MusicIntelligenceEnvelope: Decodable {
+    let data: MusicIntelligenceData
+}
+
+struct MusicIntelligenceData: Decodable {
+    let totals: MusicIntelligenceTotals?
+    let bots: [MusicIntelligenceBot]?
+}
+
+struct MusicIntelligenceTotals: Decodable {
+    let learnedTracks: Int?
+    let plays: Int?
+    let finishes: Int?
+    let skips: Int?
+    let likes: Int?
+    let dislikes: Int?
+    let recommendations: Int?
+}
+
+struct MusicIntelligenceBot: Decodable, Identifiable {
+    let botKey: String?
+    let botDisplay: String?
+    let learnedTracks: Int?
+    let plays: Int?
+    let finishes: Int?
+    let skips: Int?
+    let likes: Int?
+    let dislikes: Int?
+    let recommendations: Int?
+    let topTracks: [MusicIntelligenceTrack]?
+
+    var id: String { botKey ?? UUID().uuidString }
+}
+
+struct MusicIntelligenceTrack: Decodable, Identifiable {
+    let title: String?
+    let videoUrl: String?
+    let playCount: Int?
+    let finishCount: Int?
+    let skipCount: Int?
+    let likeCount: Int?
+    let smartScore: Int?
+
+    var id: String { videoUrl ?? title ?? UUID().uuidString }
+}
