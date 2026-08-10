@@ -492,10 +492,20 @@ function M.register(cfg)
           ]);
           document.getElementById("intel-metrics").innerHTML = '<pre class="json-panel">' + JSON.stringify(metricsRes, null, 2).replace(/</g, "&lt;") + "</pre>";
           document.getElementById("intel-stability").innerHTML = '<pre class="json-panel">' + JSON.stringify(stability, null, 2).replace(/</g, "&lt;") + "</pre>";
-          const rows = (events.events || []).map((e) =>
-            `<tr><td>${e.timestamp||""}</td><td>${(e.title||e.type||"").replace(/</g,"&lt;")}</td><td>${(e.level||"").replace(/</g,"&lt;")}</td></tr>`).join("");
-          document.getElementById("intel-events").innerHTML =
-            '<table class="data-table"><thead><tr><th>Time</th><th>Type</th><th>Severity</th></tr></thead><tbody>' + (rows || '<tr><td colspan="3">No events.</td></tr>') + "</tbody></table>";
+          // .event/-error/-warning had full CSS (severity-tinted card
+          // borders) but the events feed was rendered as a bare 3-column
+          // table with no description column at all -- description (the
+          // actually useful part of each event) was silently dropped.
+          const cards = (events.events || []).map((e) => {
+            const level = (e.level || "info").toLowerCase();
+            const cls = level === "error" ? "event-error" : level === "warning" ? "event-warning" : "";
+            return `<div class="event ${cls}">
+              <div><strong>${(e.title || e.type || "Event").replace(/</g, "&lt;")}</strong><span>${e.timestamp || ""}</span></div>
+              <p>${(e.description || "").replace(/</g, "&lt;")}</p>
+              <div><small>${(e.source || "").replace(/</g, "&lt;")}</small><small>${level}</small></div>
+            </div>`;
+          }).join("");
+          document.getElementById("intel-events").innerHTML = cards || '<div class="empty-state">No events.</div>';
         } catch (err) { swarmToast("Failed to load intel.", "error"); }
       }
       swarmLiveRefresh(loadIntel, 5000);

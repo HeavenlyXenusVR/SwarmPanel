@@ -155,8 +155,12 @@ function M.register(cfg)
         if (!botKey || !guildId) return;
         try {
           const state = await swarmFetch(`/api/bots/${botKey}/control-state?guild_id=${encodeURIComponent(guildId)}`);
-          document.getElementById("control-state").innerHTML =
-            '<pre class="json-panel">' + JSON.stringify(state, null, 2).replace(/</g, "&lt;") + "</pre>";
+          const stateBox = document.getElementById("control-state");
+          stateBox.innerHTML = '<pre class="json-panel">' + JSON.stringify(state, null, 2).replace(/</g, "&lt;") + "</pre>";
+          // .state-recovering already existed in CSS (recovering-pulse
+          // keyframe) but nothing ever applied it -- an operator watching
+          // this panel had no visual cue that a session was mid-recovery.
+          stateBox.classList.toggle("state-recovering", !!(state && state.session && state.session.session_state === "recovering"));
           // Mirrors ControlsPage.jsx's controlState effect: voice/text channel
           // are one-time defaults (only fill an empty field -- never clobber
           // what the operator is mid-typing for a PLAY/SET_HOME order), while
@@ -334,13 +338,26 @@ function M.register(cfg)
       async function loadInvites() {
         try {
           const res = await swarmFetch("/api/bots");
-          const cards = (res.invite_bots || res.bots || []).map((b) => `
-            <div class="invite-card">
-              <div class="bot-now"><strong>${b.name || b.display_name}</strong></div>
+          const cards = (res.invite_bots || res.bots || []).map((b) => {
+            const avatar = b.icon_url
+              ? `<img class="avatar invite-avatar" src="${b.icon_url}" alt="">`
+              : `<span class="avatar invite-avatar avatar-fallback">${(b.identity_name || b.name || b.display_name || "?").slice(0, 1).toUpperCase()}</span>`;
+            return `
+            <div class="invite-card" style="--card-accent: ${b.accent || "#89b4fa"}">
+              <div class="invite-card-head">
+                ${avatar}
+                <div class="invite-card-copy">
+                  <strong>${b.name || b.display_name}</strong>
+                  <small>${(b.capability_summary || "").replace(/</g, "&lt;")}</small>
+                </div>
+                ${b.connected_to_session_guild ? '<span class="data-pill data-pill-live">In your guild</span>' : ""}
+              </div>
+              ${b.identity_error ? `<p class="notice notice-error">${b.identity_error.replace(/</g, "&lt;")}</p>` : ""}
               <p>
                 ${b.invite_url ? `<a class="button-link primary" href="${b.invite_url}" target="_blank" rel="noreferrer">Invite</a>` : "<span>No invite available</span>"}
               </p>
-            </div>`).join("");
+            </div>`;
+          }).join("");
           document.getElementById("invite-cards").innerHTML = cards || "<p>No bots found.</p>";
         } catch (err) { swarmToast("Failed to load bots.", "error"); }
       }
