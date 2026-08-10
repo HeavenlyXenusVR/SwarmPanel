@@ -301,4 +301,83 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
   });
+
+  // Notifications bell (mirrors Shell.jsx's notifications dropdown; backend
+  // was fully wired via social.lua/routes.lua's /api/notifications* -- this
+  // was the only piece missing).
+  (function initNotifications() {
+    const btn = document.getElementById("notif-bell-btn");
+    const dropdown = document.getElementById("notif-dropdown");
+    const backdrop = document.getElementById("notif-backdrop");
+    const badge = document.getElementById("notif-badge");
+    const list = document.getElementById("notif-list");
+    const markAllBtn = document.getElementById("notif-mark-all");
+    if (!btn || !dropdown || !backdrop || !badge || !list) return;
+
+    function setOpen(open) {
+      dropdown.hidden = !open;
+      backdrop.hidden = !open;
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) loadNotifications();
+    }
+    btn.addEventListener("click", () => setOpen(dropdown.hidden));
+    backdrop.addEventListener("click", () => setOpen(false));
+
+    function timeAgo(iso) {
+      const ts = Date.parse(iso);
+      if (Number.isNaN(ts)) return "";
+      const seconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+      if (seconds < 60) return seconds + "s ago";
+      if (seconds < 3600) return Math.floor(seconds / 60) + "m ago";
+      if (seconds < 86400) return Math.floor(seconds / 3600) + "h ago";
+      return Math.floor(seconds / 86400) + "d ago";
+    }
+
+    async function refreshUnreadCount() {
+      try {
+        const res = await swarmFetch("/api/notifications/unread-count");
+        const count = res.unread_count || 0;
+        badge.hidden = count <= 0;
+        badge.textContent = count > 99 ? "99+" : String(count);
+        btn.classList.toggle("has-unread", count > 0);
+      } catch { /* ignore */ }
+    }
+
+    async function loadNotifications() {
+      try {
+        const res = await swarmFetch("/api/notifications?limit=30");
+        const items = res.notifications || [];
+        list.innerHTML = items.length ? items.map((n) => `
+          <li>
+            <button type="button" class="notifications-item${n.read_at ? "" : " unread"}" data-notif-id="${n.id}" data-notif-link="${(n.link_path || "").replace(/"/g, "&quot;")}">
+              <span class="notifications-item-title">${(n.title || "").replace(/</g, "&lt;")}</span>
+              ${n.body ? `<span class="notifications-item-body">${n.body.replace(/</g, "&lt;")}</span>` : ""}
+              <span class="notifications-item-time">${timeAgo(n.created_at)}</span>
+            </button>
+          </li>`).join("") : '<li class="notifications-empty">No notifications yet.</li>';
+      } catch {
+        list.innerHTML = '<li class="notifications-empty">Failed to load notifications.</li>';
+      }
+    }
+
+    list.addEventListener("click", async (e) => {
+      const item = e.target.closest("[data-notif-id]");
+      if (!item) return;
+      const id = item.getAttribute("data-notif-id");
+      const link = item.getAttribute("data-notif-link");
+      try { await swarmFetch(`/api/notifications/${id}/read`, { method: "POST" }); } catch { /* ignore */ }
+      refreshUnreadCount();
+      if (link) window.location = link;
+    });
+
+    if (markAllBtn) {
+      markAllBtn.addEventListener("click", async () => {
+        try { await swarmFetch("/api/notifications/read-all", { method: "POST" }); } catch { /* ignore */ }
+        loadNotifications();
+        refreshUnreadCount();
+      });
+    }
+
+    swarmLiveRefresh(refreshUnreadCount, 30000);
+  })();
 });

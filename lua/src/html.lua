@@ -259,10 +259,27 @@ function M.layout(opts)
   local username = session.username or "Operator"
   local initial = username:sub(1, 1):upper()
 
+  local notif_bell = authed and [[
+      <div class="notifications-bell">
+        <button class="icon-button" type="button" id="notif-bell-btn" title="Notifications" aria-haspopup="true" aria-expanded="false">
+          &#128276;<span class="notifications-badge" id="notif-badge" hidden>0</span>
+        </button>
+        <div class="notifications-backdrop" id="notif-backdrop" hidden></div>
+        <div class="notifications-dropdown" id="notif-dropdown" hidden>
+          <div class="notifications-dropdown-head">
+            <strong>Notifications</strong>
+            <button type="button" id="notif-mark-all">Mark all read</button>
+          </div>
+          <ul class="notifications-list" id="notif-list"></ul>
+        </div>
+      </div>
+    ]] or ""
+
   local session_bar
   if authed then
     session_bar = ([[
       <span class="mode-pill%s">%s</span>
+      %s
       %s
       <a class="profile-link" href="/profile"><span class="profile-link-badge">%s</span><span>%s</span></a>
       <form method="POST" action="/logout" class="logout-form"><button class="icon-button" type="submit" title="Logout">&#8677;</button></form>
@@ -271,6 +288,7 @@ function M.layout(opts)
       session.site_owner and ([[<button class="mode-toggle%s" type="button" data-admin-toggle="%s">%s</button>]]):format(
         session.admin_mode and " active" or "", session.admin_mode and "0" or "1",
         session.admin_mode and "Admin On" or "Admin Off") or "",
+      notif_bell,
       M.esc(initial), M.esc(username))
   elseif opts.path ~= "/login" then
     session_bar = '<a class="button-link primary" href="/login">&#8676; Login</a>'

@@ -501,6 +501,19 @@ function M.register(cfg)
         <div id="diag-stability"></div>
         <div id="diag-metrics"></div>
         <h3>Alert Rules</h3>
+        <form id="alert-rule-form" class="panel form-panel">
+          <label class="field">Rule type<select name="rule_type" required>
+            <option value="bot_offline">Bot offline</option>
+            <option value="queue_stuck">Queue stuck</option>
+            <option value="stale_metrics">Stale metrics</option>
+            <option value="recovery_pending">Recovery pending</option>
+          </select></label>
+          <label class="field">Threshold (minutes)<input type="number" name="threshold_minutes" min="1" max="1440" value="5" required></label>
+          <label class="field">Escalation (minutes, optional)<input type="number" name="escalation_minutes" min="1" max="10080"></label>
+          <label class="switch"><input type="checkbox" name="enabled" checked> Enabled</label>
+          <label class="switch"><input type="checkbox" name="escalate_email"> Escalate via email</label>
+          <button type="submit" class="button-link primary">Add Rule</button>
+        </form>
         <div id="diag-alerts"></div>
         <h3>Exports</h3>
         <div id="diag-exports"></div>
@@ -520,8 +533,12 @@ function M.register(cfg)
       async function loadAlerts() {
         try {
           const res = await swarmFetch("/api/alert-rules");
-          document.getElementById("diag-alerts").innerHTML = (res.rules || []).map((r) =>
-            `<div class="alert-rule"><span>${r.rule_type}</span><button data-delete-rule="${r.id}">Delete</button></div>`).join("") || "<p>No alert rules.</p>";
+          document.getElementById("diag-alerts").innerHTML = (res.rules || []).map((r) => `
+            <div class="alert-rule">
+              <span><strong>${r.rule_type}</strong> — ${r.threshold_minutes}m${r.escalation_minutes ? `, escalate after ${r.escalation_minutes}m` : ""}${r.escalate_email ? " (email)" : ""}</span>
+              <label class="switch"><input type="checkbox" data-toggle-rule="${r.id}" ${r.enabled ? "checked" : ""}> Enabled</label>
+              <button type="button" data-delete-rule="${r.id}">Delete</button>
+            </div>`).join("") || "<p>No alert rules.</p>";
         } catch { /* ignore */ }
       }
       async function loadExports() {
@@ -532,9 +549,36 @@ function M.register(cfg)
           document.getElementById("diag-exports").innerHTML = rows.join("") || "<p>No exports.</p>";
         } catch { /* ignore */ }
       }
+      const alertForm = document.getElementById("alert-rule-form");
+      alertForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const fd = new FormData(alertForm);
+        try {
+          await swarmFetch("/api/alert-rules", {
+            method: "POST",
+            body: JSON.stringify({
+              rule_type: fd.get("rule_type"),
+              threshold_minutes: Number(fd.get("threshold_minutes")),
+              enabled: fd.get("enabled") === "on",
+              escalation_minutes: fd.get("escalation_minutes") ? Number(fd.get("escalation_minutes")) : null,
+              escalate_email: fd.get("escalate_email") === "on",
+            }),
+          });
+          swarmToast("Alert rule created.", "success");
+          alertForm.reset();
+          loadAlerts();
+        } catch (err) { swarmToast(err.message, "error"); }
+      });
       document.getElementById("diag-alerts").addEventListener("click", async (e) => {
         const id = e.target.getAttribute("data-delete-rule");
         if (id) { await swarmFetch(`/api/alert-rules/${id}/delete`, { method: "POST" }).catch(() => {}); loadAlerts(); }
+      });
+      document.getElementById("diag-alerts").addEventListener("change", async (e) => {
+        const id = e.target.getAttribute("data-toggle-rule");
+        if (!id) return;
+        try {
+          await swarmFetch(`/api/alert-rules/${id}/update`, { method: "POST", body: JSON.stringify({ enabled: e.target.checked }) });
+        } catch (err) { swarmToast(err.message, "error"); e.target.checked = !e.target.checked; }
       });
       swarmLiveRefresh(loadDiagnostics, 5000);
       swarmLiveRefresh(loadAlerts, 30000);

@@ -107,8 +107,17 @@ function M.register(cfg)
         <div id="control-state" class="control-state"></div>
         %s
         <div id="saved-queues"></div>
+        %s
       ]]):format(html.join(bot_options), guild_field, html.join(action_options),
-        html.section_head("Control State"), html.section_head("Saved Queues")),
+        html.section_head("Control State"), html.section_head("Saved Queues"),
+        a.admin_mode and ([[
+          %s
+          <div class="panel">
+            <p>Sends RECOVER to every bot/guild session fleet-wide currently sitting in "Recovery Pending".</p>
+            <button type="button" id="recover-all-btn" class="button-link primary">Recover All Stale Sessions</button>
+            <div id="recover-all-result"></div>
+          </div>
+        ]]):format(html.section_head("Fleet Recovery")) or ""),
     })
 
     local script = [[
@@ -265,6 +274,47 @@ function M.register(cfg)
           loadQueues();
         }
       });
+    ]] .. [[
+      const recoverAllBtn = document.getElementById("recover-all-btn");
+      if (recoverAllBtn) {
+        recoverAllBtn.addEventListener("click", async () => {
+          const resultBox = document.getElementById("recover-all-result");
+          recoverAllBtn.disabled = true;
+          resultBox.innerHTML = "";
+          try {
+            const dash = await swarmFetch("/api/dashboard");
+            const targets = [];
+            for (const bot of (dash.bots || [])) {
+              for (const session of (bot.sessions || [])) {
+                if (session.session_state === "recovering" && session.guild_id) {
+                  targets.push({ bot_key: bot.key, guild_id: String(session.guild_id) });
+                }
+              }
+            }
+            if (targets.length === 0) {
+              resultBox.innerHTML = '<div class="notice notice-success">Nothing to recover — no sessions pending.</div>';
+              return;
+            }
+            let succeeded = 0, failed = 0;
+            for (const t of targets) {
+              try {
+                await swarmFetch("/api/bots/control", {
+                  method: "POST",
+                  body: JSON.stringify({ bot_key: t.bot_key, guild_id: t.guild_id, action: "RECOVER" }),
+                });
+                succeeded++;
+              } catch { failed++; }
+            }
+            resultBox.innerHTML = `<div class="notice notice-${failed ? "error" : "success"}">Recovered ${succeeded}/${targets.length} session(s)${failed ? `, ${failed} failed` : ""}.</div>`;
+            swarmToast(`Recovery sent to ${succeeded}/${targets.length} session(s).`, failed ? "error" : "success");
+            refreshControlState();
+          } catch (err) {
+            resultBox.innerHTML = '<div class="notice notice-error">' + err.message + "</div>";
+          } finally {
+            recoverAllBtn.disabled = false;
+          }
+        });
+      }
     ]]
 
     return page_shell(req, a, "/controls", "Controls", body, script)
