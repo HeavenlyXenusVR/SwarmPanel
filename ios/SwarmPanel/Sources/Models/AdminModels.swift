@@ -66,6 +66,8 @@ struct AlertRuleCreateBody: Encodable {
     let ruleType: String
     let thresholdMinutes: Int
     let enabled: Bool
+    let escalationMinutes: Int?
+    let escalateEmail: Bool?
 }
 
 struct AlertRuleToggleBody: Encodable {

@@ -42,6 +42,7 @@ function M.register(cfg)
     local body = html.page({
       title = "Accounts", eyebrow = "Admin", lede = "Recover and manage swarm accounts.",
       body = [[
+        <div class="account-status-stack" id="account-status-stack"></div>
         <div class="search-box">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.6"/><path d="M11 11L14.5 14.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
           <input type="search" placeholder="Search accounts..." data-debounced-search id="acct-search">
@@ -77,6 +78,12 @@ function M.register(cfg)
               <tbody>${rows || '<tr><td colspan="5">No accounts.</td></tr>'}</tbody>
             </table>`;
           table = document.getElementById("accounts-tbl");
+          const accts = (res.data && res.data.users) || [];
+          const verifiedCount = accts.filter((acc) => acc.email_verified).length;
+          const modCount = accts.filter((acc) => acc.panel_role === "moderator").length;
+          document.getElementById("account-status-stack").innerHTML = accts.length ? `
+            <div class="notice">${accts.length} account${accts.length === 1 ? "" : "s"} shown -- ${verifiedCount} verified, ${accts.length - verifiedCount} unverified, ${modCount} moderator${modCount === 1 ? "" : "s"}.</div>
+          ` : "";
         } catch (err) { swarmToast("Failed to load accounts.", "error"); }
       }
       document.getElementById("acct-search").addEventListener("swarm:search", (e) => loadAccounts(e.detail.query));

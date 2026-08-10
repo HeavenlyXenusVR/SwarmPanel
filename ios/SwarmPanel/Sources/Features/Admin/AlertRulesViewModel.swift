@@ -22,13 +22,16 @@ final class AlertRulesViewModel: ObservableObject {
         }
     }
 
-    func create(ruleType: String, thresholdMinutes: Int) async {
+    func create(ruleType: String, thresholdMinutes: Int, escalationMinutes: Int? = nil, escalateEmail: Bool = false) async {
         isSaving = true
         defer { isSaving = false }
         do {
             let _: AlertRuleEnvelope = try await api.post(
                 "/api/alert-rules",
-                body: AlertRuleCreateBody(ruleType: ruleType, thresholdMinutes: thresholdMinutes, enabled: true)
+                body: AlertRuleCreateBody(
+                    ruleType: ruleType, thresholdMinutes: thresholdMinutes, enabled: true,
+                    escalationMinutes: escalationMinutes, escalateEmail: escalationMinutes != nil ? escalateEmail : nil
+                )
             )
             await load()
         } catch {

@@ -5,6 +5,9 @@ struct AlertRulesView: View {
     @StateObject private var viewModel = AlertRulesViewModel()
     @State private var newRuleType = alertRuleTypes[0]
     @State private var newThreshold = 5
+    @State private var newEscalationEnabled = false
+    @State private var newEscalationMinutes = 30
+    @State private var newEscalateEmail = false
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -28,8 +31,19 @@ struct AlertRulesView: View {
                                 }
                             }
                             Stepper("Threshold: \(newThreshold) min", value: $newThreshold, in: 1...1440)
+                            Toggle("Escalate if unresolved", isOn: $newEscalationEnabled.animation())
+                            if newEscalationEnabled {
+                                Stepper("Escalate after: \(newEscalationMinutes) min", value: $newEscalationMinutes, in: 1...10080)
+                                Toggle("Also escalate via email", isOn: $newEscalateEmail)
+                            }
                             Button {
-                                Task { await viewModel.create(ruleType: newRuleType, thresholdMinutes: newThreshold) }
+                                Task {
+                                    await viewModel.create(
+                                        ruleType: newRuleType, thresholdMinutes: newThreshold,
+                                        escalationMinutes: newEscalationEnabled ? newEscalationMinutes : nil,
+                                        escalateEmail: newEscalateEmail
+                                    )
+                                }
                             } label: {
                                 HStack {
                                     Spacer()

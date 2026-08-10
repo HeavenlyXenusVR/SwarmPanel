@@ -421,6 +421,26 @@ function M.register(cfg)
         </div>
         <div class="dashboard-grid appearance-layout">
         <form id="appearance-form" class="panel form-panel appearance-form">
+          <div class="appearance-cluster">
+            <div class="appearance-cluster-head">
+              <h3>Quick Presets</h3>
+              <p>Apply a full look in one tap, then fine-tune anything below.</p>
+            </div>
+            <div class="appearance-preset-grid">
+              <button type="button" class="appearance-preset-card" data-preset="midnight_ops">
+                <strong>Midnight Ops</strong>
+                <span>Deep blue-black, cool accent, soft cards.</span>
+              </button>
+              <button type="button" class="appearance-preset-card" data-preset="aurora_glass">
+                <strong>Aurora Glass</strong>
+                <span>Aurora backdrop, green accent, glow hover.</span>
+              </button>
+              <button type="button" class="appearance-preset-card" data-preset="ember_signal">
+                <strong>Ember Signal</strong>
+                <span>Warm ember backdrop, red accent, crisp cards.</span>
+              </button>
+            </div>
+          </div>
           <h3>Theme</h3>
           %s%s
           <label class="field">Accent color<input type="color" name="accent_color"></label>
@@ -525,6 +545,24 @@ function M.register(cfg)
         updatePreview();
       })();
       document.getElementById("appearance-reset").addEventListener("click", () => { applyPrefs({}); updatePreview(); markDirty(); });
+      const APPEARANCE_PRESETS = {
+        midnight_ops: { theme_mode: "dark", background_mode: "midnight", accent_color: "#89b4fa", card_shape: "soft", card_hover_effect: "lift" },
+        aurora_glass: { theme_mode: "dark", background_mode: "aurora", accent_color: "#7ee787", card_shape: "soft", card_hover_effect: "glow" },
+        ember_signal: { theme_mode: "dark", background_mode: "ember", accent_color: "#f38ba8", card_shape: "crisp", card_hover_effect: "border" },
+      };
+      document.querySelectorAll("[data-preset]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const preset = APPEARANCE_PRESETS[btn.getAttribute("data-preset")];
+          if (!preset) return;
+          const f = document.getElementById("appearance-form");
+          for (const [key, value] of Object.entries(preset)) {
+            if (f.elements[key]) f.elements[key].value = value;
+          }
+          updatePreview();
+          markDirty();
+          swarmToast("Preset applied -- Save to keep it.", "success");
+        });
+      });
       const draftPill = document.getElementById("appearance-draft-pill");
       function markDirty() {
         draftPill.textContent = "Unsaved changes";
