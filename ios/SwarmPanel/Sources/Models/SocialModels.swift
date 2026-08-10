@@ -16,7 +16,17 @@ struct AccountSummary: Decodable, Identifiable {
     let avatarUrl: String?
     let serverIconUrl: String?
     let profileHeadline: String?
-    let guildId: Int?
+    /// Discord guild IDs are snowflakes that can exceed JSON-number safe-
+    /// integer precision, so the backend always serializes guild_id as a
+    /// STRING (accounts.lua's serialize_profile: `tostring(profile.guild_id)`)
+    /// -- same as every other guild_id field in this app (DashboardSession,
+    /// SwarmAccountSummary). This one was typed Int?, which made
+    /// JSONDecoder throw a typeMismatch on literally every row that had a
+    /// guild_id at all, failing the whole array decode -- the root cause of
+    /// "Couldn't read the server's response" on Swarm Directory and the
+    /// Friends list (both consume AccountSummary), for any account that
+    /// wasn't guild_id = null.
+    let guildId: String?
     let favoriteBot: String?
     /// The backend's EXISTS(...) subquery comes back as a raw 0/1 integer,
     /// not a JSON boolean, so this decodes as Int and exposes `isFollowedByMe`.

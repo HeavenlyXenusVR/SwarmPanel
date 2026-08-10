@@ -16,6 +16,9 @@ let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"
 /// Static changelog shown on the "What's New" screen — updated by hand
 /// alongside each ios/vX.Y.Z tag, mirroring the tag's own release notes.
 let releaseNotes: [ReleaseNote] = [
+    ReleaseNote(version: "0.11.3", highlights: [
+        "Fixed \"Couldn't read the server's response\" on Swarm Directory and the Friends list for any account with a guild -- a guild ID field was typed as a number instead of text, and Discord's real guild IDs are too large for that to ever work",
+    ]),
     ReleaseNote(version: "0.11.2", highlights: [
         "Database Viewer: id/hash/token-shaped columns are now shown in a monospaced, accent-tinted style so they read as identifiers at a glance",
     ]),
