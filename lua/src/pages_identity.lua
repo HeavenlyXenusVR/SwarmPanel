@@ -240,6 +240,13 @@ function M.register(cfg)
           <div class="dashboard-grid profile-workbench operator-layout-command">
           <div class="profile-editor">
           <form id="profile-form" class="panel form-panel">
+            <div class="appearance-cluster">
+              <div class="appearance-cluster-head">
+                <h3>Quick Looks</h3>
+                <p>Apply a full profile look in one tap, then fine-tune anything below.</p>
+              </div>
+              <div class="appearance-preset-grid" id="profile-preset-grid"></div>
+            </div>
             <h3>Identity</h3>
             <label class="field">Display name<input name="display_name" maxlength="80"></label>
             <label class="field">Headline<input name="profile_headline" maxlength="140"></label>
@@ -352,6 +359,35 @@ function M.register(cfg)
             renderProfileChecklist(p);
           } catch { /* ignore */ }
         })();
+        // Quick Looks: looks.lua's PROFILE_LOOKS (server-owned profile
+        // style bundles, same /api/appearance/presets response that
+        // Appearance's Quick Presets now reads its "panel" half from) had
+        // no consumer at all for its "profile" half until this.
+        (async () => {
+          try {
+            const res = await swarmFetch("/api/appearance/presets");
+            const grid = document.getElementById("profile-preset-grid");
+            (res.profile || []).forEach((preset) => {
+              const card = document.createElement("button");
+              card.type = "button";
+              card.className = "appearance-preset-card";
+              card.setAttribute("data-profile-preset", JSON.stringify(preset.patch));
+              card.innerHTML = `<strong>${preset.title.replace(/</g, "&lt;")}</strong><span>${(preset.note || "").replace(/</g, "&lt;")}</span>`;
+              grid.appendChild(card);
+            });
+          } catch { /* Quick Looks are additive -- the rest of the form still works without them */ }
+        })();
+        document.getElementById("profile-form").addEventListener("click", (e) => {
+          const btn = e.target.closest("[data-profile-preset]");
+          if (!btn) return;
+          const patch = JSON.parse(btn.getAttribute("data-profile-preset"));
+          const f = document.getElementById("profile-form");
+          for (const [key, value] of Object.entries(patch)) {
+            if (f.elements[key]) f.elements[key].value = value;
+          }
+          updateProfilePreview();
+          swarmToast("Look applied -- Save to keep it.", "success");
+        });
         // Verification panel: both /api/session/verification-webhook and the
         // newer /api/session/verification-discord (straight-DM alternative)
         // had zero UI reaching them before this -- registration was the
