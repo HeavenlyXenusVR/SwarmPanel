@@ -16,6 +16,9 @@ let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"
 /// Static changelog shown on the "What's New" screen — updated by hand
 /// alongside each ios/vX.Y.Z tag, mirroring the tag's own release notes.
 let releaseNotes: [ReleaseNote] = [
+    ReleaseNote(version: "0.12.2", highlights: [
+        "Controls now shows real Discord guild names instead of bare IDs, matching the web panel",
+    ]),
     ReleaseNote(version: "0.12.1", highlights: [
         "Profile now has an Admin Mode toggle for owner accounts, matching the web panel's topbar switch",
     ]),

@@ -41,8 +41,27 @@ struct ControlsView: View {
                     }
                     HStack {
                         IconChip(systemName: "number", tint: .indigo)
-                        TextField("Guild ID", text: $viewModel.guildId)
-                            .keyboardType(.numberPad)
+                        // Shows the real Discord guild NAME (resolved from
+                        // the selected bot's inventory, same data the voice
+                        // channel picker already uses) instead of a bare
+                        // numeric ID -- guildId itself (what actually gets
+                        // submitted) never changes, only what's displayed.
+                        // Falls back to free-text entry when the inventory
+                        // hasn't loaded yet or the guild isn't in it (e.g. a
+                        // guild the bot hasn't cached channels for).
+                        if !viewModel.guilds.isEmpty {
+                            Picker("Guild", selection: $viewModel.guildId) {
+                                if !viewModel.guilds.contains(where: { $0.id == viewModel.guildId }) && !viewModel.guildId.isEmpty {
+                                    Text("Guild \(viewModel.guildId)").tag(viewModel.guildId)
+                                }
+                                ForEach(viewModel.guilds) { guild in
+                                    Text(guild.name?.isEmpty == false ? guild.name! : "Guild \(guild.id)").tag(guild.id)
+                                }
+                            }
+                        } else {
+                            TextField("Guild ID", text: $viewModel.guildId)
+                                .keyboardType(.numberPad)
+                        }
                     }
                 } header: {
                     SectionLabel(title: "Bot & Guild")

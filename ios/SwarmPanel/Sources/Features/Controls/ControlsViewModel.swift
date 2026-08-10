@@ -32,6 +32,8 @@ final class ControlsViewModel: ObservableObject {
     /// same Controls page.
     var commandPreviewSummary: String {
         let botLabel = bots.first(where: { $0.key == selectedBotKey })?.label ?? selectedBotKey
+        let guild = guilds.first(where: { $0.id == guildId })
+        let guildLabel = guild?.name?.isEmpty == false ? guild!.name! : "guild \(guildId)"
         var detail = ""
         if action == .play, !sourceURL.isEmpty {
             detail = " with \"\(sourceURL)\""
@@ -40,7 +42,7 @@ final class ControlsViewModel: ObservableObject {
         } else if action == .filter {
             detail = " (\(filterMode))"
         }
-        return "\(botLabel) will run \(action.rawValue)\(detail) in guild \(guildId)."
+        return "\(botLabel) will run \(action.rawValue)\(detail) in \(guildLabel)."
     }
 
     func loadBots(defaultGuildId: String?) async {

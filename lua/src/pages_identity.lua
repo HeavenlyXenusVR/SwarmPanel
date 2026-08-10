@@ -546,12 +546,12 @@ function M.register(cfg)
           </div>
           <h3>Theme</h3>
           %s%s
-          <label class="field">Accent color<input type="color" name="accent_color"></label>
-          <label class="field">Accent secondary (optional)<input type="color" name="accent_secondary"></label>
+          <div class="appearance-color-row"><span>Accent color</span><span id="accent-color-hex">#89b4fa</span><input type="color" class="appearance-color-swatch" name="accent_color"></div>
+          <div class="appearance-color-row"><span>Accent secondary (optional)</span><span id="accent-secondary-hex">--</span><input type="color" class="appearance-color-swatch" name="accent_secondary"></div>
           %s
           <h3>Background</h3>
           %s
-          <label class="field">Background color (custom_color mode)<input type="color" name="background_color"></label>
+          <div class="appearance-color-row"><span>Background color (custom_color mode)</span><span id="background-color-hex">#0b0e18</span><input type="color" class="appearance-color-swatch" name="background_color"></div>
           %s
           <h3>Layout</h3>
           %s%s%s%s%s%s%s%s
@@ -698,6 +698,9 @@ function M.register(cfg)
         document.getElementById("preview-shape-stat").textContent = "Cards " + (cardShape.charAt(0).toUpperCase() + cardShape.slice(1));
         const hoverEffect = f.elements.card_hover_effect ? f.elements.card_hover_effect.value : "lift";
         document.getElementById("preview-hover-stat").textContent = "Hover " + (hoverEffect.charAt(0).toUpperCase() + hoverEffect.slice(1));
+        document.getElementById("accent-color-hex").textContent = accent;
+        document.getElementById("accent-secondary-hex").textContent = (f.elements.accent_secondary && f.elements.accent_secondary.value) || "--";
+        document.getElementById("background-color-hex").textContent = (f.elements.background_color && f.elements.background_color.value) || "#0b0e18";
       }
       document.getElementById("appearance-form").addEventListener("input", () => { markDirty(); updatePreview(); });
       document.getElementById("appearance-form").addEventListener("submit", async (e) => {

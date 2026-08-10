@@ -66,10 +66,12 @@ function M.register(cfg)
               <td>${acc.email_verified ? "verified" : "unverified"}</td>
               <td>${acc.panel_role||"user"}</td>
               <td>
-                <button data-verify="${acc.id}">Verify</button>
-                <button data-reset="${acc.id}">Reset PW</button>
-                <button data-mod="${acc.id}">Toggle Mod</button>
-                <button data-delete="${acc.id}">Delete</button>
+                <div class="table-actions">
+                  <button data-verify="${acc.id}">Verify</button>
+                  <button data-reset="${acc.id}">Reset PW</button>
+                  <button data-mod="${acc.id}">Toggle Mod</button>
+                  <button class="danger" data-delete="${acc.id}">Delete</button>
+                </div>
               </td>
             </tr>`).join("");
           document.getElementById("accounts-table").innerHTML = `
