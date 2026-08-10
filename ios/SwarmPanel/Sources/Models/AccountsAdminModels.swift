@@ -19,6 +19,7 @@ struct SwarmAccountSummary: Decodable, Identifiable {
     let verificationVerified: Bool?
     let publicProfile: Bool?
     let panelRole: String?
+    let serverName: String?
 
     var name: String { displayName?.isEmpty == false ? displayName! : username }
     var isModerator: Bool { panelRole == "moderator" }
@@ -36,6 +37,23 @@ struct SwarmAccountPasswordResetBody: Encodable {
 
 struct SwarmAccountDeleteBody: Encodable {
     let accountId: Int
+}
+
+/// POST /api/swarm-accounts/update — omitted fields are left untouched
+/// server-side (routes.lua only applies keys present in the JSON body).
+struct SwarmAccountUpdateBody: Encodable {
+    let accountId: Int
+    let username: String
+    let displayName: String
+    let email: String
+    let guildId: String
+    let serverName: String
+    let publicProfile: Bool
+}
+
+struct SwarmAccountUpdateResponse: Decodable {
+    let ok: Bool?
+    let account: SwarmAccountSummary?
 }
 
 struct SwarmAccountModeratorBody: Encodable {

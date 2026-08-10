@@ -70,6 +70,23 @@ final class AccountsAdminViewModel: ObservableObject {
         }
     }
 
+    func update(_ account: SwarmAccountSummary, username: String, displayName: String, email: String, guildId: String, serverName: String, publicProfile: Bool) async {
+        do {
+            let _: SwarmAccountUpdateResponse = try await api.post(
+                "/api/swarm-accounts/update",
+                body: SwarmAccountUpdateBody(
+                    accountId: account.id, username: username, displayName: displayName,
+                    email: email, guildId: guildId, serverName: serverName, publicProfile: publicProfile
+                )
+            )
+            statusMessage = "\(username) updated."
+            await load()
+        } catch {
+            guard !error.isCancellation else { return }
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to update account."
+        }
+    }
+
     func delete(_ account: SwarmAccountSummary) async {
         do {
             let _: OKResponse = try await api.post("/api/swarm-accounts/delete", body: SwarmAccountDeleteBody(accountId: account.id))

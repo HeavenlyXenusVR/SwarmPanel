@@ -16,6 +16,9 @@ let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"
 /// Static changelog shown on the "What's New" screen — updated by hand
 /// alongside each ios/vX.Y.Z tag, mirroring the tag's own release notes.
 let releaseNotes: [ReleaseNote] = [
+    ReleaseNote(version: "0.12.8", highlights: [
+        "Accounts admin can now edit an account's username, display name, email, guild, and server name directly instead of only verify/reset/delete",
+    ]),
     ReleaseNote(version: "0.12.7", highlights: [
         "New Learning tab on Leaderboard shows what the smart-recommendation engine has learned — totals plus per-bot top tracks by score",
     ]),

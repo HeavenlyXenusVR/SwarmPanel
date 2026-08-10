@@ -6,6 +6,7 @@ struct AccountsAdminView: View {
     @State private var newPassword = ""
     @State private var deleteTarget: SwarmAccountSummary?
     @State private var showBulkDeleteConfirm = false
+    @State private var editTarget: SwarmAccountSummary?
 
     var body: some View {
         ScrollView {
@@ -51,7 +52,8 @@ struct AccountsAdminView: View {
                                             resetPasswordTarget = account
                                             newPassword = ""
                                         },
-                                        onDelete: { deleteTarget = account }
+                                        onDelete: { deleteTarget = account },
+                                        onEdit: { editTarget = account }
                                     )
                                 }
                             }
@@ -123,6 +125,72 @@ struct AccountsAdminView: View {
         } message: {
             Text("This permanently deletes every selected account. This cannot be undone.")
         }
+        .sheet(item: $editTarget) { target in
+            EditAccountSheet(account: target) { username, displayName, email, guildId, serverName, publicProfile in
+                Task { await viewModel.update(target, username: username, displayName: displayName, email: email, guildId: guildId, serverName: serverName, publicProfile: publicProfile) }
+            }
+        }
+    }
+}
+
+private struct EditAccountSheet: View {
+    let account: SwarmAccountSummary
+    let onSave: (String, String, String, String, String, Bool) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var username: String
+    @State private var displayName: String
+    @State private var email: String
+    @State private var guildId: String
+    @State private var serverName: String
+    @State private var publicProfile: Bool
+
+    init(account: SwarmAccountSummary, onSave: @escaping (String, String, String, String, String, Bool) -> Void) {
+        self.account = account
+        self.onSave = onSave
+        _username = State(initialValue: account.username)
+        _displayName = State(initialValue: account.displayName ?? "")
+        _email = State(initialValue: account.email ?? "")
+        _guildId = State(initialValue: account.guildId ?? "")
+        _serverName = State(initialValue: account.serverName ?? "")
+        _publicProfile = State(initialValue: account.publicProfile ?? false)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Account") {
+                    TextField("Username", text: $username)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    TextField("Display name", text: $displayName)
+                    TextField("Email", text: $email)
+                        .keyboardType(.emailAddress)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+                Section("Guild") {
+                    TextField("Guild ID", text: $guildId)
+                        .keyboardType(.numberPad)
+                    TextField("Server name", text: $serverName)
+                    Toggle("Public profile", isOn: $publicProfile)
+                }
+            }
+            .navigationTitle("Edit Account")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        onSave(username, displayName, email, guildId, serverName, publicProfile)
+                        dismiss()
+                    }
+                    .disabled(username.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+        }
     }
 }
 
@@ -159,6 +227,7 @@ private struct AccountRow: View {
     @ObservedObject var viewModel: AccountsAdminViewModel
     let onResetPassword: () -> Void
     let onDelete: () -> Void
+    let onEdit: () -> Void
 
     private var isSelected: Bool { viewModel.selectedIds.contains(account.id) }
 
@@ -185,6 +254,7 @@ private struct AccountRow: View {
             }
             if !viewModel.isSelecting {
                 HStack(spacing: 14) {
+                    Button("Edit", action: onEdit)
                     Button(account.verificationVerified == true ? "Unverify" : "Verify") {
                         Task { await viewModel.toggleVerified(account) }
                     }

@@ -59,7 +59,10 @@ function M.register(cfg)
       async function loadAccounts(q) {
         try {
           const res = await swarmFetch("/api/swarm-accounts/admin?query=" + encodeURIComponent(q || "") + "&limit=100");
-          const rows = ((res.data && res.data.users) || []).map((acc) => `
+          const accts = (res.data && res.data.users) || [];
+          window.SWARM_ACCOUNTS_BY_ID = {};
+          accts.forEach((acc) => { window.SWARM_ACCOUNTS_BY_ID[acc.id] = acc; });
+          const rows = accts.map((acc) => `
             <tr>
               <td class="table-cell-select"><input type="checkbox" data-select-row value="${acc.id}"></td>
               <td>${(acc.username||"").replace(/</g,"&lt;")}</td>
@@ -67,20 +70,22 @@ function M.register(cfg)
               <td>${acc.panel_role||"user"}</td>
               <td>
                 <div class="table-actions">
+                  <button data-edit="${acc.id}">Edit</button>
                   <button data-verify="${acc.id}">Verify</button>
+                  <button data-resend="${acc.id}">Resend Verify</button>
                   <button data-reset="${acc.id}">Reset PW</button>
                   <button data-mod="${acc.id}">Toggle Mod</button>
                   <button class="danger" data-delete="${acc.id}">Delete</button>
                 </div>
               </td>
-            </tr>`).join("");
+            </tr>
+            <tr id="acct-edit-row-${acc.id}" hidden><td colspan="5"></td></tr>`).join("");
           document.getElementById("accounts-table").innerHTML = `
             <table class="data-table" id="accounts-tbl">
               <thead><tr><th><input type="checkbox" data-select-all></th><th>Username</th><th>Email</th><th>Role</th><th>Actions</th></tr></thead>
               <tbody>${rows || '<tr><td colspan="5">No accounts.</td></tr>'}</tbody>
             </table>`;
           table = document.getElementById("accounts-tbl");
-          const accts = (res.data && res.data.users) || [];
           const verifiedCount = accts.filter((acc) => acc.email_verified).length;
           const modCount = accts.filter((acc) => acc.panel_role === "moderator").length;
           document.getElementById("account-status-stack").innerHTML = accts.length ? `
@@ -88,17 +93,59 @@ function M.register(cfg)
           ` : "";
         } catch (err) { swarmToast("Failed to load accounts.", "error"); }
       }
+      function renderEditForm(id) {
+        const row = document.getElementById("acct-edit-row-" + id);
+        if (!row) return;
+        if (!row.hidden) { row.hidden = true; row.firstElementChild.innerHTML = ""; return; }
+        const acc = window.SWARM_ACCOUNTS_BY_ID[id] || {};
+        row.hidden = false;
+        row.firstElementChild.innerHTML = `
+          <form class="panel form-panel" data-edit-account="${id}">
+            <label class="field">Username<input type="text" name="username" value="${(acc.username||"").replace(/"/g,"&quot;")}"></label>
+            <label class="field">Display name<input type="text" name="display_name" value="${(acc.display_name||"").replace(/"/g,"&quot;")}"></label>
+            <label class="field">Email<input type="email" name="email" value="${(acc.email||"").replace(/"/g,"&quot;")}"></label>
+            <label class="field">Guild ID<input type="text" name="guild_id" value="${(acc.guild_id||"").toString().replace(/"/g,"&quot;")}"></label>
+            <label class="field">Server name<input type="text" name="server_name" value="${(acc.server_name||"").replace(/"/g,"&quot;")}"></label>
+            <label class="field-inline"><input type="checkbox" name="public_profile" ${acc.public_profile ? "checked" : ""}> Public profile</label>
+            <div class="actions-row">
+              <button type="submit">Save</button>
+              <button type="button" data-edit-cancel="${id}">Cancel</button>
+            </div>
+          </form>`;
+      }
       document.getElementById("acct-search").addEventListener("swarm:search", (e) => loadAccounts(e.detail.query));
       loadAccounts("");
       document.getElementById("accounts-table").addEventListener("click", async (e) => {
         const t = e.target;
+        if (t.hasAttribute("data-edit")) { renderEditForm(t.getAttribute("data-edit")); return; }
+        if (t.hasAttribute("data-edit-cancel")) { renderEditForm(t.getAttribute("data-edit-cancel")); return; }
         try {
           if (t.hasAttribute("data-verify")) await swarmFetch("/api/swarm-accounts/email-verified", { method: "POST", body: JSON.stringify({ account_id: t.getAttribute("data-verify"), verified: true }) });
+          else if (t.hasAttribute("data-resend")) {
+            const res = await swarmFetch("/api/swarm-accounts/resend-verification", { method: "POST", body: JSON.stringify({ account_id: t.getAttribute("data-resend") }) });
+            swarmToast(res.already_verified ? "Already verified." : (res.verification_sent ? "Verification code sent." : "Could not send verification code."), res.verification_sent || res.already_verified ? "success" : "error");
+            return;
+          }
           else if (t.hasAttribute("data-reset")) await swarmFetch("/api/swarm-accounts/reset-password", { method: "POST", body: JSON.stringify({ account_id: t.getAttribute("data-reset") }) });
           else if (t.hasAttribute("data-mod")) await swarmFetch("/api/swarm-accounts/moderator", { method: "POST", body: JSON.stringify({ account_id: t.getAttribute("data-mod") }) });
           else if (t.hasAttribute("data-delete")) { if (!confirm("Delete this account?")) return; await swarmFetch("/api/swarm-accounts/delete", { method: "POST", body: JSON.stringify({ account_id: t.getAttribute("data-delete") }) }); }
           else return;
           swarmToast("Done.", "success");
+          loadAccounts(document.getElementById("acct-search").value);
+        } catch (err) { swarmToast(err.message, "error"); }
+      });
+      document.getElementById("accounts-table").addEventListener("submit", async (e) => {
+        const id = e.target.getAttribute("data-edit-account");
+        if (!id) return;
+        e.preventDefault();
+        const f = e.target.elements;
+        try {
+          await swarmFetch("/api/swarm-accounts/update", { method: "POST", body: JSON.stringify({
+            account_id: id, username: f.username.value, display_name: f.display_name.value,
+            email: f.email.value, guild_id: f.guild_id.value, server_name: f.server_name.value,
+            public_profile: f.public_profile.checked,
+          }) });
+          swarmToast("Account updated.", "success");
           loadAccounts(document.getElementById("acct-search").value);
         } catch (err) { swarmToast(err.message, "error"); }
       });
