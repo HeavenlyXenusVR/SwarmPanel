@@ -82,6 +82,7 @@ function M.register(cfg)
     local body = html.page({
       title = "Controls", eyebrow = "Direct Control", lede = "Send a direct order to any bot in any guild.",
       body = ([[
+        <div class="control-layout">
         <form id="control-form" class="panel form-panel">
           <label class="field">Bot<select name="bot_key" required>%s</select></label>
           %s
@@ -114,12 +115,15 @@ function M.register(cfg)
           </div>
           <button type="submit" class="button-link primary">Send</button>
         </form>
+        <div>
         <div id="control-result"></div>
         %s
         <div id="control-state" class="control-state"></div>
         %s
         <div id="saved-queues"></div>
         %s
+        </div>
+        </div>
       ]]):format(html.join(bot_options), guild_field, html.join(action_options),
         html.section_head("Control State"), html.section_head("Saved Queues"),
         a.admin_mode and ([[

@@ -220,6 +220,12 @@ struct ControlsView: View {
                                 }
                                 .tint(.blue)
                             }
+                            .swipeActions(edge: .leading) {
+                                ShareLink(item: shareText(for: queue)) {
+                                    Label("Share", systemImage: "square.and.arrow.up")
+                                }
+                                .tint(SwarmTheme.accent)
+                            }
                         }
                     }
                 } header: {
@@ -274,6 +280,13 @@ struct ControlsView: View {
                 Button("Cancel", role: .cancel) { renameQueueTarget = nil }
             }
         }
+    }
+
+    private func shareText(for queue: SavedQueue) -> String {
+        let lines = (queue.items ?? []).prefix(20).enumerated().map { index, item in
+            "\(index + 1). \(item.title?.isEmpty == false ? item.title! : item.videoUrl)"
+        }
+        return "🎵 \(queue.name) (\(queue.itemCount) tracks)\n" + lines.joined(separator: "\n")
     }
 }
 
