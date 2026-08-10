@@ -377,7 +377,10 @@ function M.page(opts)
     opts.eyebrow and ("<p>" .. M.esc(opts.eyebrow) .. "</p>") or "",
     M.esc(opts.title or ""),
     opts.lede and ('<span class="page-lede">' .. M.esc(opts.lede) .. "</span>") or "",
-    opts.actions or "",
+    -- .page-actions had layout CSS (flex row, mobile full-width) but every
+    -- page.head's actions slot was always called with opts.actions unset --
+    -- nothing in the codebase ever passed one, so the slot rendered "".
+    opts.actions and ('<div class="page-actions">' .. opts.actions .. "</div>") or "",
     opts.body or "")
 end
 

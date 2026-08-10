@@ -497,6 +497,7 @@ function M.register(cfg)
     end
     local body = html.page({
       title = "Diagnostics", eyebrow = "System", lede = "Stability, metrics, alert rules, and exports.",
+      actions = '<button type="button" id="diag-refresh" class="button-link">Refresh Now</button>',
       body = [[
         <div id="diag-stability"></div>
         <div id="diag-metrics"></div>
@@ -583,6 +584,10 @@ function M.register(cfg)
       swarmLiveRefresh(loadDiagnostics, 5000);
       swarmLiveRefresh(loadAlerts, 30000);
       swarmLiveRefresh(loadExports, 60000);
+      document.getElementById("diag-refresh").addEventListener("click", () => {
+        loadDiagnostics(); loadAlerts(); loadExports();
+        swarmToast("Refreshed.", "success");
+      });
     ]]
     return page_shell(req, a, "/diagnostics", "Diagnostics", body, script)
   end)

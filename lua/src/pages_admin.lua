@@ -42,7 +42,10 @@ function M.register(cfg)
     local body = html.page({
       title = "Accounts", eyebrow = "Admin", lede = "Recover and manage swarm accounts.",
       body = [[
-        <input type="search" placeholder="Search accounts..." data-debounced-search id="acct-search">
+        <div class="search-box">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.6"/><path d="M11 11L14.5 14.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <input type="search" placeholder="Search accounts..." data-debounced-search id="acct-search">
+        </div>
         <div id="bulk-actions" class="bulk-actions-bar" data-bulk-actions hidden>
           <button type="button" id="bulk-verify">Verify selected</button>
           <button type="button" id="bulk-delete">Delete selected</button>
@@ -170,16 +173,23 @@ function M.register(cfg)
     local body = html.page({
       title = "Gallery Admin", eyebrow = "Image Gallery", lede = "Users, media, comments, and reports.",
       body = [[
-        <div id="gallery-summary"></div>
-        <div class="panel form-panel">
-          <label class="field">Table<select id="gallery-table"></select></label>
-          <a id="gallery-csv-media" class="button-link" href="/api/image-gallery/admin/media/export.csv" target="_blank">Export Media CSV</a>
-          <a id="gallery-csv-users" class="button-link" href="/api/image-gallery/admin/users/export.csv" target="_blank">Export Users CSV</a>
+        <div class="loading-section is-loading" id="gallery-loading-section">
+          <div class="loading-section-content">
+            <div id="gallery-summary"></div>
+            <div class="panel form-panel">
+              <label class="field">Table<select id="gallery-table"></select></label>
+              <a id="gallery-csv-media" class="button-link" href="/api/image-gallery/admin/media/export.csv" target="_blank">Export Media CSV</a>
+              <a id="gallery-csv-users" class="button-link" href="/api/image-gallery/admin/users/export.csv" target="_blank">Export Users CSV</a>
+            </div>
+            <div id="gallery-bulk-actions" class="bulk-actions-bar" data-bulk-actions hidden>
+              <button type="button" id="gallery-bulk-delete" class="danger">Delete selected</button>
+            </div>
+            <div id="gallery-data">]] .. html.skeleton_grid(4) .. [[</div>
+          </div>
+          <div class="loading-section-overlay">
+            <div class="loading-tip">Fetching Image Gallery admin data...</div>
+          </div>
         </div>
-        <div id="gallery-bulk-actions" class="bulk-actions-bar" data-bulk-actions hidden>
-          <button type="button" id="gallery-bulk-delete" class="danger">Delete selected</button>
-        </div>
-        <div id="gallery-data">]] .. html.skeleton_grid(4) .. [[</div>
       ]],
     })
     local script = [[
@@ -205,6 +215,7 @@ function M.register(cfg)
           sel.innerHTML = (tables.tables || []).map((t) => `<option value="${t.table_name}">${t.table_name} (${t.estimated_rows})</option>`).join("");
           loadGalleryTable();
         } catch { /* ignore */ }
+        document.getElementById("gallery-loading-section").classList.remove("is-loading");
       }
       function currentGalleryDeleteConfig() {
         return GALLERY_DELETE_CONFIG[document.getElementById("gallery-table").value];

@@ -446,7 +446,10 @@ function M.register(cfg)
       title = "Users", eyebrow = "Directory", lede = "Find other operators in the swarm.",
       body = [[
         <div class="directory-toolbar">
-          <input type="search" placeholder="Search users..." data-debounced-search id="user-search">
+          <div class="search-box search-box-wide">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.6"/><path d="M11 11L14.5 14.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            <input type="search" placeholder="Search users..." data-debounced-search id="user-search">
+          </div>
           <div class="directory-summary" id="user-summary"></div>
         </div>
         <div id="user-results" class="user-grid">]] .. html.skeleton_grid(6) .. [[</div>
