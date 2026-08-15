@@ -222,22 +222,47 @@ function M.client_id_from_token(token)
   return decoded:match("^%s*(.-)%s*$")
 end
 
+-- BUGFIX (audit of every bot's actual Discord REST/gateway usage, see
+-- comments below): two permissions every bot in the fleet actually
+-- exercises were missing from this table entirely, so no invite link ever
+-- granted them.
+--   - "Send Messages In Threads" (bit 38): every music bot's
+--     send_feedback/feedback_channel_id (see routes.lua's /setfeedback
+--     equivalent -- "can be a regular channel or threads") and Aria's own
+--     feedback_channel_id setting both post via plain POST
+--     /channels/:id/messages, which 403s on a THREAD channel under just
+--     "Send Messages" -- Discord requires this separate bit for threads
+--     specifically. Same endpoint, different channel type, different
+--     permission; "Send Messages" alone silently doesn't cover it.
+--   - "Set Voice Channel Status" (bit 48): every music bot's
+--     update_stage_topic (PUT /channels/:id/voice-status, confirmed via
+--     `grep -l voice-status discord_music_bot_*/*.lua` -- all 13) needs
+--     this specific permission per Discord's own docs, ADDITIONALLY to
+--     Manage Channels only when the bot isn't currently connected to that
+--     voice channel -- Manage Channels alone (already granted) does not
+--     substitute for it. Without this bit, voice-channel status updates
+--     fail outright for guilds that only granted what this invite asked
+--     for. (Stage topics, the other half of the same function, use
+--     PATCH/POST /stage-instances instead, which only needs Manage
+--     Channels -- already covered, unaffected by this gap.)
 local DISCORD_PERMISSION_BITS = {
   ["Kick Members"] = 1, ["Ban Members"] = 2, ["Manage Channels"] = 4, ["Manage Server"] = 5,
   ["View Channels"] = 10, ["Send Messages"] = 11, ["Manage Messages"] = 13, ["Embed Links"] = 14,
   ["Attach Files"] = 15, ["Read Message History"] = 16, ["Connect"] = 20, ["Speak"] = 21,
   ["Use Voice Activity"] = 25, ["Manage Nicknames"] = 27, ["Manage Roles"] = 28,
-  ["Use Application Commands"] = 31, ["Request To Speak"] = 32, ["Timeout Members"] = 40,
+  ["Use Application Commands"] = 31, ["Request To Speak"] = 32, ["Send Messages In Threads"] = 38,
+  ["Timeout Members"] = 40, ["Set Voice Channel Status"] = 48,
 }
 
 M.MUSIC_BOT_PERMISSIONS = {
-  "View Channels", "Send Messages", "Embed Links", "Attach Files", "Read Message History",
-  "Connect", "Speak", "Use Voice Activity", "Use Application Commands", "Request To Speak", "Manage Channels",
+  "View Channels", "Send Messages", "Send Messages In Threads", "Embed Links", "Attach Files",
+  "Read Message History", "Connect", "Speak", "Use Voice Activity", "Use Application Commands",
+  "Request To Speak", "Manage Channels", "Set Voice Channel Status",
 }
 M.ARIA_BOT_PERMISSIONS = {
-  "View Channels", "Send Messages", "Embed Links", "Attach Files", "Read Message History",
-  "Use Application Commands", "Kick Members", "Manage Messages", "Manage Channels", "Manage Server",
-  "Manage Roles", "Manage Nicknames", "Ban Members", "Timeout Members",
+  "View Channels", "Send Messages", "Send Messages In Threads", "Embed Links", "Attach Files",
+  "Read Message History", "Use Application Commands", "Kick Members", "Manage Messages",
+  "Manage Channels", "Manage Server", "Manage Roles", "Manage Nicknames", "Ban Members", "Timeout Members",
 }
 M.BOT_CAPABILITY_SUMMARIES = {
   music = "Music worker node: slash commands, queue controls, voice/stage playback, feedback messages, embeds, buttons, and channel status/topic updates.",
