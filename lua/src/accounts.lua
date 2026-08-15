@@ -198,14 +198,33 @@ local function serialize_profile(row)
 end
 M.serialize_profile = serialize_profile
 
+-- BUGFIX: confirmed live in production -- ensure_discord_dm_columns() was
+-- only ever called from the 3 Discord-DM-verification-specific functions
+-- (update_account_discord_user_id and friends), never from here, even
+-- though PROFILE_COLUMNS (used by this function and get_account_by_id
+-- below) includes discord_user_id/discord_username/discord_dm_verified_at/
+-- discord_dm_verification_sent_at. On a database that never happened to
+-- exercise the DM-verification flow first (this one hadn't), those columns
+-- never got created, so this SELECT failed with a real Postgres "column
+-- does not exist" error on EVERY call -- for EVERY guild account, not just
+-- one. That error was silently discarded (`local row = db.fetchone(...)`
+-- above only captured the first return value), so account_id_for_auth in
+-- routes.lua (which every friends/notifications/messages endpoint calls)
+-- saw a bare nil profile and reported "Account profile not found" --
+-- indistinguishable from an actual missing account. Confirmed via a direct
+-- DB probe: the exact same query with the exact same real account's
+-- username/guild_id returned 1 row once discord_user_id was excluded from
+-- the column list, 0 rows (well, a hard SQL error) with it included.
 function M.get_account_profile(username, guild_id)
+  ensure_discord_dm_columns()
   local uname = normalize_username(username)
   if not uname then return nil end
-  local row = db.fetchone(
+  local row, err = db.fetchone(
     SCHEMA,
     "SELECT " .. PROFILE_COLUMNS .. " FROM " .. TABLE .. " WHERE username = %s AND guild_id = %s LIMIT 1",
     uname, guild_id
   )
+  if err then print("[swarmpanel-lua] get_account_profile query failed: " .. tostring(err)) end
   return serialize_profile(row)
 end
 
@@ -254,6 +273,9 @@ function M.get_account_by_id(account_id)
   -- feeds GET /api/users/:id/profile via social.get_public_account_profile,
   -- every public profile view silently dropped its quote and three of its
   -- six visual-style pickers regardless of what was saved.
+  -- Also needs ensure_discord_dm_columns() same as get_account_profile
+  -- above -- same PROFILE_COLUMNS, same missing-column failure mode.
+  ensure_discord_dm_columns()
   local row = db.fetchone(
     SCHEMA,
     "SELECT " .. PROFILE_COLUMNS:gsub("password_hash, ", "") .. " FROM " .. TABLE .. " WHERE id = %s LIMIT 1",
