@@ -447,4 +447,35 @@ document.addEventListener("DOMContentLoaded", () => {
 
     swarmLiveRefresh(refreshUnreadCount, 30000);
   })();
+
+  // ---------------------------------------------------------------------
+  // Liquid Glass specular highlight: tracks pointer position per-element
+  // into --liquid-glass-x/--liquid-glass-y (app.css's .liquid-glass::after
+  // reads them for a radial-gradient glint -- see that file's header
+  // comment for the full rationale). rAF-throttled so a fast mousemove
+  // can't queue more style writes than the browser can actually paint;
+  // skipped entirely under prefers-reduced-motion, matching this file's
+  // existing motion-reduction handling elsewhere (swarmLiveRefresh already
+  // pauses everything when document.hidden, same spirit).
+  // ---------------------------------------------------------------------
+  (function initLiquidGlass() {
+    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const glassEls = document.querySelectorAll(".liquid-glass");
+    if (!glassEls.length) return;
+    let pending = null;
+    glassEls.forEach((el) => {
+      el.addEventListener("pointermove", (e) => {
+        if (pending) return;
+        pending = requestAnimationFrame(() => {
+          pending = null;
+          const rect = el.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return;
+          const x = ((e.clientX - rect.left) / rect.width) * 100;
+          const y = ((e.clientY - rect.top) / rect.height) * 100;
+          el.style.setProperty("--liquid-glass-x", x + "%");
+          el.style.setProperty("--liquid-glass-y", y + "%");
+        });
+      });
+    });
+  })();
 });

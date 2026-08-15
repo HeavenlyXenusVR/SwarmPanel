@@ -4487,3 +4487,108 @@ tbody tr.is-selected td {
   display: none;
   pointer-events: none;
 }
+
+/* ---------------------------------------------------------------------
+   Liquid Glass: reserved for a small, deliberate set of elevated surfaces
+   (topbar, notification dropdown, dashboard spotlight card, the login CTA)
+   -- NOT a blanket glassmorphism pass. Layers on top of this file's
+   existing blur/surface-opacity system rather than replacing it:
+     1. blur(var(--surface-blur)) saturate(180%) -- already this codebase's
+        pattern (see .topbar above), just standardized on saturate(180%).
+     2. url(#liquid-glass-edge) -- the shared feDisplacementMap filter
+        (html.lua's <svg>) bends the blurred backdrop along a static noise
+        field for a believable curved-edge refraction, chained onto
+        backdrop-filter itself (a valid CSS filter-function token) rather
+        than the element's own `filter`, which would distort the glass's
+        own content/children, not what's behind it.
+     3. --x/--y-driven specular highlight (app.js tracks pointer position
+        per-element) instead of animating any filter -- animating
+        backdrop-filter/an SVG displacement scale forces a full backdrop
+        recomposite every frame; a radial-gradient position is cheap.
+     4. translateZ(0) promotes each to its own GPU layer so the blur/
+        displacement isn't recomputed against the rest of the page's
+        paint on every scroll/hover.
+   Text sitting directly on a .liquid-glass surface still gets its own
+   backing (the existing --panel/--panel-2 opacity system underneath, or
+   .liquid-glass-text-backing below for anything thinner) -- glass edges
+   stay glossy, text blocks stay legible, per WCAG contrast concerns with
+   translucent/refracted backgrounds. */
+.liquid-glass {
+  position: relative;
+  isolation: isolate;
+  transform: translateZ(0);
+  will-change: transform;
+  backdrop-filter: blur(var(--surface-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--surface-blur)) saturate(180%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+@supports (backdrop-filter: blur(1px) url(#x)) or (-webkit-backdrop-filter: blur(1px) url(#x)) {
+  .liquid-glass {
+    backdrop-filter: blur(var(--surface-blur)) saturate(180%) url(#liquid-glass-edge);
+  }
+}
+
+/* Specular highlight: a soft light glint that follows the pointer, the one
+   piece of "reactive light" Liquid Glass calls for. --x/--y default to
+   center so keyboard-focused (no pointer position) elements still get a
+   static highlight rather than none. Opacity-only on hover/focus, never an
+   animated filter -- see the header comment above. */
+.liquid-glass::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: inherit;
+  background: radial-gradient(
+    140px circle at var(--liquid-glass-x, 50%) var(--liquid-glass-y, 50%),
+    rgba(255, 255, 255, 0.14),
+    transparent 65%
+  );
+  opacity: 0;
+  transition: opacity var(--motion-med);
+}
+.liquid-glass:hover::after,
+.liquid-glass:focus-within::after {
+  opacity: 1;
+}
+
+.liquid-glass-text-backing {
+  position: relative;
+  z-index: 2;
+  background: color-mix(in srgb, var(--panel) 78%, transparent);
+  border-radius: calc(var(--radius) * 0.6);
+  padding: 4px 8px;
+}
+
+/* Accessibility: honor the standard "reduce transparency" system toggle
+   with a fully solid fallback -- translucent/refracted text backgrounds are
+   exactly the WCAG contrast trap Liquid Glass write-ups warn about. Support
+   for this media query is still uneven across browsers; .perf-lite (below,
+   already wired to a panel-side low-power preference toggle) is the
+   always-available manual escape hatch for the same thing. */
+@media (prefers-reduced-transparency: reduce) {
+  .liquid-glass {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: var(--panel) !important;
+    box-shadow: none !important;
+  }
+  .liquid-glass::after {
+    display: none;
+  }
+}
+
+.perf-lite .liquid-glass {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: var(--panel);
+  box-shadow: none;
+  will-change: auto;
+}
+.perf-lite .liquid-glass::after {
+  display: none;
+}

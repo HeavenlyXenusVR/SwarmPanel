@@ -276,7 +276,7 @@ function M.layout(opts)
           &#128276;<span class="notifications-badge" id="notif-badge" hidden>0</span>
         </button>
         <div class="notifications-backdrop" id="notif-backdrop" hidden></div>
-        <div class="notifications-dropdown" id="notif-dropdown" hidden>
+        <div class="notifications-dropdown liquid-glass" id="notif-dropdown" hidden>
           <div class="notifications-dropdown-head">
             <strong>Notifications</strong>
             <button type="button" id="notif-mark-all">Mark all read</button>
@@ -342,8 +342,20 @@ function M.layout(opts)
 %s
 </head>
 <body>
+<!-- Liquid Glass edge-refraction filter, shared by every .liquid-glass
+     element via backdrop-filter: ... url(#liquid-glass-edge). A static
+     fractal-noise displacement (not tied to any element's live content),
+     so this single filter def works for the topbar, notification dropdown,
+     and dashboard spotlight card alike -- no per-element filter needed. -->
+<svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden">
+  <filter id="liquid-glass-edge" x="-20%%" y="-20%%" width="140%%" height="140%%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.008 0.012" numOctaves="2" seed="7" result="noise"/>
+    <feGaussianBlur in="noise" stdDeviation="2" result="softNoise"/>
+    <feDisplacementMap in="SourceGraphic" in2="softNoise" scale="14" xChannelSelector="R" yChannelSelector="G"/>
+  </filter>
+</svg>
 <div class="%s" style="%s">
-<header class="topbar">
+<header class="topbar liquid-glass">
   <a class="brand" href="/"><span class="brand-mark">&#10022;</span><span class="brand-copy"><strong>SwarmPanel</strong><small>Fleet Command</small></span></a>
   %s
   <div class="session-bar">%s</div>

@@ -101,7 +101,7 @@ function M.register(cfg)
           </div>
         </div>
         <input type="hidden" name="next" value="%s">
-        <button type="submit" class="primary" id="auth-submit">Login</button>
+        <button type="submit" class="primary liquid-glass" id="auth-submit">Login</button>
       </form>
       <script>
         const authForm = document.getElementById("auth-form");
@@ -495,7 +495,7 @@ function M.register(cfg)
 
     local spotlight = ([[
       <div class="dashboard-brief-panel">
-        <div class="dashboard-spotlight">
+        <div class="dashboard-spotlight liquid-glass">
           <div class="dashboard-spotlight-head">
             <span class="dashboard-eyebrow">Fleet Overview</span>
             <span class="dashboard-state-badge%s">%s</span>
