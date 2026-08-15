@@ -34,6 +34,23 @@ function M.register(cfg)
   httpd.route("GET", "/messages", function(req)
     local a, status, headers = cfg.require_auth_page(req)
     if not a then return status, "", headers end
+    -- BUGFIX: same class of bug as /friends (see that route's comment) --
+    -- messages are guild-account-scoped (account_id_for_auth in routes.lua
+    -- requires a.guild_id), so the bare env-configured admin login can
+    -- never load a thread list/search here either. Same fix: a clear
+    -- explanation instead of a page that's guaranteed to error forever.
+    if not a.guild_id then
+      local body = html.page({
+        title = "Messages", eyebrow = "Inbox", lede = "Direct messages with other operators.",
+        body = [[
+          <div class="empty-state">
+            <p>Messages are tied to a guild account, not the site admin login.</p>
+            <p>Log in with a guild account (one registered to a specific bot/guild) to use Messages.</p>
+          </div>
+        ]],
+      })
+      return page_shell(req, a, "/messages", "Messages", body, "")
+    end
     local body = html.page({
       title = "Messages", eyebrow = "Inbox", lede = "Direct messages with other operators.",
       body = [[
