@@ -504,10 +504,10 @@ function M.register(cfg)
           <p>%s</p>
           %s
           <div class="dashboard-spotlight-metrics">
-            <article><span>Bots Online</span><strong>%d / %d</strong><small>heartbeat within 120s</small></article>
-            <article><span>Live Sessions</span><strong>%d</strong><small>currently playing</small></article>
-            <article><span>Queue Depth</span><strong>%d</strong><small>%d in backup</small></article>
-            <article><span>Guilds Served</span><strong>%d</strong><small>across the fleet</small></article>
+            <article><span>Bots Online</span><strong id="metric-bots-online">%d / %d</strong><small>heartbeat within 120s</small></article>
+            <article><span>Live Sessions</span><strong id="metric-live-sessions">%d</strong><small>currently playing</small></article>
+            <article><span>Queue Depth</span><strong id="metric-queue-depth">%d</strong><small><span id="metric-queue-backup">%d</span> in backup</small></article>
+            <article><span>Guilds Served</span><strong id="metric-guilds-served">%d</strong><small>across the fleet</small></article>
           </div>
         </div>
       </div>
@@ -559,13 +559,46 @@ function M.register(cfg)
 
     body = boot_screen .. body .. [[
       <script>
-        swarmDashboardStream((msg) => {
-          if (msg.type === "dashboard_snapshot") {
-            // Full re-render is out of scope for this pass; a page reload
-            // picks up fresh data. The WS connection here still proves live
-            // connectivity and keeps the playback counters' base timestamps
-            // roughly fresh via periodic reloads.
+        // BUGFIX: this handler used to do nothing at all -- confirmed live
+        // via Playwright, the page never updated without a manual refresh
+        // despite its own lede claiming "Live status across the swarm."
+        // A first attempt at fixing this reloaded the whole page on every
+        // message, but the snapshot's per-session position_seconds/
+        // position_observed_at tick essentially every broadcast (~2s,
+        // ensure_broadcast_loop in routes.lua), so the server's digest
+        // basically always differs while anything anywhere is playing --
+        // that caused a reload storm (confirmed: 8 reloads in 15s even
+        // throttled), which is worse than the original do-nothing bug, not
+        // better. Patching just the 4 spotlight numbers directly from the
+        // payload avoids re-deriving the rest of the page (bot cards,
+        // session table, etc. still need a real reload to update, same
+        // gap as before) but makes the one thing users actually glance at
+        // continuously -- Bots Online / Live Sessions / Queue Depth /
+        // Guilds Served -- genuinely live with zero reload risk. Mirrors
+        // pages.lua's own online_bots/live_count/total_queue/total_backup/
+        // total_guilds aggregation (see bot_is_offline above) -- keep the
+        // two in sync if that logic ever changes.
+        function patchDashboardMetrics(data) {
+          const bots = (data && data.bots) || [];
+          let online = 0, live = 0, queue = 0, backup = 0, guilds = 0;
+          for (const bot of bots) {
+            const age = Number(bot.heartbeat_age_seconds);
+            const offline = String(bot.status || "").toLowerCase() === "offline" || (Number.isFinite(age) && age > 120);
+            if (!offline) online++;
+            queue += bot.queue_depth || 0;
+            backup += bot.backup_queue_depth || 0;
+            guilds += bot.known_guild_count || 0;
+            for (const s of bot.sessions || []) { if (s.is_playing) live++; }
           }
+          const setText = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+          setText("metric-bots-online", online + " / " + bots.length);
+          setText("metric-live-sessions", String(live));
+          setText("metric-queue-depth", String(queue));
+          setText("metric-queue-backup", String(backup));
+          setText("metric-guilds-served", String(guilds));
+        }
+        swarmDashboardStream((msg) => {
+          if (msg.type === "dashboard_snapshot") patchDashboardMetrics(msg.data);
         });
       </script>
     ]]
