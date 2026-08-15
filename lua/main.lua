@@ -84,5 +84,5 @@ copas.addthread(function()
   end
 end)
 
-httpd.listen("0.0.0.0", settings.port)
+httpd.listen(settings.bind_host, settings.port)
 httpd.run()

@@ -260,7 +260,17 @@ function M.layout(opts)
   local username = session.username or "Operator"
   local initial = username:sub(1, 1):upper()
 
-  local notif_bell = authed and [[
+  -- BUGFIX: gated on `authed` alone -- the bare env-configured admin login
+  -- (settings.admin_username/admin_password, no `users` table row, no
+  -- guild_id at all -- see routes.lua's /api/login) is `authed` but has no
+  -- account_id that /api/notifications/* can ever resolve (they all call
+  -- account_id_for_auth(), which requires a.guild_id). That made this bell
+  -- poll /api/notifications/unread-count every 30s FOREVER for that account
+  -- type, 403ing every single time -- confirmed live, this is what surfaced
+  -- as a recurring 403 in the network tab. Notifications, like Friends, are
+  -- inherently tied to a guild account; only render/poll for sessions that
+  -- have one.
+  local notif_bell = authed and session.guild_id and [[
       <div class="notifications-bell">
         <button class="icon-button" type="button" id="notif-bell-btn" title="Notifications" aria-haspopup="true" aria-expanded="false">
           &#128276;<span class="notifications-badge" id="notif-badge" hidden>0</span>

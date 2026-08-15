@@ -126,8 +126,25 @@ local function parse_cookies(header)
   return out
 end
 
-local function origin_allowed(origin)
+-- BUGFIX: this only ever checked the CROSS-origin allowlist
+-- (PANEL_CORS_ALLOWED_ORIGINS / the tunnel-domain regex, both meant for
+-- OTHER sites embedding/calling this panel) -- it never had a same-origin
+-- case at all. Confirmed live: every browser loading the panel from its own
+-- production URL (https://swarmpanel.xenusanimations.studio) sends that
+-- exact URL as the WS upgrade's Origin header, which was never in the
+-- cross-origin allowlist (that only lists heavenlyxenusvr.github.io and
+-- *.trycloudflare.com/*.ngrok.io), so handle_ws_upgrade's 403 branch above
+-- rejected the dashboard's OWN real-time WebSocket for literally every
+-- visitor to the real site -- "WebSocket connection ... failed:
+-- Unexpected response code: 403" in the console on every single page load.
+-- `host` is the incoming request's own Host header, always same-origin-safe
+-- to compare against regardless of what the cross-origin allowlist contains.
+local function origin_allowed(origin, host)
   if not origin or origin == "" then return false end
+  if host and host ~= "" then
+    local origin_host = origin:match("^https?://([^/]+)$")
+    if origin_host and origin_host:lower() == host:lower() then return true end
+  end
   for _, allowed in ipairs(M.cors.allowed_origins) do
     if allowed == origin then return true end
   end
@@ -204,7 +221,7 @@ local function handle_ws_upgrade(sock, headers, path, query, handler)
     return
   end
   local origin = headers["origin"]
-  if origin and origin ~= "" and not origin_allowed(origin) then
+  if origin and origin ~= "" and not origin_allowed(origin, headers["host"]) then
     pcall(copas.send, sock, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
     return
   end

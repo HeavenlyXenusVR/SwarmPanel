@@ -152,6 +152,17 @@ function M.load()
     admin_username = M.env("PANEL_ADMIN_USERNAME", "admin"),
     admin_password = M.env("PANEL_ADMIN_PASSWORD", ""),
     session_secret = M.env("PANEL_SESSION_SECRET", ""),
+    -- BUGFIX: the session cookie (routes.lua's session_cookie_header) was
+    -- missing the Secure attribute -- HttpOnly and SameSite=Lax were both
+    -- set, but without Secure a browser will still send this cookie over a
+    -- plain http:// connection if one is ever made to this host (a stray
+    -- http:// link, a downgrade, anyone probing the origin directly -- see
+    -- bind_host's fix above for why that's not just theoretical here).
+    -- Always true in production (the panel is only ever served over HTTPS,
+    -- via the cloudflared tunnel) -- overridable to false only for local
+    -- dev/testing directly against http://localhost, where a real browser
+    -- would otherwise silently refuse to store/send a Secure cookie at all.
+    cookie_secure = M.env_bool("PANEL_COOKIE_SECURE", true),
     cors_allowed_origins = M.env_csv("PANEL_CORS_ALLOWED_ORIGINS"),
     cors_allow_origin_regex = M.env("PANEL_CORS_ALLOW_ORIGIN_REGEX", ""),
     api_token_ttl_seconds = tonumber(M.env("PANEL_API_TOKEN_TTL_SECONDS", "43200")),
@@ -170,6 +181,23 @@ function M.load()
     scheduled_exports_enabled = M.env_bool("PANEL_SCHEDULED_EXPORTS_ENABLED", false),
     scheduled_exports_dir = M.env("PANEL_SCHEDULED_EXPORTS_DIR", panel_root .. "/.runtime/exports"),
     port = tonumber(M.env("PORT", "8003")),
+    -- BUGFIX: this listener used to always bind 0.0.0.0 even though the
+    -- panel is only ever meant to be reached via the cloudflared tunnel,
+    -- which connects to it over localhost (see .cloudflared/
+    -- swarmpanel-ingress.yml: `service: http://localhost:8003`). Confirmed
+    -- live: `ss -tlnp` showed it listening on 0.0.0.0:8003 -- reachable from
+    -- the LAN, and from the public internet too if the host firewall
+    -- doesn't happen to block that port. Anyone who can reach it directly
+    -- (bypassing Cloudflare entirely) can forge X-Forwarded-For on every
+    -- request (httpd.lua's client_ip trusts it unconditionally) to defeat
+    -- every IP-keyed rate limit in routes.lua -- login brute-force
+    -- protection, registration flood limits, all of it -- and bypasses
+    -- Cloudflare's own WAF/DDoS protection too. Binding loopback-only
+    -- closes that off at the application layer regardless of host firewall
+    -- state, with no functional change: cloudflared reaches it exactly the
+    -- same way over 127.0.0.1. Overridable via env for anyone who
+    -- deliberately wants LAN-direct access (e.g. no tunnel in a dev setup).
+    bind_host = M.env("PANEL_BIND_HOST", "127.0.0.1"),
     -- Exposed so notify.lua can locate ../Image Gallery/live-config.json the
     -- same way app/verification.py's _image_gallery_verification_url()
     -- does (BASE_DIR.parents[1] / "Image Gallery" / "live-config.json").

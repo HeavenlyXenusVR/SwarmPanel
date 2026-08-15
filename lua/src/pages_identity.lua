@@ -14,6 +14,7 @@ function M.register(cfg)
       authenticated = true, username = a.username, site_owner = a.site_owner == true,
       admin_mode = a.admin_mode == true, moderator = a.moderator == true,
       image_gallery_owner = (a.admin_mode == true) and (a.site_owner == true),
+      guild_id = a.guild_id,
     }
   end
 

@@ -23,6 +23,7 @@ function M.register(cfg)
       authenticated = true, username = a.username, site_owner = a.site_owner == true,
       admin_mode = a.admin_mode == true, moderator = a.moderator == true,
       image_gallery_owner = (a.admin_mode == true) and (a.site_owner == true),
+      guild_id = a.guild_id,
     }
   end
 
@@ -751,6 +752,33 @@ function M.register(cfg)
   httpd.route("GET", "/friends", function(req)
     local a, status, headers = cfg.require_auth_page(req)
     if not a then return status, "", headers end
+    -- BUGFIX: the bare env-configured admin login (settings.admin_username/
+    -- admin_password -- see /api/login's `auth_result = { ... guild_id =
+    -- nil, site_owner = true, admin_mode = true ... }`) has no `users` table
+    -- row at all, so account_id_for_auth() in routes.lua can NEVER resolve
+    -- an account_id for it -- every /api/friends/* and /api/me/friends call
+    -- 403s with "Guild account access required", every single time,
+    -- forever, for this account type. The page used to render the full
+    -- interactive friends UI regardless and let the client-side fetch fail,
+    -- surfacing as a generic "Failed to load friends." toast -- repeating
+    -- every 5s via swarmLiveRefresh, since nothing ever stopped retrying.
+    -- Friends/social features are inherently per-guild-account (see
+    -- social.lua/accounts.lua's users-table-keyed model); the site-admin
+    -- login genuinely has no social identity to attach them to. Detect that
+    -- up front and show a clear explanation instead of a page that's
+    -- guaranteed to error forever.
+    if not a.guild_id then
+      local body = html.page({
+        title = "Friends", eyebrow = "Social", lede = "Requests and confirmed friends.",
+        body = [[
+          <div class="empty-state">
+            <p>Friends and social features are tied to a guild account, not the site admin login.</p>
+            <p>Log in with a guild account (one registered to a specific bot/guild) to use Friends.</p>
+          </div>
+        ]],
+      })
+      return page_shell(req, a, "/friends", "Friends", body, "")
+    end
     local body = html.page({
       title = "Friends", eyebrow = "Social", lede = "Requests and confirmed friends.",
       body = [[

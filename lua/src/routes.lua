@@ -72,12 +72,14 @@ function M.register(cfg)
   -- needs to read it -- the page-rendered UI never touches the token
   -- directly) + SameSite=Lax (survives normal top-level navigation, blocks
   -- cross-site POST) + Max-Age matching the token's own embedded expiry.
+  -- BUGFIX: was missing Secure -- see config.lua's cookie_secure for why.
+  local COOKIE_SECURE_ATTR = settings.cookie_secure and "; Secure" or ""
   local function session_cookie_header(token)
-    return ("%s=%s; Path=/; HttpOnly; SameSite=Lax; Max-Age=%d"):format(
-      SESSION_COOKIE, token, settings.api_token_ttl_seconds or 43200)
+    return ("%s=%s; Path=/; HttpOnly; SameSite=Lax%s; Max-Age=%d"):format(
+      SESSION_COOKIE, token, COOKIE_SECURE_ATTR, settings.api_token_ttl_seconds or 43200)
   end
   local function clear_session_cookie_header()
-    return SESSION_COOKIE .. "=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+    return SESSION_COOKIE .. "=; Path=/; HttpOnly; SameSite=Lax" .. COOKIE_SECURE_ATTR .. "; Max-Age=0"
   end
 
   -- Port of auth_deps.py's _touch_request_presence: every authenticated
