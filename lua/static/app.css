@@ -757,6 +757,24 @@ a {
   display: inline-flex;
 }
 
+/* BUGFIX: .notifications-backdrop (a CHILD of .notifications-bell, not a
+   page-level sibling) sits at z-index:60, covering the bell BUTTON itself
+   -- its own sibling in the same stacking context -- once the dropdown
+   opens. Confirmed live via Playwright: a second click on the bell to
+   close it, exactly what app.js's own toggle handler expects, silently
+   hit the backdrop instead and did nothing; the only way to close was
+   clicking elsewhere on the backdrop. An earlier attempt at this fix
+   raised .notifications-bell's own z-index instead of the button's --
+   wrong element: that only affects .notifications-bell's stacking
+   relative to ITS OWN siblings on the page, not the backdrop/button
+   sibling order INSIDE it, which is what actually needed fixing. The
+   button itself needs position+z-index above its backdrop sibling (60).
+*/
+#notif-bell-btn {
+  position: relative;
+  z-index: 61;
+}
+
 .icon-button.has-unread {
   border-color: color-mix(in srgb, var(--accent) 46%, var(--line));
   color: var(--accent);
