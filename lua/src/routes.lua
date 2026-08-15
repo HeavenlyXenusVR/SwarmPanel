@@ -2310,6 +2310,113 @@ function M.register(cfg)
     audit.record_audit_log(a.username, action .. "_revert", { target_type = entry.target_type, target_id = entry.target_id, details = "reverted_from_entry=" .. tostring(entry.id) })
     return 200, { ok = true, result = result }
   end)
+
+  -- ---------------------------------------------------------------------
+  -- "My Other Projects" tab: Lumisound's latest .ipa, proxied from its
+  -- private GitHub repo. Browsers can't hit a private repo's release asset
+  -- directly (needs an Authorization header GitHub's redirect won't carry),
+  -- so this shells out to `gh`, which is already authenticated as this
+  -- box's owner -- the token itself is never read/stored/handled here.
+  -- Same detached-background-job + bounded-poll shape as other long-running
+  -- work in this file, so a slow GitHub fetch yields instead of blocking
+  -- the single-threaded server.
+  -- ---------------------------------------------------------------------
+  local LUMISOUND_REPO = "HeavenlyXenusVR/Lumisound"
+  local LUMISOUND_POLL_SECONDS = 20
+  local LUMISOUND_CACHE_DIR = "./.runtime/project_downloads"
+
+  local function shq(s)
+    return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+  end
+
+  local function lumisound_latest_tag()
+    local handle = io.popen(
+      "env -i HOME=" .. shq(os.getenv("HOME") or "") .. " PATH=" .. shq(os.getenv("PATH") or "")
+        .. " GH_TOKEN=" .. shq(os.getenv("GH_TOKEN") or "")
+        .. " gh release list --repo " .. shq(LUMISOUND_REPO)
+        .. " --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null"
+    )
+    if not handle then return nil end
+    local tag = handle:read("*a")
+    handle:close()
+    tag = tag and tag:gsub("%s+$", "") or ""
+    return tag ~= "" and tag or nil
+  end
+
+  local function lumisound_safe_tag(tag)
+    return (tag:gsub("[^%w%.%-]", "_"))
+  end
+
+  httpd.route("GET", "/api/projects/lumisound/download", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+
+    local tag = lumisound_latest_tag()
+    if not tag then return 502, { detail = "Could not reach GitHub to check the latest Lumisound release. Try again shortly." } end
+
+    os.execute("mkdir -p " .. shq(LUMISOUND_CACHE_DIR))
+    local safe_tag = lumisound_safe_tag(tag)
+    local final_path = LUMISOUND_CACHE_DIR .. "/lumisound_" .. safe_tag .. ".ipa"
+    local filename = "Lumisound-" .. safe_tag .. ".ipa"
+
+    local function serve(path)
+      local f = io.open(path, "rb")
+      if not f then return nil end
+      local content = f:read("*a")
+      f:close()
+      return content
+    end
+
+    local existing = serve(final_path)
+    if existing then
+      return 200, existing, {
+        ["Content-Type"] = "application/octet-stream",
+        ["Content-Disposition"] = 'attachment; filename="' .. filename .. '"',
+        ["Cache-Control"] = "private, max-age=0, no-cache",
+      }
+    end
+
+    -- Filesystem-based ".pending" dedup: a concurrent second visitor hitting
+    -- this while the first fetch is still in flight waits on the same
+    -- fetch rather than kicking off a redundant one.
+    local pending_marker = final_path .. ".pending"
+    local pf = io.open(pending_marker, "rb")
+    local pending_age = pf and tonumber(pf:read("*a")) or nil
+    if pf then pf:close() end
+    local still_fetching = pending_age and (os.time() - pending_age) < LUMISOUND_POLL_SECONDS
+
+    if not still_fetching then
+      local marker = assert(io.open(pending_marker, "wb"))
+      marker:write(tostring(os.time()))
+      marker:close()
+
+      local tmp_path = final_path .. ".tmp." .. tostring(math.random(100000, 999999))
+      local cmd = string.format(
+        "( env -i HOME=%s PATH=%s GH_TOKEN=%s gh release download %s --repo %s --pattern '*.ipa' -O %s --clobber "
+          .. "&& mv -f %s %s; rm -f %s %s ) </dev/null >/dev/null 2>&1 &",
+        shq(os.getenv("HOME") or ""), shq(os.getenv("PATH") or ""), shq(os.getenv("GH_TOKEN") or ""),
+        shq(tag), shq(LUMISOUND_REPO), shq(tmp_path),
+        shq(tmp_path), shq(final_path),
+        shq(tmp_path), shq(pending_marker)
+      )
+      os.execute(cmd)
+    end
+
+    local waited = 0
+    while waited < LUMISOUND_POLL_SECONDS do
+      local content = serve(final_path)
+      if content then
+        return 200, content, {
+          ["Content-Type"] = "application/octet-stream",
+          ["Content-Disposition"] = 'attachment; filename="' .. filename .. '"',
+          ["Cache-Control"] = "private, max-age=0, no-cache",
+        }
+      end
+      copas.sleep(0.5)
+      waited = waited + 0.5
+    end
+    return 503, { detail = "Still fetching the latest Lumisound build from GitHub -- try again in a moment." }
+  end)
 end
 
 return M

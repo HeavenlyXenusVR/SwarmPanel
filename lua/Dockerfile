@@ -4,11 +4,15 @@ FROM alpine:3.20
 # files) -- the real binary is luarocks-5.1, from the luarocks5.1 package.
 # Same gotcha already hit and fixed for the 13 music bots' Dockerfiles this
 # session; do not revert to plain "luarocks".
+# github-cli: used by routes.lua's Lumisound-download proxy (private repo,
+# so the browser can't hit it directly) -- auths via the GH_TOKEN env var
+# (compose env_file), not a keyring, since this container has no access to
+# the host's `gh auth login` session.
 RUN apk add --no-cache \
       luajit luajit-dev luarocks5.1 \
       build-base \
       libsodium-dev openssl-dev \
-      git ca-certificates
+      git ca-certificates github-cli
 
 # luarocks-5.1's own Lua-detection defaults don't find LuaJIT's headers/libs
 # (it looks for /usr/include/lua/5.1, not where luajit-dev actually installs

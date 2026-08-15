@@ -832,6 +832,72 @@ function M.register(cfg)
   end)
 
   -- -----------------------------------------------------------------
+  -- My Other Projects
+  -- -----------------------------------------------------------------
+  httpd.route("GET", "/other-projects", function(req)
+    local a, status, headers = cfg.require_auth_page(req)
+    if not a then return status, "", headers end
+
+    local body = html.page({
+      eyebrow = "Elsewhere", title = "My Other Projects", lede = "A couple of other things I've built.",
+      body = [[
+        <div class="project-card-grid">
+          <a class="project-card liquid-glass" href="https://gallery.xenusanimations.studio" target="_blank" rel="noopener noreferrer">
+            <div class="project-card-logo"><img src="/static/images/image-gallery.png" alt="" loading="lazy" decoding="async"></div>
+            <div class="project-card-copy"><h3>Image Gallery</h3><p>Curated media deck for uploads, collections, and social feeds.</p></div>
+            <div class="project-card-cta"><span>Open</span></div>
+          </a>
+          <button type="button" class="project-card liquid-glass" id="lumisound-download-card">
+            <div class="project-card-logo"><img src="/static/images/lumisound.png" alt="" loading="lazy" decoding="async"></div>
+            <div class="project-card-copy"><h3>Lumisound</h3><p>iOS music app. Downloads the latest build straight from GitHub.</p></div>
+            <div class="project-card-cta" id="lumisound-download-cta"><span>Download latest</span></div>
+          </button>
+        </div>
+      ]],
+    })
+    local script = [[
+      const lumisoundCard = document.getElementById("lumisound-download-card");
+      const lumisoundCta = document.getElementById("lumisound-download-cta");
+      if (lumisoundCard) {
+        lumisoundCard.addEventListener("click", async () => {
+          if (lumisoundCard.disabled) return;
+          lumisoundCard.disabled = true;
+          lumisoundCta.innerHTML = "<span>Fetching…</span>";
+          try {
+            const headers = {};
+            if (window.SWARM_TOKEN) headers.Authorization = "Bearer " + window.SWARM_TOKEN;
+            const res = await fetch("/api/projects/lumisound/download", { headers });
+            if (!res.ok) {
+              let detail = res.statusText;
+              try { detail = (await res.json()).detail || detail; } catch {}
+              throw new Error(detail);
+            }
+            const disposition = res.headers.get("content-disposition") || "";
+            const match = disposition.match(/filename="([^"]+)"/);
+            const filename = match ? match[1] : "Lumisound.ipa";
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+            swarmToast("Lumisound download started.", "success");
+          } catch (err) {
+            swarmToast(err.message, "error");
+          } finally {
+            lumisoundCard.disabled = false;
+            lumisoundCta.innerHTML = "<span>Download latest</span>";
+          }
+        });
+      }
+    ]]
+    return page_shell(req, a, "/other-projects", "My Other Projects", body, script)
+  end)
+
+  -- -----------------------------------------------------------------
   -- Diagnostics (admin)
   -- -----------------------------------------------------------------
   httpd.route("GET", "/diagnostics", function(req)

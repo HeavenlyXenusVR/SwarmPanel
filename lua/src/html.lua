@@ -71,6 +71,7 @@ local NAV_ITEMS = {
   { to = "/messages", label = "Messages", glyph = "✉" },
   { to = "/profile", label = "Profile", glyph = "◑" },
   { to = "/appearance", label = "Look", glyph = "◈" },
+  { to = "/other-projects", label = "My Other Projects", glyph = "🚀" },
 }
 local NAV_ADMIN_ITEMS = {
   { to = "/diagnostics", label = "Diagnostics", glyph = "♥", when = "admin" },

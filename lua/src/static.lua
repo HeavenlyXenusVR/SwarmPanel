@@ -9,6 +9,8 @@ local M = {}
 local ASSETS = {
   { path = "/static/app.css", file = "static/app.css", content_type = "text/css; charset=utf-8" },
   { path = "/static/app.js", file = "static/app.js", content_type = "application/javascript; charset=utf-8" },
+  { path = "/static/images/image-gallery.png", file = "static/images/image-gallery.png", content_type = "image/png" },
+  { path = "/static/images/lumisound.png", file = "static/images/lumisound.png", content_type = "image/png" },
 }
 
 -- Read from disk on every request rather than caching in memory: these
