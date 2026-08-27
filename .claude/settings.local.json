@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(\" app/db/bots.py | head -50)",
+      "Bash(grep -n \"queue_count\\\\|backup_queue_preview\\\\|queue_table\\\\|backup_table\\\\|_queue`\" app/db/bots.py | head -50)"
+    ]
+  }
+}

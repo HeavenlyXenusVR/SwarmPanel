@@ -1,5 +1,5 @@
 -- Discord REST API client (blocking; see README for the async trade-off note).
-require("copas") -- must load before socket.http/ssl.https anywhere in the process
+local copas = require("copas") -- must load before socket.http/ssl.https anywhere in the process
 local socket_http = require("socket.http")
 local https = require("ssl.https")
 local ltn12 = require("ltn12")
@@ -29,7 +29,7 @@ function Rest.new(token)
   return setmetatable({ token = token }, Rest)
 end
 
-function Rest:request(method, path, body)
+function Rest:_request_once(method, path, body)
   local response_body = {}
   local request_body = body and cjson.encode(body) or nil
   local headers = {
@@ -67,6 +67,35 @@ function Rest:request(method, path, body)
     return nil, "http " .. status .. ": " .. raw
   end
   return decoded, nil
+end
+
+-- BUGFIX 2026-08-22: "rate_limited"/retry_after has been part of this
+-- module's documented return contract (see README) since it was written,
+-- but confirmed live via a fleet-wide grep -- not one of the 13 bots' ~700
+-- combined command/handler call sites actually checks for it. Every 429
+-- response has always just been treated as a generic failure (a swallowed
+-- error, or a user-facing "something went wrong") with no retry, silently
+-- dropping whatever the call was trying to do. Retrying transparently
+-- inside the shared client fixes every caller everywhere at once, with no
+-- signature/contract change: callers that never checked "rate_limited"
+-- still just see success or a real failure, exactly as before, except a
+-- 429 no longer surfaces as one. Capped at 3 attempts and Discord's own
+-- retry_after (rarely more than a couple seconds for a single bot's
+-- traffic) so a pathological/misbehaving rate limit can't wedge the
+-- calling coroutine indefinitely.
+local MAX_RATE_LIMIT_RETRIES = 3
+
+function Rest:request(method, path, body)
+  for attempt = 1, MAX_RATE_LIMIT_RETRIES + 1 do
+    local decoded, err, retry_after = self:_request_once(method, path, body)
+    if err ~= "rate_limited" then
+      return decoded, err
+    end
+    if attempt > MAX_RATE_LIMIT_RETRIES then
+      return nil, "rate_limited (gave up after " .. MAX_RATE_LIMIT_RETRIES .. " retries)"
+    end
+    copas.sleep(tonumber(retry_after) or 1)
+  end
 end
 
 function Rest:get(path) return self:request("GET", path) end

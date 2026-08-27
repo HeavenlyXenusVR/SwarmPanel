@@ -13,6 +13,7 @@
 local Rest = require("swarmlua.rest")
 local sodium = require("luasodium")
 local cjson = require("cjson")
+local socket = require("socket")
 local https = require("ssl.https")
 
 -- Default is 60s (ssl/https.lua's own default) — far too long to hold up an
@@ -51,7 +52,15 @@ end
 
 local function cached_get(token, path)
   local key = token .. "\0" .. path
-  local now = os.clock()
+  -- BUGFIX 2026-08-22: os.clock() is CPU time, not wall-clock -- see
+  -- db.lua's identical BUGFIX (same root cause as lavalink.lua's REST-
+  -- latency fix) for the full writeup. Here it means this Discord API
+  -- response cache (guild/channel names, invite-link data) could keep
+  -- serving stale data for far longer than CACHE_TTL real seconds on a
+  -- mostly-idle panel process -- e.g. a renamed channel or a newly invited
+  -- bot's guild list not refreshing on the dashboard for much longer than
+  -- intended.
+  local now = socket.gettime()
   local hit = cache[key]
   if hit and hit[1] > now then return hit[2], nil end
   local rest = rest_for(token)

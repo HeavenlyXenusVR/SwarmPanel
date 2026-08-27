@@ -12,6 +12,29 @@ local accounts = require("accounts")
 
 local M = {}
 
+-- BUGFIX 2026-08-22: the "Audio Nodes: Healthy/Checking" summary badges
+-- (boot screen + dashboard spotlight, below) used to check ONLY the
+-- "lavalink" (primary) node's status -- accurate back when that was the
+-- only real node, but since the 2026-08-17 3-node pool + per-bot
+-- node_affinity rotation (see Music/lua-shared/swarmlua/bot.lua/
+-- nodepool.lua), many bots' actual preferred node is lavalink2 or
+-- lavalink3, not "lavalink". A primary that happens to be down while both
+-- pool nodes are fine (the fleet keeps working fine via failover) used to
+-- show "Checking" here forever; the reverse -- lavalink2/lavalink3 both
+-- down while the primary happens to be fine -- used to show "Healthy" with
+-- 2 of 3 real nodes silently degraded. Healthy here now means "the fleet
+-- still has at least one working real Lavalink node" -- NodeLink is a
+-- last-resort fallback, deliberately not counted toward this summary the
+-- same way it isn't counted as one of the "real" nodes in bot.lua's own
+-- node_affinity rotation.
+local function any_lavalink_node_healthy(node_health)
+  node_health = node_health or {}
+  for _, name in ipairs({ "lavalink", "lavalink2", "lavalink3" }) do
+    if (node_health[name] or {}).status == "healthy" then return true end
+  end
+  return false
+end
+
 function M.register(cfg)
   local settings = cfg.settings
   local music_bots = cfg.music_bots
@@ -359,9 +382,19 @@ function M.register(cfg)
     -- everywhere else on this page.
     local NODE_HEALTH_TONE = { healthy = "live", degraded = "danger", stale = "off", unknown = "off" }
     local NODE_HEALTH_LABEL = { healthy = "Healthy", degraded = "Degraded", stale = "Stale", unknown = "No data yet" }
-    local NODE_DISPLAY_NAME = { lavalink = "Lavalink (primary)", nodelink = "NodeLink (backup)" }
+    -- BUGFIX 2026-08-22: matches dashboard.lua's get_node_health() fix --
+    -- this hardcoded 2-node list independently had the exact same gap
+    -- (missing lavalink2/lavalink3, the 2 extra real Lavalink instances
+    -- added 2026-08-17 to spread the fleet's voice-session load), so even
+    -- with that fix, THIS page still wouldn't have rendered them: a
+    -- degraded/down node on 2 of the 3 real Lavalink instances could sit
+    -- invisible here indefinitely, same failure mode.
+    local NODE_DISPLAY_NAME = {
+      lavalink = "Lavalink (primary)", lavalink2 = "Lavalink 2", lavalink3 = "Lavalink 3",
+      nodelink = "NodeLink (backup)",
+    }
     local node_pills = {}
-    for _, node_name in ipairs({ "lavalink", "nodelink" }) do
+    for _, node_name in ipairs({ "lavalink", "lavalink2", "lavalink3", "nodelink" }) do
       local h = (data.node_health or {})[node_name] or { status = "unknown" }
       local tone = NODE_HEALTH_TONE[h.status] or "off"
       local label = NODE_HEALTH_LABEL[h.status] or "Unknown"
@@ -438,7 +471,7 @@ function M.register(cfg)
       </script>
     ]]):format(
       online_bots, #data.bots, live_count,
-      ((data.node_health or {}).lavalink or {}).status == "healthy" and "Healthy" or "Checking"
+      any_lavalink_node_healthy(data.node_health) and "Healthy" or "Checking"
     )
 
     -- Fleet Overview spotlight: dashboard-spotlight/-metrics/-mini-metrics/
@@ -523,7 +556,7 @@ function M.register(cfg)
       busiest_bot and ("%d queued, %d live guild(s)"):format(busiest_bot.queue_depth or 0, busiest_bot.active_playing_count or 0) or "No active bot to highlight.",
       spotlight_playback,
       online_bots, #data.bots, live_count, total_queue, total_backup, total_guilds,
-      ((data.node_health or {}).lavalink or {}).status == "healthy" and "Healthy" or "Checking",
+      any_lavalink_node_healthy(data.node_health) and "Healthy" or "Checking",
       (function()
         for _, bot in ipairs(data.bots) do if bot.key == "aria" then return bot.status or "Unknown" end end
         return "Unknown"

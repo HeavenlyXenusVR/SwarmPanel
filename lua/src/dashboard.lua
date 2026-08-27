@@ -16,7 +16,19 @@ local M = {}
 -- demand (Redis.new() doesn't open a socket until first use), so a Redis
 -- outage degrades this one widget rather than the whole dashboard route
 -- (every call site below is pcall-wrapped).
-local NODE_NAMES = { "lavalink", "nodelink" }
+-- BUGFIX 2026-08-22: this widget only ever checked "lavalink" and
+-- "nodelink" (the original single-primary+backup shape) -- confirmed live
+-- via `redis-cli KEYS "swarm:node_health:*"` that the real scoreboard also
+-- has "lavalink2" and "lavalink3" (Music/lua-shared/swarmlua/bot.lua's
+-- config.lavalink_pool, added 2026-08-17 to spread the 13-bot fleet's DAVE/
+-- MLS voice-session load across 3 real Lavalink instances instead of
+-- piling onto one -- see nodepool.lua). Those two nodes' health has been
+-- completely invisible on this dashboard since the day they were added --
+-- a real degraded/down node 2 of the 3 real nodes could sit unnoticed here
+-- indefinitely. Matches bot.lua's own "lavalink" / "lavalink" .. (i+1)
+-- naming scheme exactly, plus "nodelink" for the NodeLink last-resort
+-- fallback.
+local NODE_NAMES = { "lavalink", "lavalink2", "lavalink3", "nodelink" }
 local _redis_client = nil
 local function redis_client()
   if not _redis_client then

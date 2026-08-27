@@ -84,22 +84,23 @@ local function music_schema(bot_key, fallback)
 end
 
 local MUSIC_BOT_KEYS = {
-  "gws", "harmonic", "maestro", "melodic", "nexus", "rhythm", "symphony",
+  "gws", "maestro", "melodic", "nexus", "rhythm", "symphony",
   "tunestream", "alucard", "sapphire", "strife", "lockhart", "glitch",
+  "dazzle",
 }
 
 local BOT_DISPLAY_NAMES = {
-  gws = "GWS", harmonic = "Harmonic", maestro = "Maestro", melodic = "Melodic",
+  gws = "GWS", maestro = "Maestro", melodic = "Melodic",
   nexus = "Nexus", rhythm = "Rhythm", symphony = "Symphony", tunestream = "Tunestream",
   alucard = "Alucard", sapphire = "Sapphire", strife = "Strife", lockhart = "Lockhart",
-  glitch = "Glitch", aria = "Aria",
+  glitch = "Glitch", dazzle = "Dazzle", aria = "Aria",
 }
 
 local BOT_ACCENTS = {
-  gws = "#cba6f7", harmonic = "#89b4fa", maestro = "#a6e3a1", melodic = "#fab387",
+  gws = "#cba6f7", maestro = "#a6e3a1", melodic = "#fab387",
   nexus = "#f38ba8", rhythm = "#94e2d5", symphony = "#f9e2af", tunestream = "#b4befe",
   alucard = "#e06c75", sapphire = "#4fc3f7", strife = "#ff6b6b", lockhart = "#f9a8d4",
-  glitch = "#00ff9f", aria = "#cba6f7",
+  glitch = "#00ff9f", dazzle = "#ffd700", aria = "#cba6f7",
 }
 
 function M.load()

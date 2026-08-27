@@ -52,7 +52,12 @@ function Redis:_read_reply()
   if prefix == "+" then
     return rest
   elseif prefix == "-" then
-    return nil, rest
+    -- Third return distinguishes "Redis replied with an error" (the socket
+    -- is perfectly fine, just like the exact anti-pattern pg.lua's own
+    -- BUGFIX above already fixed for Postgres) from every other nil-reply
+    -- case here, which really is a transport failure -- see command()'s use
+    -- of this below.
+    return nil, rest, true
   elseif prefix == ":" then
     return tonumber(rest)
   elseif prefix == "$" then
@@ -79,21 +84,43 @@ end
 -- command("HSET", key, field, value, ...) -> (reply, err). On any socket
 -- error the connection is dropped so the next call reconnects cleanly
 -- rather than reusing a socket left in an unknown state mid-reply.
+--
+-- One Redis instance is shared by every guild's playback coroutine in a
+-- bot process (nodepool.lua is called from Lavalink:rest(), which every
+-- guild calls independently). copas.send/copas.receive both yield to the
+-- scheduler mid-call, so without serialization here two coroutines'
+-- send/receive pairs interleave on the same socket -- one coroutine reads
+-- bytes meant for another's reply, desyncing the RESP stream entirely
+-- (confirmed live: "attempt to get length of a number value" in hgetall,
+-- and a nil self.sock from one coroutine's error-path close() racing
+-- another's in-flight send()). A simple busy-flag mutex, yielded on via
+-- copas.pause, is enough since copas is cooperative -- only I/O calls
+-- inside the critical section can hand control to another coroutine.
 function Redis:command(...)
+  while self._busy do copas.pause() end
+  self._busy = true
   local ok, cerr = self:_ensure_connected()
-  if not ok then return nil, cerr end
+  if not ok then
+    self._busy = false
+    return nil, cerr
+  end
   local args = { ... }
   local sent, serr = copas.send(self.sock, encode_command(args))
   if not sent then
-    self.sock:close(); self.sock = nil
+    if self.sock then self.sock:close() end
+    self.sock = nil
+    self._busy = false
     return nil, serr
   end
-  local reply, rerr = self:_read_reply()
-  if rerr and not reply then
-    self.sock:close(); self.sock = nil
+  local reply, rerr, is_redis_error = self:_read_reply()
+  if rerr and not reply and not is_redis_error then
+    if self.sock then self.sock:close() end
+    self.sock = nil
+    self._busy = false
     return nil, rerr
   end
-  return reply
+  self._busy = false
+  return reply, rerr
 end
 
 function Redis:hset(key, field, value)

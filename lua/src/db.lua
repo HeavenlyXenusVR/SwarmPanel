@@ -9,6 +9,7 @@
 -- application code), so the fix is simply: keep one lazily-connected Pg
 -- instance PER DATABASE NAME instead of one pool for the whole server.
 local Pg = require("swarmlua.pg")
+local socket = require("socket")
 
 local M = {}
 local pools = {} -- dbname -> Pg instance
@@ -107,7 +108,17 @@ local TABLE_EXISTS_TTL = 60
 function M.table_exists(dbname, table_name)
   local key = dbname .. "\0" .. table_name
   local cached = table_exists_cache[key]
-  local now = os.clock()
+  -- BUGFIX 2026-08-22: os.clock() is CPU time, not wall-clock -- meaningless
+  -- as a cache-expiry clock for a mostly-idle, I/O-bound web server process
+  -- (same root cause as Music/lua-shared/swarmlua/lavalink.lua's identical
+  -- BUGFIX for its REST-latency metric). CPU time accrues far slower than
+  -- real time here, so this cache's "60 second" TTL could in practice take
+  -- far longer than 60 real seconds to actually expire -- e.g. a bot's
+  -- schema/table created for the first time (like Dazzle's, added this
+  -- session) could keep reporting "does not exist" on the dashboard for
+  -- much longer than intended after it actually starts existing.
+  -- socket.gettime() is real wall-clock time.
+  local now = socket.gettime()
   if cached and cached[1] > now then return cached[2] end
   local row = M.fetchone(
     dbname,
