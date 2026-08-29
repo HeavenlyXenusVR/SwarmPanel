@@ -191,47 +191,70 @@ function M.register(cfg)
         }
       });
 
-      async function refreshControlState() {
+      // BUGFIX (live-push migration): was swarmFetch on a 4s
+      // swarmLiveRefresh poll. Split into a pure renderer (applyControlState,
+      // called from the "control_state" live-push handler below) and a
+      // resubscribeControlState() that re-issues the watch with the
+      // currently-selected bot_key/guild_id whenever either changes --
+      // routes.lua's SNAPSHOT_BUILDERS.control_state builds the identical
+      // payload GET /api/bots/{key}/control-state used to (same
+      // dashboard.get_bot_control_state + enrich_control_state_with_discord
+      // call), just pushed instead of polled, and the server recomputes it
+      // every 2s regardless of whether any client asked, so an actual state
+      // change (someone else's PLAY/SKIP, a bot restart) now reaches this
+      // page without waiting up to 4s for the next poll tick.
+      function applyControlState(state) {
+        const stateBox = document.getElementById("control-state");
+        stateBox.innerHTML = '<pre class="json-panel">' + JSON.stringify(state, null, 2).replace(/</g, "&lt;") + "</pre>";
+        // .state-recovering already existed in CSS (recovering-pulse
+        // keyframe) but nothing ever applied it -- an operator watching
+        // this panel had no visual cue that a session was mid-recovery.
+        stateBox.classList.toggle("state-recovering", !!(state && state.session && state.session.session_state === "recovering"));
+        // Mirrors ControlsPage.jsx's controlState effect: voice/text channel
+        // are one-time defaults (only fill an empty field -- never clobber
+        // what the operator is mid-typing for a PLAY/SET_HOME order), while
+        // loop_mode/filter_mode always reflect the bot's actual live
+        // setting, since those aren't per-order inputs, they're "what is
+        // this guild currently configured to do" (was previously stuck on
+        // the form's hardcoded "off"/"none" defaults regardless of what
+        // the bot was really set to -- e.g. every bot defaults to
+        // loop_mode=queue, but the form never showed that).
+        const session = state && state.session;
+        if (session) {
+          // voice/text channel selects are populated asynchronously by
+          // loadChannels() below (real channel NAMES, not raw IDs -- a
+          // bare numeric snowflake told you nothing about which channel
+          // you were about to target), so the desired id is stashed here
+          // and applied once loadChannels() has real <option>s to match
+          // against, instead of writing straight to .value (which is a
+          // silent no-op on a <select> with no matching <option> yet).
+          if (!form.voice_channel_id.value) {
+            pendingVoiceChannelId = session.home_channel_id || session.channel_id || "";
+            applyPendingChannelValue(form.voice_channel_id, pendingVoiceChannelId);
+          }
+          if (!form.text_channel_id.value) {
+            pendingTextChannelId = session.feedback_channel_id || "";
+            applyPendingChannelValue(form.text_channel_id, pendingTextChannelId);
+          }
+          if (session.loop_mode) form.loop_mode.value = session.loop_mode;
+          if (session.filter_mode) form.filter_mode.value = session.filter_mode;
+        }
+      }
+      window.swarmLive.watch("control_state", (msg) => {
+        if (msg.type === "snapshot") applyControlState(msg.data);
+      });
+      function resubscribeControlState() {
         const botKey = form.bot_key.value, guildId = form.guild_id.value;
         if (!botKey || !guildId) return;
-        try {
-          const state = await swarmFetch(`/api/bots/${botKey}/control-state?guild_id=${encodeURIComponent(guildId)}`);
-          const stateBox = document.getElementById("control-state");
-          stateBox.innerHTML = '<pre class="json-panel">' + JSON.stringify(state, null, 2).replace(/</g, "&lt;") + "</pre>";
-          // .state-recovering already existed in CSS (recovering-pulse
-          // keyframe) but nothing ever applied it -- an operator watching
-          // this panel had no visual cue that a session was mid-recovery.
-          stateBox.classList.toggle("state-recovering", !!(state && state.session && state.session.session_state === "recovering"));
-          // Mirrors ControlsPage.jsx's controlState effect: voice/text channel
-          // are one-time defaults (only fill an empty field -- never clobber
-          // what the operator is mid-typing for a PLAY/SET_HOME order), while
-          // loop_mode/filter_mode always reflect the bot's actual live
-          // setting, since those aren't per-order inputs, they're "what is
-          // this guild currently configured to do" (was previously stuck on
-          // the form's hardcoded "off"/"none" defaults regardless of what
-          // the bot was really set to -- e.g. every bot defaults to
-          // loop_mode=queue, but the form never showed that).
-          const session = state && state.session;
-          if (session) {
-            // voice/text channel selects are populated asynchronously by
-            // loadChannels() below (real channel NAMES, not raw IDs -- a
-            // bare numeric snowflake told you nothing about which channel
-            // you were about to target), so the desired id is stashed here
-            // and applied once loadChannels() has real <option>s to match
-            // against, instead of writing straight to .value (which is a
-            // silent no-op on a <select> with no matching <option> yet).
-            if (!form.voice_channel_id.value) {
-              pendingVoiceChannelId = session.home_channel_id || session.channel_id || "";
-              applyPendingChannelValue(form.voice_channel_id, pendingVoiceChannelId);
-            }
-            if (!form.text_channel_id.value) {
-              pendingTextChannelId = session.feedback_channel_id || "";
-              applyPendingChannelValue(form.text_channel_id, pendingTextChannelId);
-            }
-            if (session.loop_mode) form.loop_mode.value = session.loop_mode;
-            if (session.filter_mode) form.filter_mode.value = session.filter_mode;
-          }
-        } catch { /* not ready yet */ }
+        window.swarmLive.resubscribe("control_state", { bot_key: botKey, guild_id: guildId });
+      }
+      // Kept as the async-function name refreshControlState() below (rather
+      // than renaming every call site) so the rest of this file -- and the
+      // race-condition fix's own comment just below, which specifically
+      // documents awaiting this before it reads guild_id -- didn't need
+      // touching beyond swapping its body from a fetch to a resubscribe.
+      async function refreshControlState() {
+        resubscribeControlState();
       }
       // Switching bots left guild_id pointed at whatever guild the PREVIOUS
       // bot defaulted to -- if the new bot isn't even in that guild,
@@ -286,9 +309,9 @@ function M.register(cfg)
         }
         await loadChannels();
         refreshControlState();
+        resubscribeQueues();
       });
-      form.guild_id.addEventListener("change", () => { refreshControlState(); loadChannels(); });
-      swarmLiveRefresh(refreshControlState, 4000);
+      form.guild_id.addEventListener("change", () => { refreshControlState(); resubscribeQueues(); loadChannels(); });
 
       let pendingVoiceChannelId = "", pendingTextChannelId = "";
       let channelsRequestId = 0;
@@ -350,24 +373,39 @@ function M.register(cfg)
       }
       loadChannels();
 
+      // BUGFIX (live-push migration): was swarmFetch on a 30s
+      // swarmLiveRefresh poll. applyQueues() is the pure renderer, fed by
+      // BOTH the "queues" live-push watch (passive updates -- someone else
+      // saves/renames/deletes a queue) AND loadQueues()'s own direct fetch
+      // (kept for the user's own delete/rename/save actions below, so THOSE
+      // get instant feedback rather than waiting for the next push).
       let savedQueues = [];
+      function applyQueues(data) {
+        savedQueues = (data && data.queues) || [];
+        const rows = savedQueues.map((q) => `
+          <div class="collection-row" data-load-queue="${q.id}">
+            <span><strong>${(q.name || "").replace(/</g, "&lt;")}</strong><small>${(q.items || []).length} track${(q.items || []).length === 1 ? "" : "s"}</small></span>
+            <button type="button" class="icon-button" data-rename-queue="${q.id}" title="Rename">&#9998;</button>
+            <button type="button" class="icon-button" data-delete-queue="${q.id}" title="Delete">&times;</button>
+          </div>`
+        ).join("");
+        document.getElementById("saved-queues").innerHTML = `<div class="list-panel">${rows || '<div class="empty-state">No saved queues.</div>'}</div>`;
+      }
+      window.swarmLive.watch("queues", (msg) => {
+        if (msg.type === "snapshot") applyQueues(msg.data);
+      });
+      function resubscribeQueues() {
+        const botKey = form.bot_key.value, guildId = form.guild_id.value;
+        if (!botKey || !guildId) return;
+        window.swarmLive.resubscribe("queues", { bot_key: botKey, guild_id: guildId });
+      }
       async function loadQueues() {
         const botKey = form.bot_key.value, guildId = form.guild_id.value;
         if (!botKey || !guildId) return;
         try {
-          const res = await swarmFetch(`/api/queues?guild_id=${encodeURIComponent(guildId)}&bot_key=${botKey}`);
-          savedQueues = res.queues || [];
-          const rows = savedQueues.map((q) => `
-            <div class="collection-row" data-load-queue="${q.id}">
-              <span><strong>${(q.name || "").replace(/</g, "&lt;")}</strong><small>${(q.items || []).length} track${(q.items || []).length === 1 ? "" : "s"}</small></span>
-              <button type="button" class="icon-button" data-rename-queue="${q.id}" title="Rename">&#9998;</button>
-              <button type="button" class="icon-button" data-delete-queue="${q.id}" title="Delete">&times;</button>
-            </div>`
-          ).join("");
-          document.getElementById("saved-queues").innerHTML = `<div class="list-panel">${rows || '<div class="empty-state">No saved queues.</div>'}</div>`;
+          applyQueues(await swarmFetch(`/api/queues?guild_id=${encodeURIComponent(guildId)}&bot_key=${botKey}`));
         } catch { /* ignore */ }
       }
-      swarmLiveRefresh(loadQueues, 30000);
       document.getElementById("saved-queues").addEventListener("click", async (e) => {
         const del = e.target.getAttribute("data-delete-queue");
         if (del) {
@@ -812,28 +850,35 @@ function M.register(cfg)
       ]],
     })
     local script = [[
-      async function loadFriends() {
-        try {
-          const reqs = await swarmFetch("/api/friends/requests");
-          const incoming = (reqs.incoming || []).map((r) =>
-            `<div class="friend-row">${(r.username||"").replace(/</g,"&lt;")} <button data-accept="${r.id}">Accept</button> <button data-decline="${r.id}">Decline</button></div>`).join("");
-          const outgoing = (reqs.outgoing || []).map((r) =>
-            `<div class="friend-row">${(r.username||"").replace(/</g,"&lt;")} <button data-cancel="${r.id}">Cancel</button></div>`).join("");
-          document.getElementById("friends-incoming").innerHTML = incoming || "<p>None.</p>";
-          document.getElementById("friends-outgoing").innerHTML = outgoing || "<p>None.</p>";
-          const friends = await swarmFetch("/api/me/friends");
-          document.getElementById("friends-list").innerHTML =
-            (friends.friends || []).map((f) => `<div class="friend-row">${(f.username||"").replace(/</g,"&lt;")}</div>`).join("") || "<p>No friends yet.</p>";
-        } catch (err) { swarmToast("Failed to load friends.", "error"); }
+      // BUGFIX (live-push migration): was swarmFetch (2 calls) on a 5s
+      // swarmLiveRefresh poll. applyFriends() renders from the "friends"
+      // live-push (routes.lua's SNAPSHOT_BUILDERS.friends bundles
+      // friends+incoming+outgoing in one push, matching what this page
+      // always fetched together anyway) -- accepting/declining/canceling a
+      // request still does a direct fetch first for instant feedback on the
+      // user's OWN action, same pattern as Controls' queues.
+      function applyFriends(data) {
+        const incoming = ((data && data.incoming) || []).map((r) =>
+          `<div class="friend-row">${(r.username||"").replace(/</g,"&lt;")} <button data-accept="${r.id}">Accept</button> <button data-decline="${r.id}">Decline</button></div>`).join("");
+        const outgoing = ((data && data.outgoing) || []).map((r) =>
+          `<div class="friend-row">${(r.username||"").replace(/</g,"&lt;")} <button data-cancel="${r.id}">Cancel</button></div>`).join("");
+        document.getElementById("friends-incoming").innerHTML = incoming || "<p>None.</p>";
+        document.getElementById("friends-outgoing").innerHTML = outgoing || "<p>None.</p>";
+        document.getElementById("friends-list").innerHTML =
+          ((data && data.friends) || []).map((f) => `<div class="friend-row">${(f.username||"").replace(/</g,"&lt;")}</div>`).join("") || "<p>No friends yet.</p>";
       }
-      swarmLiveRefresh(loadFriends, 5000);
+      window.swarmLive.watch("friends", (msg) => {
+        if (msg.type === "snapshot") applyFriends(msg.data);
+        else swarmToast("Failed to load friends.", "error");
+      });
       document.body.addEventListener("click", async (e) => {
         const id = e.target.getAttribute("data-accept") || e.target.getAttribute("data-decline") || e.target.getAttribute("data-cancel");
         if (!id) return;
         const action = e.target.hasAttribute("data-accept") ? "accept" : e.target.hasAttribute("data-decline") ? "decline" : "cancel";
         try {
           await swarmFetch(`/api/friends/requests/${id}`, { method: "POST", body: JSON.stringify({ action }) });
-          loadFriends();
+          const [reqs, friends] = await Promise.all([swarmFetch("/api/friends/requests"), swarmFetch("/api/me/friends")]);
+          applyFriends({ incoming: reqs.incoming, outgoing: reqs.outgoing, friends: friends.friends });
         } catch (err) { swarmToast(err.message, "error"); }
       });
     ]]

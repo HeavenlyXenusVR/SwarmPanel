@@ -110,15 +110,37 @@ function swarmLiveRefresh(fn, intervalMs) {
 window.swarmLiveRefresh = swarmLiveRefresh;
 
 // ---------------------------------------------------------------------------
-// Dashboard WebSocket client (mirrors hooks/useDashboardStream.js). Auth is
-// the same {type:"auth", token} first-frame protocol the server already
-// implements (routes.lua GET /ws) -- token comes from window.SWARM_TOKEN,
-// inlined server-side into the page for exactly this purpose.
+// Live-update bus (formerly swarmDashboardStream, dashboard-only -- was the
+// ONLY page with any live-push at all; everything else (Controls'
+// control-state/queues, the notifications bell, Friends, Messages) ran on a
+// setInterval poll instead, on its own page's timer, blind to whether
+// anything had actually changed). One shared WS connection per tab now
+// covers all of it: server pushes {type:"snapshot", key, data} for whatever
+// resources this connection is watching (routes.lua's SNAPSHOT_BUILDERS
+// registry), page-specific scripts register a handler per key instead of
+// calling swarmFetch on a timer. Auth is the same {type:"auth", token}
+// first-frame protocol the server already implements -- token comes from
+// window.SWARM_TOKEN, inlined server-side into the page for exactly this
+// purpose. "dashboard" is auto-watched server-side on every connection
+// (cheap, per-scope cached, and every page's topbar/shell wants it) so
+// nothing here needs to explicitly ask for it.
 // ---------------------------------------------------------------------------
-function swarmDashboardStream(onMessage) {
+function swarmLiveConnect() {
   let ws = null;
   let attempt = 0;
   let closedByUs = false;
+  const handlers = {}; // key -> handler (one per key -- see resubscribe())
+  const watchParams = {}; // key -> params sent with the watch (re-sent on reconnect)
+
+  function send(obj) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+  }
+
+  function resubscribeAll() {
+    for (const key of Object.keys(watchParams)) {
+      send({ type: "watch", key: key, params: watchParams[key] === true ? undefined : watchParams[key] });
+    }
+  }
 
   function connect() {
     if (!window.SWARM_TOKEN) return;
@@ -127,12 +149,16 @@ function swarmDashboardStream(onMessage) {
     ws.addEventListener("open", () => {
       attempt = 0;
       ws.send(JSON.stringify({ type: "auth", token: window.SWARM_TOKEN }));
+      resubscribeAll();
     });
     ws.addEventListener("message", (event) => {
       let msg;
       try { msg = JSON.parse(event.data); } catch { return; }
       if (msg.type === "ping") { ws.send(JSON.stringify({ type: "pong" })); return; }
-      onMessage(msg);
+      if (msg.type === "snapshot" || msg.type === "snapshot_error") {
+        const fn = handlers[msg.key];
+        if (fn) { try { fn(msg); } catch { /* a bad handler shouldn't take the socket down */ } }
+      }
     });
     ws.addEventListener("close", () => {
       if (closedByUs || document.hidden) return;
@@ -152,9 +178,40 @@ function swarmDashboardStream(onMessage) {
   });
 
   connect();
-  return { close() { closedByUs = true; if (ws) ws.close(); } };
+
+  return {
+    // handler(msg) receives the full {type, key, data|error, generated_at}
+    // frame -- callers check msg.type themselves (snapshot vs snapshot_error)
+    // same as the raw dashboard stream always did. One handler per key
+    // (calling watch() again for the same key replaces both) -- a page
+    // needing to react to the same key from two places should branch inside
+    // its own handler, not register a second one, since re-subscribing with
+    // new params (see resubscribe()) is the common case (Controls picking a
+    // different bot/guild) and must NOT pile up duplicate handlers each
+    // firing on every push.
+    watch(key, params, handler) {
+      if (typeof params === "function") { handler = params; params = undefined; }
+      handlers[key] = handler;
+      watchParams[key] = params || true;
+      send({ type: "watch", key: key, params: params });
+    },
+    // Re-issues the watch with new params (e.g. Controls' bot_key/guild_id
+    // changed) without touching the already-registered handler.
+    resubscribe(key, params) {
+      if (!(key in handlers)) return;
+      watchParams[key] = params || true;
+      send({ type: "watch", key: key, params: params });
+    },
+    unwatch(key) {
+      if (!(key in handlers)) return;
+      delete handlers[key];
+      delete watchParams[key];
+      send({ type: "unwatch", key: key });
+    },
+    close() { closedByUs = true; if (ws) ws.close(); },
+  };
 }
-window.swarmDashboardStream = swarmDashboardStream;
+window.swarmLive = swarmLiveConnect();
 
 // ---------------------------------------------------------------------------
 // Live playback position readout (mirrors swarm.jsx's PlaybackCounter):
@@ -400,31 +457,51 @@ document.addEventListener("DOMContentLoaded", () => {
       return Math.floor(seconds / 86400) + "d ago";
     }
 
-    async function refreshUnreadCount() {
-      try {
-        const res = await swarmFetch("/api/notifications/unread-count");
-        const count = res.unread_count || 0;
-        badge.hidden = count <= 0;
-        badge.textContent = count > 99 ? "99+" : String(count);
-        btn.classList.toggle("has-unread", count > 0);
-      } catch { /* ignore */ }
+    function renderBadge(count) {
+      badge.hidden = count <= 0;
+      badge.textContent = count > 99 ? "99+" : String(count);
+      btn.classList.toggle("has-unread", count > 0);
     }
+
+    function renderList(items) {
+      list.innerHTML = items.length ? items.map((n) => `
+        <li>
+          <button type="button" class="notifications-item${n.read_at ? "" : " unread"}" data-notif-id="${n.id}" data-notif-link="${(n.link_path || "").replace(/"/g, "&quot;")}">
+            <span class="notifications-item-title">${(n.title || "").replace(/</g, "&lt;")}</span>
+            ${n.body ? `<span class="notifications-item-body">${n.body.replace(/</g, "&lt;")}</span>` : ""}
+            <span class="notifications-item-time">${timeAgo(n.created_at)}</span>
+          </button>
+        </li>`).join("") : '<li class="notifications-empty">No notifications yet.</li>';
+    }
+
+    // BUGFIX (live-push migration): was swarmLiveRefresh(refreshUnreadCount,
+    // 30000) -- a client-side poll blind to whether anything had actually
+    // changed, up to 30s stale. The bell now watches the same "notifications"
+    // key the server already broadcasts (routes.lua's SNAPSHOT_BUILDERS,
+    // unread_count + the list together in one push) and updates instantly
+    // whenever a new notification actually arrives, no polling at all. A
+    // direct swarmFetch still runs on dropdown-open/mark-as-read/mark-all,
+    // since those are user-initiated and shouldn't wait for the next push.
+    window.swarmLive.watch("notifications", (msg) => {
+      if (msg.type !== "snapshot") return;
+      renderBadge(msg.data.unread_count || 0);
+      if (!dropdown.hidden) renderList(msg.data.notifications || []);
+    });
 
     async function loadNotifications() {
       try {
         const res = await swarmFetch("/api/notifications?limit=30");
-        const items = res.notifications || [];
-        list.innerHTML = items.length ? items.map((n) => `
-          <li>
-            <button type="button" class="notifications-item${n.read_at ? "" : " unread"}" data-notif-id="${n.id}" data-notif-link="${(n.link_path || "").replace(/"/g, "&quot;")}">
-              <span class="notifications-item-title">${(n.title || "").replace(/</g, "&lt;")}</span>
-              ${n.body ? `<span class="notifications-item-body">${n.body.replace(/</g, "&lt;")}</span>` : ""}
-              <span class="notifications-item-time">${timeAgo(n.created_at)}</span>
-            </button>
-          </li>`).join("") : '<li class="notifications-empty">No notifications yet.</li>';
+        renderList(res.notifications || []);
       } catch {
         list.innerHTML = '<li class="notifications-empty">Failed to load notifications.</li>';
       }
+    }
+
+    async function refreshUnreadCount() {
+      try {
+        const res = await swarmFetch("/api/notifications/unread-count");
+        renderBadge(res.unread_count || 0);
+      } catch { /* ignore -- the live watch will catch up */ }
     }
 
     list.addEventListener("click", async (e) => {
@@ -444,8 +521,6 @@ document.addEventListener("DOMContentLoaded", () => {
         refreshUnreadCount();
       });
     }
-
-    swarmLiveRefresh(refreshUnreadCount, 30000);
   })();
 
   // ---------------------------------------------------------------------

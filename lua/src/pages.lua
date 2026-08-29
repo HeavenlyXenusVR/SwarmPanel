@@ -630,8 +630,8 @@ function M.register(cfg)
           setText("metric-queue-backup", String(backup));
           setText("metric-guilds-served", String(guilds));
         }
-        swarmDashboardStream((msg) => {
-          if (msg.type === "dashboard_snapshot") patchDashboardMetrics(msg.data);
+        window.swarmLive.watch("dashboard", (msg) => {
+          if (msg.type === "snapshot") patchDashboardMetrics(msg.data);
         });
       </script>
     ]]

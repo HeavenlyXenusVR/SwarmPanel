@@ -623,7 +623,7 @@ function M.register(cfg)
   -- messages out, pong (ignored) in, one shared ~2s broadcast loop across
   -- every connected client cached per guild/admin scope so N clients in the
   -- same scope share one build_dashboard_payload() call per tick.
-  local active_ws_connections = {} -- list of {conn=, auth=, last_digest=}
+  local active_ws_connections = {} -- list of {conn=, auth=, watches={}, last_digests={}, next_due={}}
   local broadcast_loop_running = false
 
   local function dashboard_scope_cache_key(a)
@@ -643,38 +643,233 @@ function M.register(cfg)
     return os.date("!%Y-%m-%dT%H:%M:%SZ")
   end
 
+  -- ---------------------------------------------------------------------
+  -- Generalized live-push registry: was a single hardcoded dashboard_snapshot
+  -- broadcast, extended to every resource the panel used to poll for on a
+  -- setInterval (Controls' control-state/queues, the notifications bell,
+  -- Friends, Messages threads/active-thread). Each entry:
+  --   interval   -- minimum seconds between recomputes for this key (keeps
+  --                 the original per-resource cadence -- e.g. queues stays
+  --                 5s-ish, not upgraded to the 2s tick rate, to avoid
+  --                 turning "no more client polling" into "much more
+  --                 server/DB load instead").
+  --   scope_key  -- (auth, params) -> cache-sharing key. Two connections
+  --                 watching the identical thing (same guild's dashboard,
+  --                 same bot+guild's control-state, ...) share ONE build per
+  --                 tick instead of paying for it twice, same principle the
+  --                 original dashboard-only version already used.
+  --   build      -- (auth, params) -> ok, data_or_error
+  -- params come from the client's {type:"watch", key, ...} message (e.g.
+  -- bot_key/guild_id for control_state, account_id for thread_messages) --
+  -- per-CONNECTION state, not scope-wide, since two operators can have two
+  -- different bots selected in Controls at the same time.
+  --
+  -- BUGFIX: params starts life as the boolean `true` (a client's initial
+  -- {type:"watch", key} with no params yet -- e.g. Controls registering its
+  -- handler before the first bot/guild is known -- decodes to `entry.
+  -- watches[key] = true`, not a table) and only becomes a real params table
+  -- once resubscribe() sends one. `params and params.bot_key` blows up with
+  -- "attempt to index a boolean value" the instant Lua evaluates the second
+  -- operand against `true` -- confirmed live: this took the ENTIRE broadcast
+  -- loop coroutine down, silently, for every connected client, not just the
+  -- one that triggered it (uncaught inside copas.addthread, so the `while`
+  -- loop died without resetting broadcast_loop_running, permanently
+  -- blocking ensure_broadcast_loop() from ever starting a new one). Always
+  -- go through this helper instead of `params and params.x`.
+  local function watch_param(params, field)
+    return (type(params) == "table") and params[field] or nil
+  end
+  -- ---------------------------------------------------------------------
+  local SNAPSHOT_BUILDERS = {
+    dashboard = {
+      interval = 2,
+      scope_key = function(a) return dashboard_scope_cache_key(a) end,
+      build = function(a)
+        local ok, snapshot = pcall(build_dashboard_payload, a, false)
+        if not ok then return false, tostring(snapshot) end
+        return true, snapshot
+      end,
+    },
+    notifications = {
+      interval = 5,
+      scope_key = function(a)
+        local actor_id = select(1, account_id_for_auth(a))
+        return "account:" .. tostring(actor_id or "none")
+      end,
+      build = function(a)
+        local actor_id, aerr = account_id_for_auth(a)
+        if not actor_id then return false, aerr end
+        return true, { unread_count = social.unread_notification_count(actor_id), notifications = social.list_notifications(actor_id, 30) }
+      end,
+    },
+    friends = {
+      interval = 5,
+      scope_key = function(a)
+        local actor_id = select(1, account_id_for_auth(a))
+        return "account:" .. tostring(actor_id or "none")
+      end,
+      -- Bundles /api/me/friends with /api/friends/requests (incoming +
+      -- outgoing) in one push -- the Friends page's loadFriends() always
+      -- fetches all three together, so splitting them into separate watch
+      -- keys would just mean two round trips of latency instead of one.
+      build = function(a)
+        local actor_id, aerr = account_id_for_auth(a)
+        if not actor_id then return false, aerr end
+        return true, {
+          friends = social.list_account_friends(actor_id),
+          incoming = social.list_account_friend_requests(actor_id, "incoming"),
+          outgoing = social.list_account_friend_requests(actor_id, "outgoing"),
+        }
+      end,
+    },
+    threads = {
+      interval = 5,
+      scope_key = function(a)
+        local actor_id = select(1, account_id_for_auth(a))
+        return "account:" .. tostring(actor_id or "none")
+      end,
+      build = function(a)
+        local actor_id, aerr = account_id_for_auth(a)
+        if not actor_id then return false, aerr end
+        return true, { threads = social.list_account_message_threads(actor_id) }
+      end,
+    },
+    thread_messages = {
+      interval = 2,
+      scope_key = function(a, params)
+        local actor_id = select(1, account_id_for_auth(a))
+        return "thread:" .. tostring(actor_id or "none") .. ":" .. tostring(watch_param(params, "account_id"))
+      end,
+      build = function(a, params)
+        local actor_id, aerr = account_id_for_auth(a)
+        if not actor_id then return false, aerr end
+        local target_id = watch_param(params, "account_id")
+        if not target_id then return false, "account_id is required" end
+        local target = accounts.get_account_by_id(target_id)
+        if target then
+          local snap = social.get_account_social_snapshot(target.id, actor_id)
+          for k, v in pairs(snap) do target[k] = v end
+        end
+        if not target or not social_permissions(target).can_message then
+          return false, "This profile is not accepting direct messages."
+        end
+        local ok, messages = pcall(social.list_account_messages, actor_id, target_id, 80)
+        if not ok then return false, tostring(messages) end
+        return true, { messages = messages }
+      end,
+    },
+    control_state = {
+      interval = 2,
+      scope_key = function(a, params) return "cs:" .. tostring(watch_param(params, "bot_key")) .. ":" .. tostring(watch_param(params, "guild_id")) end,
+      build = function(a, params)
+        local bot_key, gid = watch_param(params, "bot_key"), watch_param(params, "guild_id")
+        if not bot_key or not gid or gid == "" then return false, "bot_key/guild_id required" end
+        local gerr_status, gerr_body = require_bot_guild_access(nil, a, bot_key, gid)
+        if gerr_status then return false, (gerr_body and gerr_body.detail) or "forbidden" end
+        local bot = bot_index[bot_key]
+        if not bot or bot.kind ~= "music" then return false, "Unknown music bot key" end
+        local ok, state = pcall(dashboard.get_bot_control_state, bot, gid)
+        if not ok then return false, tostring(state) end
+        local ok2, enriched = pcall(enrich_control_state_with_discord, state)
+        return true, ok2 and enriched or state
+      end,
+    },
+    queues = {
+      interval = 5,
+      scope_key = function(a, params) return "q:" .. tostring(watch_param(params, "guild_id")) .. ":" .. tostring(watch_param(params, "bot_key")) end,
+      build = function(a, params)
+        local gid, bot_key = watch_param(params, "guild_id"), watch_param(params, "bot_key")
+        if not gid or gid == "" then return false, "guild_id is required" end
+        local gerr_status, gerr_body = require_guild_scope(nil, a, gid)
+        if gerr_status then return false, (gerr_body and gerr_body.detail) or "forbidden" end
+        local ok, result = pcall(queues.list_saved_queues, gid, bot_key)
+        if not ok then return false, tostring(result) end
+        return true, { queues = result }
+      end,
+    },
+  }
+
   local function ensure_broadcast_loop()
     if broadcast_loop_running then return end
     broadcast_loop_running = true
     copas.addthread(function()
       while #active_ws_connections > 0 do
-        local payload_cache = {} -- scope_key -> serialized string
+        local now = os.time()
+        local build_cache = {} -- "key:scope" -> serialized snapshot string
         local dead = {}
         for _, entry in ipairs(active_ws_connections) do
-          local scope_key = dashboard_scope_cache_key(entry.auth)
-          local serialized = payload_cache[scope_key]
-          if not serialized then
-            local ok, snapshot = pcall(build_dashboard_payload, entry.auth, false)
-            local payload
-            if ok then
-              payload = { type = "dashboard_snapshot", data = snapshot }
-            else
-              payload = { type = "dashboard_snapshot_error", error = tostring(snapshot), generated_at = iso_now() }
-            end
-            serialized = cjson.encode(payload)
-            payload_cache[scope_key] = serialized
-          end
-          if entry.last_digest ~= serialized then
-            local sent = entry.conn:send(serialized)
-            if sent then
-              entry.last_digest = serialized
-            else
-              dead[#dead + 1] = entry
+          -- Snapshot the watched keys before iterating rather than looping
+          -- `pairs(entry.watches)` directly: entry.conn:send() below can
+          -- yield (copas wraps the socket cooperatively), and if this same
+          -- connection's OWN receive loop (a separate copas thread) handles
+          -- an inbound watch/unwatch during that yield, it mutates
+          -- entry.watches while this pairs() iteration is still open on it
+          -- -- undefined in Lua, and unlike the per-key pcall above, "table
+          -- changed during iteration" is a fault in `next()` itself, not
+          -- something a pcall around the loop BODY catches for the NEXT
+          -- `next()` call the `for` statement makes internally.
+          local keys = {}
+          for key in pairs(entry.watches) do keys[#keys + 1] = key end
+          for _, key in ipairs(keys) do
+            local params = entry.watches[key]
+            local builder = params ~= nil and SNAPSHOT_BUILDERS[key]
+            if builder then
+              local due_at = entry.next_due[key] or 0
+              if now >= due_at then
+                entry.next_due[key] = now + builder.interval
+                -- BUGFIX: the whole per-key body (scope_key(), cjson.encode,
+                -- conn:send -- not just builder.build() below) is now inside
+                -- one pcall. A single uncaught error anywhere in here used
+                -- to propagate straight out of this copas.addthread and kill
+                -- the ENTIRE broadcast loop coroutine permanently (silently
+                -- -- the `while` loop just stopped running, for every
+                -- connected client, not only the one that triggered it, and
+                -- broadcast_loop_running stayed true forever so
+                -- ensure_broadcast_loop() never restarted it). Confirmed
+                -- live: a boolean `params` (see watch_param()'s own comment)
+                -- reaching scope_key()'s unguarded `params.bot_key` did
+                -- exactly that. One bad key for one connection should skip
+                -- that key this tick, nothing more.
+                local pok, perr = pcall(function()
+                  local cache_key = key .. ":" .. builder.scope_key(entry.auth, params)
+                  local serialized = build_cache[cache_key]
+                  if not serialized then
+                    -- builder.build() returns (ok, data_or_error) as normal
+                    -- multi-return, not by throwing -- this inner pcall is
+                    -- only a backstop against an unexpected runtime error
+                    -- inside one builder. On a pcall failure, r1 IS the
+                    -- error message (pcall's own (false, errmsg) shape), not
+                    -- the builder's ok flag.
+                    local bok, r1, r2 = pcall(builder.build, entry.auth, params)
+                    local ok, data
+                    if bok then ok, data = r1, r2 else ok, data = false, r1 end
+                    local payload
+                    if ok then
+                      payload = { type = "snapshot", key = key, data = data, generated_at = iso_now() }
+                    else
+                      payload = { type = "snapshot_error", key = key, error = tostring(data), generated_at = iso_now() }
+                    end
+                    serialized = cjson.encode(payload)
+                    build_cache[cache_key] = serialized
+                  end
+                  if entry.last_digests[key] ~= serialized then
+                    local sent = entry.conn:send(serialized)
+                    if sent then
+                      entry.last_digests[key] = serialized
+                    else
+                      dead[#dead + 1] = entry
+                    end
+                  end
+                end)
+                if not pok then
+                  print("[swarmpanel-lua] broadcast loop: key '" .. tostring(key) .. "' failed: " .. tostring(perr))
+                end
+              end
             end
           end
         end
         for _, entry in ipairs(dead) do remove_ws_connection(entry) end
-        copas.sleep(2)
+        copas.sleep(1)
       end
       broadcast_loop_running = false
     end)
@@ -754,7 +949,14 @@ function M.register(cfg)
       return
     end
 
-    local entry = { conn = conn, auth = a, last_digest = nil }
+    -- dashboard is always-on (every page renders the topbar/shell that used
+    -- to rely on it, and it's cheap/cached per-scope) -- everything else is
+    -- opt-in per page via {type:"watch", key, ...params} so a Diagnostics
+    -- tab doesn't pay for control-state builds nobody's looking at, and a
+    -- Controls tab's bot_key/guild_id selection (per-CONNECTION, not
+    -- scope-wide -- two operators can have two different bots picked at
+    -- once) has somewhere to live.
+    local entry = { conn = conn, auth = a, watches = { dashboard = true }, last_digests = {}, next_due = {} }
     active_ws_connections[#active_ws_connections + 1] = entry
     ensure_broadcast_loop()
 
@@ -770,11 +972,22 @@ function M.register(cfg)
       elseif #message > 512 then
         pcall(function() copas.settimeout(sock, 3); conn:close(4409) end)
         keep_going = false
+      else
+        local ok, msg = pcall(cjson.decode, message)
+        if ok and type(msg) == "table" then
+          if msg.type == "watch" and type(msg.key) == "string" and SNAPSHOT_BUILDERS[msg.key] then
+            entry.watches[msg.key] = (type(msg.params) == "table") and msg.params or true
+            entry.next_due[msg.key] = nil -- force an immediate rebuild+send on the next tick
+            entry.last_digests[msg.key] = nil -- params may have changed (e.g. new bot_key) -- don't skip-as-duplicate against the old params' last payload
+          elseif msg.type == "unwatch" and type(msg.key) == "string" then
+            entry.watches[msg.key] = nil
+            entry.last_digests[msg.key] = nil
+            entry.next_due[msg.key] = nil
+          end
+          -- else: pong or unrecognized -- no action needed, receiving it
+          -- already reset the idle window for the next loop iteration.
+        end
       end
-      -- else: a real inbound message (pong or otherwise) — no action needed,
-      -- receiving it already reset the idle window for the next loop
-      -- iteration, matching websocket.py's "receipt resets the receive
-      -- timeout so the connection stays classified as alive" comment.
     end
     remove_ws_connection(entry)
     pcall(function() conn:close() end)

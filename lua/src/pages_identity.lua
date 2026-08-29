@@ -67,20 +67,32 @@ function M.register(cfg)
       ]],
     })
     local script = [[
+      // BUGFIX (live-push migration): was swarmFetch on 5s/4s
+      // swarmLiveRefresh polls. Threads list watches "threads" (fixed, no
+      // params, matches Social's Messages tab). The active conversation is
+      // per-CONNECTION state (routes.lua's "thread_messages" builder takes
+      // account_id as a watch param) -- resubscribed every time a different
+      // thread is opened, same pattern as Controls' bot_key/guild_id.
       let activeThread = null;
-      async function loadThreads() {
-        try {
-          const res = await swarmFetch("/api/messages/threads");
-          document.getElementById("msg-threads").innerHTML = (res.threads || []).map((t) =>
-            `<button type="button" class="thread-item" data-thread="${t.account_id}">${(t.username||"Unknown").replace(/</g,"&lt;")}</button>`
-          ).join("") || "<p>No conversations yet.</p>";
-        } catch { /* ignore */ }
+      function applyThreads(data) {
+        document.getElementById("msg-threads").innerHTML = ((data && data.threads) || []).map((t) =>
+          `<button type="button" class="thread-item" data-thread="${t.account_id}">${(t.username||"Unknown").replace(/</g,"&lt;")}</button>`
+        ).join("") || "<p>No conversations yet.</p>";
       }
+      window.swarmLive.watch("threads", (msg) => { if (msg.type === "snapshot") applyThreads(msg.data); });
+
+      function applyMessages(data) {
+        document.getElementById("msg-list").innerHTML = ((data && data.messages) || []).map((m) =>
+          `<div class="msg-bubble ${m.mine ? "mine" : ""}">${(m.body||"").replace(/</g,"&lt;")}</div>`).join("");
+      }
+      window.swarmLive.watch("thread_messages", (msg) => { if (msg.type === "snapshot") applyMessages(msg.data); });
+
       async function openThread(id) {
         activeThread = id;
         const box = document.getElementById("msg-conversation");
         box.innerHTML = '<div id="msg-list"></div><form id="msg-form"><input name="body" placeholder="Message..." required><button type="submit">Send</button></form>';
-        await loadMessages();
+        window.swarmLive.resubscribe("thread_messages", { account_id: id });
+        try { applyMessages(await swarmFetch(`/api/messages/${id}`)); } catch { /* ignore -- the live watch will catch up */ }
         document.getElementById("msg-form").addEventListener("submit", async (e) => {
           e.preventDefault();
           const input = e.target.body;
@@ -88,17 +100,9 @@ function M.register(cfg)
           try {
             await swarmFetch(`/api/messages/${activeThread}`, { method: "POST", body: JSON.stringify({ body: input.value }) });
             input.value = "";
-            loadMessages();
+            applyMessages(await swarmFetch(`/api/messages/${activeThread}`));
           } catch (err) { swarmToast(err.message, "error"); }
         });
-      }
-      async function loadMessages() {
-        if (!activeThread) return;
-        try {
-          const res = await swarmFetch(`/api/messages/${activeThread}`);
-          document.getElementById("msg-list").innerHTML = (res.messages || []).map((m) =>
-            `<div class="msg-bubble ${m.mine ? "mine" : ""}">${(m.body||"").replace(/</g,"&lt;")}</div>`).join("");
-        } catch { /* ignore */ }
       }
       document.getElementById("msg-threads").addEventListener("click", (e) => {
         const id = e.target.getAttribute("data-thread");
@@ -117,8 +121,6 @@ function M.register(cfg)
         const id = e.target.getAttribute("data-thread");
         if (id) openThread(id);
       });
-      swarmLiveRefresh(loadThreads, 5000);
-      swarmLiveRefresh(loadMessages, 4000);
     ]]
     return page_shell(req, a, "/messages", "Messages", body, script)
   end)
