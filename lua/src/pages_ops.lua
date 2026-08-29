@@ -253,6 +253,28 @@ function M.register(cfg)
         return null;
       }
       let pendingGuildId = "";
+      // BUGFIX: refreshControlState() and loadChannels() were both fired
+      // here without awaiting either, as if they were independent. They
+      // aren't: loadChannels() is the ONLY one of the two that actually
+      // resolves pendingGuildId into a real value on guild_id.value (it
+      // awaits /api/bots/{key}/inventory then calls fillGuildSelect()).
+      // refreshControlState() reads form.guild_id.value directly and has no
+      // knowledge of pendingGuildId, so firing it in parallel made it race
+      // against loadChannels() and lose almost every time -- it read the
+      // PREVIOUS bot's guild_id (still unchanged at that point), queried
+      // control-state for a bot/guild pair that often has no session at
+      // all, and populated loop_mode/filter_mode and the pending voice/text
+      // channel from that wrong answer. Nothing corrected it afterwards
+      // either: programmatically setting a <select>'s .value (what
+      // fillGuildSelect() does) never fires a native "change" event, so
+      // guild_id's own change listener below never re-ran refreshControlState()
+      // -- confirmed live (Playwright): after switching bots, the guild
+      // select and voice channel stayed on the OLD bot's values for
+      // 4-6+ seconds, only catching up once the unrelated 4s
+      // swarmLiveRefresh(refreshControlState, ...) poll happened to land
+      // after loadChannels() had finally caught up. Awaiting loadChannels()
+      // first guarantees guild_id is already correct before
+      // refreshControlState() ever reads it.
       form.bot_key.addEventListener("change", async () => {
         if (form.guild_id.dataset.scoped !== "1") {
           // Setting .value directly here would silently no-op -- the new
@@ -262,8 +284,8 @@ function M.register(cfg)
           // against, same pattern the voice/text channel selects already use.
           pendingGuildId = (await pickGuildForBot(form.bot_key.value)) || "";
         }
+        await loadChannels();
         refreshControlState();
-        loadChannels();
       });
       form.guild_id.addEventListener("change", () => { refreshControlState(); loadChannels(); });
       swarmLiveRefresh(refreshControlState, 4000);
