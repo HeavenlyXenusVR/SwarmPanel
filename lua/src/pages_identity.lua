@@ -174,6 +174,28 @@ function M.register(cfg)
             const bannerMode = p.profile_banner_mode || "gradient";
             const cardStyle = p.profile_card_style || "solid";
             const borderAccent = BORDER_ACCENTS.has(String(p.profile_border_accent || "").toLowerCase()) ? p.profile_border_accent : "none";
+            // BUGFIX: profile_header_style/profile_layout_mode were validated
+            // and stored (profiles.lua, every looks.lua preset sets one of
+            // these) but had NO CSS anywhere -- picking Glass/Blur/
+            // Transparent/Gradient or Sidebar/Stacked/Split changed nothing.
+            // See the .profile-header-*/.profile-layout-* rules added to
+            // app.css.
+            //
+            // profile_backdrop_image_url/strength are NOT wired here:
+            // despite the field living in "Profile backdrop" on /appearance,
+            // it's stored in the VIEWER's own panel_preferences, not on any
+            // individual profile -- /api/users/:id/profile (this endpoint)
+            // doesn't and shouldn't return it. --profile-backdrop/
+            // --profile-backdrop-strength are set once at the .app-shell
+            // root (html.lua's panel_style()) from the logged-in viewer's
+            // own preferences and inherit down into .public-profile-hero
+            // automatically; setting them again here from profile data that
+            // doesn't exist would just shadow that inherited value with
+            // "none" for every profile page, silently breaking it.
+            const HEADER_STYLES = new Set(["solid", "glass", "blur", "transparent", "gradient"]);
+            const LAYOUT_MODES = new Set(["default", "sidebar", "stacked", "split"]);
+            const headerStyle = HEADER_STYLES.has(p.profile_header_style) ? p.profile_header_style : "solid";
+            const layoutMode = LAYOUT_MODES.has(p.profile_layout_mode) ? p.profile_layout_mode : "default";
             const heroStyle = `--accent:${accent};--profile-banner-url:${p.profile_banner_url ? `url("${String(p.profile_banner_url).replace(/["\\]/g, "\\$&")}")` : "none"}`;
             const guildLabel = p.server_name || `Guild ${p.guild_id || "profile"}`;
             const socialLabel = { open: "Open", friends: "Friends Only", quiet: "Quiet" }[String(p.profile_social_mode || "open").toLowerCase()] || "Open";
@@ -182,10 +204,10 @@ function M.register(cfg)
             const friendLocked = ["friends", "pending_out", "self"].includes(p.friend_status);
             const friendLabel = p.friend_status === "friends" ? "Friends" : p.friend_status === "pending_out" ? "Pending" : "Friend";
 
-            view.className = `public-profile-shell`;
+            view.className = `public-profile-shell profile-layout-${layoutMode}`;
             view.setAttribute("style", heroStyle);
             view.innerHTML = `
-              <section class="panel public-profile-hero public-profile-card-${esc(cardStyle)} public-profile-banner-${esc(bannerMode)} profile-border-${esc(borderAccent)}" style="${heroStyle}">
+              <section class="panel public-profile-hero public-profile-card-${esc(cardStyle)} public-profile-banner-${esc(bannerMode)} profile-border-${esc(borderAccent)} profile-header-${esc(headerStyle)}" style="${heroStyle}">
                 ${avatarHtml(p.avatar_url || p.server_icon_url, p.display_name || p.username, p.is_online, "avatar profile-avatar-xl")}
                 <div class="public-profile-copy">
                   <h2>${esc(p.profile_headline || p.display_name || p.username || "Unknown")}</h2>
@@ -196,6 +218,7 @@ function M.register(cfg)
                     ${tags.map((t) => `<span>${esc(t)}</span>`).join("")}
                     <span>${esc(p.favorite_bot || "swarm")}</span>
                     <span>${esc(guildLabel)}</span>
+                    <span>${esc(socialLabel)}</span>
                   </div>
                 </div>
                 <div class="public-profile-actions">
@@ -296,11 +319,20 @@ function M.register(cfg)
           <div class="profile-account-panel">
             <div class="panel public-profile-preview public-profile-preview-card" id="profile-preview-panel">
               <p class="page-lede">Live Preview</p>
-              <div id="profile-live-preview">
-                <strong id="preview-display-name">—</strong>
-                <p id="preview-headline"></p>
-                <p id="preview-bio" class="muted"></p>
-              </div>
+              <section class="public-profile-hero" id="profile-live-preview">
+                <div class="avatar profile-avatar-xl avatar-presence" id="preview-avatar-wrap">
+                  <span class="avatar-fallback" id="preview-avatar-fallback">SP</span>
+                  <span class="presence-dot avatar-dot online" aria-hidden="true"></span>
+                </div>
+                <div class="public-profile-copy">
+                  <strong id="preview-display-name">—</strong>
+                  <p id="preview-headline"></p>
+                  <p id="preview-bio" class="muted"></p>
+                  <p id="preview-quote" class="muted"></p>
+                  <div class="chip-row" id="preview-tags"></div>
+                  <div class="chip-row" id="preview-meta"></div>
+                </div>
+              </section>
             </div>
             <h3>Getting Started</h3>
             <div class="panel form-panel" id="profile-checklist"></div>
@@ -485,14 +517,66 @@ function M.register(cfg)
         // Live preview -- public-profile-preview/-preview-card had CSS but no
         // consumer. Reads the CURRENT (unsaved) form state, same pattern as
         // Appearance's draft preview, so the operator sees roughly how the
-        // public profile will read before committing to Save.
+        // public profile will read before committing to Save. Uses the exact
+        // same class scheme (public-profile-card-*/public-profile-banner-*/
+        // profile-border-*) the real /users/:id public view renders (see
+        // render_profile's script above), so every visual-style field --
+        // banner mode, card style, border accent -- actually shows a change
+        // here instead of only the 3 fields (accent/name/bio) this covered
+        // before.
+        const BORDER_ACCENTS = new Set(["none", "glow", "pulse", "neon", "solid"]);
+        const HEADER_STYLES = new Set(["solid", "glass", "blur", "transparent", "gradient"]);
+        function initialsFor(label) {
+          const parts = String(label || "").trim().split(/\s+/).filter(Boolean);
+          if (!parts.length) return "SP";
+          return (parts[0][0] + (parts[1] ? parts[1][0] : "")).toUpperCase();
+        }
         function updateProfilePreview() {
           const f = document.getElementById("profile-form");
           if (!f) return;
-          document.getElementById("profile-preview-panel").style.setProperty("--accent", f.theme_accent.value || "#89b4fa");
-          document.getElementById("preview-display-name").textContent = f.display_name.value || "Unnamed Operator";
+          const accent = f.theme_accent.value || "#89b4fa";
+          const bannerMode = f.profile_banner_mode.value || "gradient";
+          const cardStyle = f.profile_card_style.value || "solid";
+          const borderAccent = BORDER_ACCENTS.has(f.profile_border_accent.value) ? f.profile_border_accent.value : "none";
+          const headerStyle = HEADER_STYLES.has(f.profile_header_style.value) ? f.profile_header_style.value : "solid";
+          const bannerUrl = f.profile_banner_url.value.trim();
+          const hero = document.getElementById("profile-live-preview");
+          hero.className = `public-profile-hero public-profile-card-${cardStyle} public-profile-banner-${bannerMode} profile-border-${borderAccent} profile-header-${headerStyle}`;
+          hero.style.setProperty("--accent", accent);
+          hero.style.setProperty("--profile-banner-url", bannerUrl ? `url("${bannerUrl.replace(/["\\]/g, "\\$&")}")` : "none");
+          // --profile-backdrop/--profile-backdrop-strength intentionally NOT
+          // set here: that's the VIEWER's own preference (edited on
+          // /appearance, not this form) inherited from the .app-shell root
+          // -- this preview naturally shows it already, same as any other
+          // profile card would for whoever's logged in.
+          document.getElementById("profile-preview-panel").style.setProperty("--accent", accent);
+          const avatarUrl = f.avatar_url.value.trim();
+          const avatarWrap = document.getElementById("preview-avatar-wrap");
+          const label = f.display_name.value || "Unnamed Operator";
+          if (avatarUrl) {
+            avatarWrap.innerHTML = `<img class="avatar-image" src="${avatarUrl.replace(/"/g, "&quot;")}" alt=""><span class="presence-dot avatar-dot online" aria-hidden="true"></span>`;
+          } else {
+            avatarWrap.innerHTML = `<span class="avatar-fallback">${initialsFor(label)}</span><span class="presence-dot avatar-dot online" aria-hidden="true"></span>`;
+          }
+          document.getElementById("preview-display-name").textContent = label;
           document.getElementById("preview-headline").textContent = f.profile_headline.value || "";
           document.getElementById("preview-bio").textContent = f.bio.value || "No bio yet.";
+          document.getElementById("preview-quote").textContent = f.profile_quote.value || "";
+          const tags = (f.profile_tags_text.value || "").split(",").map((t) => t.trim()).filter(Boolean).slice(0, 5);
+          const favBot = document.getElementById("favorite-bot-select");
+          const favLabel = favBot && favBot.selectedOptions[0] && favBot.value ? favBot.selectedOptions[0].textContent : "";
+          document.getElementById("preview-tags").innerHTML = tags.map((t) => `<span>${t.replace(/</g, "&lt;")}</span>`).join("")
+            + (favLabel ? `<span>${favLabel.replace(/</g, "&lt;")}</span>` : "");
+          // profile_social_mode/public_profile/server_name aren't visual
+          // styles (they gate what OTHER accounts can see/do, or affect the
+          // full public page rather than this hero mockup), but they were
+          // previously invisible anywhere in the editor -- shown here as
+          // plain status chips so changing them isn't a total black box.
+          const socialLabel = { open: "Open", friends: "Friends Only", quiet: "Quiet" }[f.profile_social_mode.value] || "Open";
+          const visibilityLabel = f.public_profile.checked ? "Public profile" : "Private profile";
+          const serverName = f.server_name.value.trim();
+          document.getElementById("preview-meta").innerHTML = [socialLabel, visibilityLabel, serverName]
+            .filter(Boolean).map((t) => `<span>${t.replace(/</g, "&lt;")}</span>`).join("");
         }
         document.getElementById("profile-form").addEventListener("input", updateProfilePreview);
         document.getElementById("profile-form").addEventListener("submit", async (e) => {
@@ -621,6 +705,7 @@ function M.register(cfg)
           %s%s
           <div class="appearance-color-row"><span>Accent color</span><span id="accent-color-hex">#89b4fa</span><input type="color" class="appearance-color-swatch" name="accent_color"></div>
           <div class="appearance-color-row"><span>Accent secondary (optional)</span><span id="accent-secondary-hex">--</span><input type="color" class="appearance-color-swatch" name="accent_secondary"></div>
+          <div class="appearance-color-row"><span>Gradient preview (Save buttons use this)</span><span id="accent-gradient-swatch" style="display:inline-block;width:64px;height:20px;border-radius:6px;border:1px solid var(--line)"></span></div>
           %s
           <h3>Background</h3>
           %s
@@ -631,9 +716,23 @@ function M.register(cfg)
           <h3>Cards &amp; motion</h3>
           %s%s%s%s
           %s%s
+          <!-- BUGFIX: this template had 25 format placeholders against 27
+               :format() args (2 short) -- string.format() doesn't error on
+               unconsumed *extra* args, it just silently drops them, so
+               show_queue_pressure/compact_sidebar's checkboxes never
+               rendered at all, and every placeholder from here on consumed
+               the WRONG arg one section early: surface_opacity/surface_blur
+               rendered under "Profile backdrop" and profile_backdrop_*/
+               show_bot_uptime rendered under "Misc". Added the 2 missing
+               placeholders here so surface_opacity/surface_blur land in
+               their own (correct) "Cards & motion" section instead of
+               borrowing Profile backdrop's slots. -->
+          %s%s
           <h3>Profile backdrop</h3>
+          <p class="page-lede">Applies to every profile card you view (yours and others'), not just this preview widget -- it's a personal skin, not part of any one profile.</p>
           %s
           %s
+          <div class="appearance-color-row"><span>Backdrop preview</span><span id="profile-backdrop-readout">Off</span></div>
           <h3>Misc</h3>
           %s%s%s
           <div class="appearance-form-actions">
@@ -642,10 +741,10 @@ function M.register(cfg)
           </div>
         </form>
         <div class="panel appearance-preview">
-          <div class="appearance-preview-shell">
+          <div class="appearance-preview-shell" id="appearance-preview-shell">
             <div class="preview-topline"><span></span><strong>Live Preview</strong></div>
             <div class="appearance-preview-hero">
-              <div class="preview-tabs"><span>Dashboard</span><span>Controls</span><span>Users</span></div>
+              <div class="preview-tabs"><span class="nav-item">Dashboard</span><span class="nav-item">Controls</span><span class="nav-item">Users</span></div>
               <h3>SwarmPanel</h3>
               <div class="appearance-preview-meta">
                 <span class="appearance-value-pill" id="preview-theme-pill">Dark</span>
@@ -654,15 +753,21 @@ function M.register(cfg)
             </div>
             <div class="appearance-preview-shell-panel">
               <div class="appearance-preview-shell-topbar"><span>Fleet Command</span><span class="data-pill data-pill-live">Live</span></div>
-              <div class="preview-card">
+              <div class="preview-card bot-card">
                 <strong>Sample Bot Card</strong>
                 <span>This is roughly how cards and accents will look with your current draft settings.</span>
+                <div class="chip-row">
+                  <span data-bot-uptime>heartbeat 4s ago</span>
+                  <span data-queue-pressure>3 queued</span>
+                </div>
               </div>
             </div>
             <div class="chip-row" id="preview-mini-stats">
               <span class="appearance-mini-stat" id="preview-accent-stat">Accent --</span>
               <span class="appearance-mini-stat" id="preview-shape-stat">Cards --</span>
               <span class="appearance-mini-stat" id="preview-hover-stat">Hover --</span>
+              <span class="appearance-mini-stat" id="preview-radius-stat">Radius --</span>
+              <span class="appearance-mini-stat" id="preview-font-stat">Font --</span>
             </div>
             <p class="appearance-preview-note">Updates live as you edit below. Nothing is applied anywhere else until you hit Save.</p>
           </div>
@@ -778,23 +883,155 @@ function M.register(cfg)
       // Live preview: reads the CURRENT (possibly unsaved) form state so an
       // operator sees roughly how their draft looks before committing to
       // Save -- appearance-preview-* had full CSS with no consumer.
+      //
+      // Every field below is applied via the *exact same* class-name and
+      // CSS-variable scheme html.lua's panel_class()/panel_style() use on
+      // the real page (see app.css's .panel-* rules) -- ported to JS here
+      // rather than reinvented, so "what the preview shows" and "what
+      // Save+reload actually produces" can never drift apart. Applied to
+      // #appearance-preview-shell (not the outer .appearance-preview panel,
+      // which has its own ::before decoration that a `panel-bg-*::before`
+      // class would otherwise collide with) -- CSS custom properties still
+      // inherit down to every element inside it either way.
+      // Mirrors colorutil.lua's auto_secondary()/gradient() exactly (+150deg
+      // hue rotation, lightness pulled toward mid-range) so the preview
+      // swatch shows the SAME gradient html.lua's panel_style() will
+      // actually render once saved -- html.lua now always computes
+      // --accent-gradient server-side (using this same fallback when no
+      // accent_secondary is set), so this is preview parity, not a second
+      // implementation of the feature.
+      function hexToRgb(hex) {
+        const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
+        if (!m) return null;
+        const n = parseInt(m[1], 16);
+        return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+      }
+      function rgbToHex(r, g, b) {
+        const c = (v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0");
+        return "#" + c(r) + c(g) + c(b);
+      }
+      function rgbToHsl(r, g, b) {
+        r /= 255; g /= 255; b /= 255;
+        const max = Math.max(r, g, b), min = Math.min(r, g, b);
+        let h = 0, s = 0; const l = (max + min) / 2;
+        const d = max - min;
+        if (d !== 0) {
+          s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+          if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+          else if (max === g) h = (b - r) / d + 2;
+          else h = (r - g) / d + 4;
+          h /= 6;
+        }
+        return [h, s, l];
+      }
+      function hueToRgb(p, q, t) {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1 / 6) return p + (q - p) * 6 * t;
+        if (t < 1 / 2) return q;
+        if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+        return p;
+      }
+      function hslToRgb(h, s, l) {
+        if (s === 0) return [l * 255, l * 255, l * 255];
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+        return [hueToRgb(p, q, h + 1 / 3) * 255, hueToRgb(p, q, h) * 255, hueToRgb(p, q, h - 1 / 3) * 255];
+      }
+      function autoSecondary(hex) {
+        const rgb = hexToRgb(hex);
+        if (!rgb) return "#7c3aed";
+        let [h, s, l] = rgbToHsl(...rgb);
+        h = (h + 150 / 360) % 1;
+        l = Math.max(0, Math.min(1, l * 0.7 + 0.5 * 0.3));
+        return rgbToHex(...hslToRgb(h, Math.max(s, 0.45), l));
+      }
+      function accentGradientFromForm(f) {
+        const accent = val(f, "accent_color", "#89b4fa") || "#89b4fa";
+        const secondary = val(f, "accent_secondary", "") || autoSecondary(accent);
+        return `linear-gradient(135deg, ${accent}, ${secondary})`;
+      }
+      const BG_PRESET_COLORS = { default: "#0d1117", midnight: "#090b12", aurora: "#101821", ember: "#17100d" };
+      function val(f, name, fallback) {
+        const el = f.elements[name];
+        if (!el) return fallback;
+        return el.type === "checkbox" ? el.checked : el.value;
+      }
+      function panelClassesFromForm(f) {
+        const notifyPos = val(f, "notification_position", "br") || "br";
+        const classes = [
+          "panel-theme-" + (val(f, "theme_mode", "dark") || "dark"),
+          "panel-bg-" + (val(f, "background_mode", "default") || "default"),
+          "panel-layout-" + (val(f, "layout_mode", "standard") || "standard"),
+          "panel-density-" + (val(f, "density", "comfortable") || "comfortable"),
+          "panel-shape-" + (val(f, "card_shape", "soft") || "soft"),
+          "panel-font-" + (val(f, "font_scale", "normal") || "normal"),
+          "panel-motion-" + (val(f, "motion", "standard") || "standard"),
+          "panel-operator-" + (val(f, "operator_layout", "command") || "command"),
+          "panel-roster-" + (val(f, "roster_layout", "cards") || "cards"),
+          "panel-tabs-" + (val(f, "tab_style", "rail") || "rail"),
+          "panel-stream-" + (val(f, "stream_card_style", "telemetry") || "telemetry"),
+          "panel-dashboard-" + (val(f, "dashboard_density", "command") || "command"),
+          "panel-hover-" + (val(f, "card_hover_effect", "lift") || "lift"),
+          notifyPos !== "br" ? "panel-notify-" + notifyPos : "",
+          "panel-radius-" + (val(f, "panel_radius", "medium") || "medium"),
+          "panel-fontfamily-" + (val(f, "panel_font_family", "system") || "system"),
+          "panel-nav-" + (val(f, "sidebar_style", "full") || "full"),
+          "panel-detail-" + (val(f, "bot_card_detail", "full") || "full"),
+          val(f, "show_bot_uptime", true) === false ? "panel-hide-uptime" : "",
+          val(f, "show_queue_pressure", true) === false ? "panel-hide-queue-pressure" : "",
+          val(f, "compact_sidebar", false) === true ? "panel-compact-nav" : "",
+        ];
+        return classes.filter(Boolean);
+      }
+      function panelStyleFromForm(f) {
+        const accent = val(f, "accent_color", "#89b4fa") || "#89b4fa";
+        const mode = val(f, "background_mode", "default") || "default";
+        const bg = mode === "custom_color" ? (val(f, "background_color", "#0b0e18") || "#0b0e18") : (BG_PRESET_COLORS[mode] || BG_PRESET_COLORS.default);
+        const imgUrl = val(f, "background_image_url", "");
+        const useImage = mode === "custom_image" && /^https?:\/\//.test(imgUrl || "");
+        const surfaceOpacity = Math.min(1, Math.max(0.35, parseFloat(val(f, "surface_opacity", 0.92)) || 0.92));
+        const surfaceBlur = Math.min(36, Math.max(0, parseFloat(val(f, "surface_blur", 18)) || 18));
+        const props = {
+          "--accent": accent,
+          "--bg": bg,
+          "--panel-bg-image": useImage ? `url("${imgUrl.replace(/["\\]/g, "\\$&")}")` : "none",
+          "--surface-opacity": String(surfaceOpacity),
+          "--surface-blur": surfaceBlur + "px",
+          "--accent-gradient": accentGradientFromForm(f),
+        };
+        return props;
+      }
       function updatePreview() {
         const f = document.getElementById("appearance-form");
-        const shell = document.querySelector(".appearance-preview-shell");
-        const accent = f.elements.accent_color ? f.elements.accent_color.value : "#89b4fa";
-        if (shell) shell.style.setProperty("--accent", accent);
-        const themeMode = f.elements.theme_mode ? f.elements.theme_mode.value : "dark";
+        const shell = document.getElementById("appearance-preview-shell");
+        if (shell) {
+          shell.className = "appearance-preview-shell " + panelClassesFromForm(f).join(" ");
+          const props = panelStyleFromForm(f);
+          for (const [k, v] of Object.entries(props)) shell.style.setProperty(k, v);
+        }
+        const accent = val(f, "accent_color", "#89b4fa") || "#89b4fa";
+        const themeMode = val(f, "theme_mode", "dark") || "dark";
         document.getElementById("preview-theme-pill").textContent = themeMode.charAt(0).toUpperCase() + themeMode.slice(1);
-        const density = f.elements.density ? f.elements.density.value : "comfortable";
+        const density = val(f, "density", "comfortable") || "comfortable";
         document.getElementById("preview-density-pill").textContent = density.charAt(0).toUpperCase() + density.slice(1);
         document.getElementById("preview-accent-stat").textContent = "Accent " + accent;
-        const cardShape = f.elements.card_shape ? f.elements.card_shape.value : "soft";
+        const cardShape = val(f, "card_shape", "soft") || "soft";
         document.getElementById("preview-shape-stat").textContent = "Cards " + (cardShape.charAt(0).toUpperCase() + cardShape.slice(1));
-        const hoverEffect = f.elements.card_hover_effect ? f.elements.card_hover_effect.value : "lift";
+        const hoverEffect = val(f, "card_hover_effect", "lift") || "lift";
         document.getElementById("preview-hover-stat").textContent = "Hover " + (hoverEffect.charAt(0).toUpperCase() + hoverEffect.slice(1));
+        const radius = val(f, "panel_radius", "medium") || "medium";
+        document.getElementById("preview-radius-stat").textContent = "Radius " + (radius.charAt(0).toUpperCase() + radius.slice(1));
+        const fontScale = val(f, "font_scale", "normal") || "normal";
+        document.getElementById("preview-font-stat").textContent = "Font " + (fontScale.charAt(0).toUpperCase() + fontScale.slice(1));
         document.getElementById("accent-color-hex").textContent = accent;
         document.getElementById("accent-secondary-hex").textContent = (f.elements.accent_secondary && f.elements.accent_secondary.value) || "--";
         document.getElementById("background-color-hex").textContent = (f.elements.background_color && f.elements.background_color.value) || "#0b0e18";
+        document.getElementById("accent-gradient-swatch").style.background = accentGradientFromForm(f);
+        const backdropUrl = (val(f, "profile_backdrop_image_url", "") || "").trim();
+        const backdropStrength = Math.round((parseFloat(val(f, "profile_backdrop_strength", 0.18)) || 0.18) * 100);
+        document.getElementById("profile-backdrop-readout").textContent = /^https?:\/\//.test(backdropUrl)
+          ? `Image set, ${backdropStrength}% strength` : `No image -- ${backdropStrength}% accent tint only`;
       }
       document.getElementById("appearance-form").addEventListener("input", () => { markDirty(); updatePreview(); });
       document.getElementById("appearance-form").addEventListener("submit", async (e) => {

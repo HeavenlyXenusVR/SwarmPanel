@@ -102,7 +102,15 @@ button:active,
 button.primary,
 .button-link.primary {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
-  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 32%, #18202a), #1b2938);
+  /* accent_secondary ("Accent secondary" on /appearance): saved and
+     round-tripped, but --accent-gradient (routes.lua's with_derived_accent,
+     which factors it in) was only ever computed for API JSON responses --
+     never for an actual page render, and even when present had no CSS
+     consumer, so picking a second accent color did nothing anywhere.
+     html.lua's panel_style() now always computes --accent-gradient at
+     render time; var()'s fallback keeps the exact prior look for anyone
+     who's never touched it. */
+  background: var(--accent-gradient, linear-gradient(135deg, color-mix(in srgb, var(--accent) 32%, #18202a), #1b2938));
 }
 
 .danger {
@@ -2263,6 +2271,64 @@ input[type="range"]::-moz-range-thumb {
 
 .profile-stat-panel span {
   color: var(--muted);
+}
+
+/* profile_header_style (ProfilePage's "Header style" select): validated and
+   round-tripped by profiles.lua/accounts.lua and stored in every look
+   preset (looks.lua), but had zero CSS anywhere -- picking Glass/Blur/
+   Transparent/Gradient changed nothing. "solid" is the existing base
+   .public-profile-hero look, so it needs no override rule. Declared after
+   .public-profile-hero so these win on source order (same pattern as the
+   banner-mode/border-accent rules above). */
+.profile-header-glass {
+  background: rgba(16, 23, 32, 0.55) !important;
+  backdrop-filter: blur(20px);
+}
+
+.profile-header-blur {
+  background: rgba(10, 14, 20, 0.35) !important;
+  backdrop-filter: blur(28px) saturate(1.15);
+}
+
+.profile-header-transparent {
+  background: transparent !important;
+  border: none;
+  box-shadow: none;
+}
+
+.profile-header-gradient {
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 35%, #1b2438) 72%) !important;
+}
+
+/* profile_layout_mode ("Profile layout" select): same story as
+   profile_header_style -- 4 real options, zero CSS consumer. Applied to
+   .public-profile-shell (the outer wrapper render_profile's script sets
+   className on), reflowing the stat grid and the activity/links split
+   below the hero rather than reshuffling DOM order. */
+.profile-layout-stacked .profile-dashboard-grid {
+  grid-template-columns: 1fr;
+}
+
+.profile-layout-stacked .profile-social-layout {
+  grid-template-columns: 1fr;
+}
+
+.profile-layout-split .profile-dashboard-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.profile-layout-split .profile-social-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.profile-layout-sidebar .profile-social-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 0.34fr);
+  align-items: start;
+}
+
+.profile-layout-sidebar .profile-social-layout > article:last-child {
+  position: sticky;
+  top: 86px;
 }
 
 .profile-social-layout {

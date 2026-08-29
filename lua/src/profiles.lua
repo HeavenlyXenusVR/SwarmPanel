@@ -53,12 +53,22 @@ local PANEL_ROSTER_LAYOUT_MODES = { cards = true, signals = true, ledger = true 
 local PANEL_TAB_STYLE_MODES = { rail = true, underline = true, minimal = true }
 local PANEL_STREAM_CARD_MODES = { telemetry = true, compact = true, cinematic = true }
 local PANEL_DASHBOARD_DENSITY_MODES = { command = true, dense = true }
-local PANEL_SIDEBAR_STYLES = { full = true, icons = true, minimal = true }
-local PANEL_FONT_FAMILIES = { system = true, mono = true, rounded = true }
+-- BUGFIX: these three enums never matched what /appearance's <select>
+-- actually offers (pages_identity.lua) or what app.css actually implements
+-- (.panel-nav-compact/-hidden, .panel-radius-sharp/-soft,
+-- .panel-fontfamily-serif) -- they were left at an older/aspirational set
+-- of values. normalize_choice() hard-errors (400) on anything not in the
+-- allowed set with no fallback, and since the whole preferences form saves
+-- as one request, picking any of the UI's now-invalid options (Sidebar:
+-- Compact/Hidden, Corner radius: Sharp/Soft, Panel font: Serif) broke
+-- saving EVERY OTHER appearance setting too, until that one field was
+-- manually reset back to a value the backend happened to accept.
+local PANEL_SIDEBAR_STYLES = { full = true, compact = true, hidden = true }
+local PANEL_FONT_FAMILIES = { system = true, serif = true, mono = true, rounded = true }
 local PANEL_CARD_HOVER_EFFECTS = { lift = true, glow = true, border = true, none = true }
 local PANEL_NOTIFICATION_POSITIONS = { br = true, bl = true, tr = true, tc = true }
 local PANEL_BOT_CARD_DETAILS = { full = true, compact = true, minimal = true }
-local PANEL_RADIUS_MODES = { none = true, small = true, medium = true, large = true, pill = true }
+local PANEL_RADIUS_MODES = { sharp = true, medium = true, soft = true }
 
 -- Port of app/validators.py's PANEL_LOOK_ALIASES: a handful of preset/legacy
 -- names get remapped onto the current canonical choice before validation,

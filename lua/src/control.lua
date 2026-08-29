@@ -24,6 +24,19 @@ local VALID_ACTIONS = {
 }
 M.VALID_ACTIONS = VALID_ACTIONS
 
+-- `payload.field or "0"` looks like a nil-coalesce but isn't one: Lua only
+-- treats nil/false as falsy, so an empty string (exactly what an unset
+-- <select> sends as its value -- e.g. the /controls page's "Choose channel"/
+-- "None" placeholder options) sails through as "" instead of falling back to
+-- "0", which then blows up as `invalid input syntax for type bigint: ""`
+-- once it hits a bigint column. Every optional channel-id field needs this
+-- instead of the bare `or`.
+local function channel_id_or_default(v)
+  v = tostring(v or "")
+  if v == "" then return "0" end
+  return v
+end
+
 local VALID_LOOP_MODES = { off = true, song = true, queue = true }
 local VALID_FILTER_MODES = {
   none = true, nightcore = true, vaporwave = true, bassboost = true, ["8d"] = true,
@@ -272,8 +285,8 @@ function M.control_bot(bot, gid, action, payload)
     elseif action == "SMART_RECOMMEND" then
       if type(payload) ~= "table" then error("SMART_RECOMMEND payload must be an object with voice_channel_id", 0) end
       clear_pending_orders(schema, prefix, gid, bot.key)
-      local voice_channel_id = tostring(payload.voice_channel_id or "0")
-      local text_channel_id = tostring(payload.text_channel_id or "0")
+      local voice_channel_id = channel_id_or_default(payload.voice_channel_id)
+      local text_channel_id = channel_id_or_default(payload.text_channel_id)
       local requester_id = payload.requester_id and tostring(payload.requester_id) or nil
       local shuffled = prime_panel_playback_defaults(schema, prefix, gid, bot.key)
 
@@ -329,8 +342,8 @@ function M.control_bot(bot, gid, action, payload)
       if type(payload) ~= "table" then error("PLAY payload must be an object with source_url and voice_channel_id", 0) end
       local source_url = tostring(payload.source_url or payload.query or ""):match("^%s*(.-)%s*$")
       if source_url == "" then error("Missing source_url for PLAY action", 0) end
-      local voice_channel_id = tostring(payload.voice_channel_id or "0")
-      local text_channel_id = tostring(payload.text_channel_id or "0")
+      local voice_channel_id = channel_id_or_default(payload.voice_channel_id)
+      local text_channel_id = channel_id_or_default(payload.text_channel_id)
       local shuffled = prime_panel_playback_defaults(schema, prefix, gid, bot.key)
       insert_direct_order(schema, prefix, bot.key, gid, voice_channel_id, text_channel_id, "PLAY", source_url)
       result.loop_mode = "queue"
@@ -338,7 +351,7 @@ function M.control_bot(bot, gid, action, payload)
       result.message = string.format("Queued a direct PLAY order for %s in guild %s.", bot.display_name, gid)
 
     elseif action == "RECOVER" then
-      local voice_channel_id = tostring((type(payload) == "table" and (payload.voice_channel_id or payload.vc_id)) or "0")
+      local voice_channel_id = channel_id_or_default(type(payload) == "table" and (payload.voice_channel_id or payload.vc_id) or nil)
       insert_direct_order(schema, prefix, bot.key, gid, voice_channel_id, "0", "RECOVER", "panel")
       result.message = string.format("Queued a direct RECOVER order for %s in guild %s.", bot.display_name, gid)
 
@@ -350,7 +363,8 @@ function M.control_bot(bot, gid, action, payload)
 
     elseif action == "SET_HOME" then
       if type(payload) ~= "table" then error("SET_HOME payload must be an object with voice_channel_id", 0) end
-      local voice_channel_id = tostring(payload.voice_channel_id or "0")
+      local voice_channel_id = tostring(payload.voice_channel_id or "")
+      if voice_channel_id == "" then error("Missing voice_channel_id for SET_HOME action", 0) end
       ensure_home_table(schema, prefix)
       db.execute(
         schema,

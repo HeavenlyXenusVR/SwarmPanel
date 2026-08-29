@@ -5,6 +5,7 @@
 -- through esc()/attr() or it's an XSS hole.
 
 local M = {}
+local colorutil = require("colorutil")
 
 local function cjson_encode_safe(v)
   local ok, cjson = pcall(require, "cjson.safe")
@@ -227,19 +228,41 @@ function M.panel_style(prefs)
   local base_bg = (mode == "custom_color") and safe_hex(prefs.background_color, "#0b0e18")
     or (BACKGROUND_PRESETS[mode] or BACKGROUND_PRESETS.default)
   local use_image = (mode == "custom_image") and tostring(prefs.background_image_url or ""):match("^%s*https?://")
+  local accent = safe_hex(prefs.accent_color, "#89b4fa")
   local parts = {
-    ("--accent:%s"):format(safe_hex(prefs.accent_color, "#89b4fa")),
+    ("--accent:%s"):format(accent),
     ("--bg:%s"):format(base_bg),
     ("--panel-bg-image:%s"):format(use_image and css_url(prefs.background_image_url) or "none"),
     ("--surface-opacity:%s"):format(tostring(clamp_number(prefs.surface_opacity, 0.92, 0.35, 1))),
     ("--surface-blur:%spx"):format(tostring(clamp_number(prefs.surface_blur, 18, 0, 36))),
   }
-  if prefs.accent_contrast_text and prefs.accent_contrast_text ~= "" then
-    parts[#parts + 1] = "--accent-contrast-text:" .. safe_hex(prefs.accent_contrast_text, "#ffffff")
-  end
-  if prefs.accent_gradient and prefs.accent_gradient ~= "" then
-    parts[#parts + 1] = "--accent-gradient:" .. prefs.accent_gradient
-  end
+  -- BUGFIX: accent_contrast_text/accent_gradient were only ever computed by
+  -- routes.lua's with_derived_accent() for API JSON responses (GET/POST
+  -- /api/users/preferences) -- never for an actual page render, which reads
+  -- straight off accounts.get_panel_preferences() and never calls that
+  -- helper. --accent-contrast-text (app.css) and --accent-gradient (the
+  -- .primary button background above) therefore never had real values on
+  -- any rendered page, and "Accent secondary" -- which only feeds the
+  -- gradient -- did nothing visible anywhere. Compute both directly here so
+  -- every page render gets them regardless of what's stored, mirroring
+  -- with_derived_accent's own accent_secondary-or-auto_secondary fallback.
+  local secondary = prefs.accent_secondary
+  if not secondary or secondary == "" then secondary = colorutil.auto_secondary(accent) end
+  parts[#parts + 1] = "--accent-contrast-text:" .. colorutil.contrast_text(accent)
+  parts[#parts + 1] = "--accent-gradient:" .. colorutil.gradient(accent, secondary)
+  -- BUGFIX: profile_backdrop_image_url/profile_backdrop_strength ("Profile
+  -- backdrop" on /appearance) are stored in the VIEWER's own panel
+  -- preferences, not on any individual profile -- app.css's
+  -- .public-profile-hero/.profile-stat-panel/.form-panel rules already read
+  -- --profile-backdrop/--profile-backdrop-strength expecting exactly that
+  -- (a personal skin applied to every profile-shaped surface you look at,
+  -- yours or someone else's), but nothing ever set those two vars anywhere.
+  -- Root-level here (inherits via the .app-shell wrapper to every page,
+  -- same as --accent/--surface-opacity above) rather than duplicated into
+  -- each page that happens to render a profile card.
+  local backdrop_url = tostring(prefs.profile_backdrop_image_url or ""):match("^%s*(.-)%s*$")
+  parts[#parts + 1] = "--profile-backdrop:" .. ((backdrop_url ~= "" and backdrop_url:match("^https?://")) and css_url(backdrop_url) or "none")
+  parts[#parts + 1] = "--profile-backdrop-strength:" .. tostring(clamp_number(prefs.profile_backdrop_strength, 0.18, 0, 0.55) * 100) .. "%"
   return table.concat(parts, ";")
 end
 
