@@ -53,14 +53,26 @@ private struct DirectoryUserCard: View {
     var body: some View {
         PanelCard {
             HStack(spacing: 12) {
-                avatar
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(user.name).font(.headline).foregroundStyle(SwarmTheme.textPrimary)
-                    Text(subtitle).font(.caption).foregroundStyle(SwarmTheme.textMuted)
-                    if let favoriteBot = user.favoriteBot, !favoriteBot.isEmpty {
-                        Text("Favorite bot: \(favoriteBot.capitalized)").font(.caption2).foregroundStyle(SwarmTheme.textMuted)
+                // Previously this whole card had no way to reach the
+                // person's actual profile at all -- tapping anywhere only
+                // ever offered the Follow button. Scoping the NavigationLink
+                // to just the avatar/name block (not the whole HStack) keeps
+                // Follow a separate, independently-tappable sibling, same
+                // pattern SocialView's search-result rows already use for
+                // coexisting Follow/Friend/Message tap targets in one row.
+                NavigationLink { PublicProfileView(accountId: user.id) } label: {
+                    HStack(spacing: 12) {
+                        avatar
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(user.name).font(.headline).foregroundStyle(SwarmTheme.textPrimary)
+                            Text(subtitle).font(.caption).foregroundStyle(SwarmTheme.textMuted)
+                            if let favoriteBot = user.favoriteBot, !favoriteBot.isEmpty {
+                                Text("Favorite bot: \(favoriteBot.capitalized)").font(.caption2).foregroundStyle(SwarmTheme.textMuted)
+                            }
+                        }
                     }
                 }
+                .buttonStyle(.plain)
                 Spacer()
                 Button(action: onFollow) {
                     Image(systemName: user.isFollowedByMe ? "person.fill.checkmark" : "person.badge.plus")

@@ -135,6 +135,91 @@ struct GalleryAdminEnvelope: Decodable {
 struct GalleryAdminData: Decodable {
     let comments: [GalleryComment]?
     let reports: [GalleryReport]?
+    /// Both previously undecoded -- the iOS Gallery Moderation screen could
+    /// only touch comments/reports even though the same admin payload
+    /// already carries full media + user rows (gallery.lua's
+    /// get_image_gallery_admin_data), same data the web panel's Gallery
+    /// Admin media/user tables are built from.
+    let media: [GalleryMedia]?
+    let users: [GalleryUser]?
+}
+
+let galleryModerationStatuses = ["pending", "approved", "rejected"]
+
+struct GalleryMedia: Decodable, Identifiable {
+    let id: Int
+    let title: String?
+    let mediaKind: String?
+    let fileSize: Int?
+    let views: Int?
+    let downloads: Int?
+    let isAdult: Bool?
+    let moderationStatus: String?
+    let moderationReason: String?
+    let username: String?
+
+    var displayTitle: String { title?.isEmpty == false ? title! : "Untitled" }
+}
+
+struct GalleryUser: Decodable, Identifiable {
+    let id: Int
+    let username: String
+    let displayName: String?
+    let email: String?
+    /// Timestamps, not booleans -- non-nil means verified, matching how
+    /// web's admin table reads the same two DB columns.
+    let emailVerifiedAt: String?
+    let ageVerifiedAt: String?
+    let publicProfile: Bool?
+    let adultContentConsent: Bool?
+    let mediaCount: Int?
+    let commentCount: Int?
+
+    var name: String { displayName?.isEmpty == false ? displayName! : username }
+    var isEmailVerified: Bool { emailVerifiedAt != nil }
+    var isAgeVerified: Bool { ageVerifiedAt != nil }
+}
+
+struct GalleryMediaUpdateBody: Encodable {
+    let mediaId: Int
+    let moderationStatus: String?
+    let moderationReason: String?
+    let isAdult: Bool?
+}
+
+struct GalleryMediaDeleteBody: Encodable {
+    let mediaId: Int
+}
+
+struct GalleryUserFlagBody: Encodable {
+    let userId: Int
+    let verified: Bool
+}
+
+struct GalleryUserDeleteBody: Encodable {
+    let userId: Int
+}
+
+struct GalleryUserResendVerificationBody: Encodable {
+    let userId: Int
+}
+
+struct GalleryUserResendVerificationResponse: Decodable {
+    let emailVerificationSent: Bool?
+    let alreadyVerified: Bool?
+}
+
+struct GalleryUserResetPasswordBody: Encodable {
+    let userId: Int
+    let newPassword: String
+}
+
+struct GalleryUserUpdateBody: Encodable {
+    let userId: Int
+    let username: String
+    let displayName: String
+    let email: String
+    let publicProfile: Bool
 }
 
 struct GalleryComment: Decodable, Identifiable {

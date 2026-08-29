@@ -17,7 +17,7 @@ struct DiagnosticsView: View {
                 }
                 .padding(.horizontal)
 
-                if viewModel.isLoading && viewModel.diagnosticsText.isEmpty {
+                if viewModel.isLoading && viewModel.metricsText.isEmpty {
                     VStack(spacing: 14) {
                         SkeletonCard(lines: 3)
                         SkeletonCard(lines: 3)
@@ -25,7 +25,6 @@ struct DiagnosticsView: View {
                     }
                     .padding(.horizontal)
                 } else {
-                    JSONSection(title: "System Diagnostics", icon: "heart.text.square.fill", tint: .green, text: viewModel.diagnosticsText)
                     JSONSection(title: "Metrics", icon: "chart.bar.fill", tint: .blue, text: viewModel.metricsText)
                     JSONSection(title: "Stability", icon: "waveform.path.ecg", tint: .orange, text: viewModel.stabilityText)
                     EventsSection(events: viewModel.events)
@@ -40,7 +39,7 @@ struct DiagnosticsView: View {
                 ShareLink(item: combinedReportText) {
                     Image(systemName: "square.and.arrow.up")
                 }
-                .disabled(viewModel.diagnosticsText.isEmpty)
+                .disabled(viewModel.metricsText.isEmpty)
             }
         }
         .task {
@@ -60,9 +59,6 @@ struct DiagnosticsView: View {
 
     private var combinedReportText: String {
         """
-        System Diagnostics
-        \(viewModel.diagnosticsText)
-
         Metrics
         \(viewModel.metricsText)
 

@@ -30,13 +30,22 @@ struct SocialView: View {
                     }
                     ForEach(viewModel.searchResults) { user in
                         HStack(spacing: 10) {
-                            InitialsAvatar(name: user.name, diameter: 32)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(user.name).foregroundStyle(SwarmTheme.textPrimary)
-                                if let server = user.serverName {
-                                    Text(server).font(.caption).foregroundStyle(SwarmTheme.textMuted)
+                            // Scoped to just the avatar/name (not the whole
+                            // row) so Follow/Friend/Message stay independent
+                            // tap targets, same pattern the message-icon
+                            // NavigationLink below already relies on.
+                            NavigationLink { PublicProfileView(accountId: user.id) } label: {
+                                HStack(spacing: 10) {
+                                    InitialsAvatar(name: user.name, diameter: 32)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(user.name).foregroundStyle(SwarmTheme.textPrimary)
+                                        if let server = user.serverName {
+                                            Text(server).font(.caption).foregroundStyle(SwarmTheme.textMuted)
+                                        }
+                                    }
                                 }
                             }
+                            .buttonStyle(.plain)
                             Spacer()
                             SocialActionButton(icon: "person.badge.plus", tint: .blue) {
                                 Task { await viewModel.follow(user.id) }

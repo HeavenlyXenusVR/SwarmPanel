@@ -2,7 +2,6 @@ import Foundation
 
 @MainActor
 final class DiagnosticsViewModel: ObservableObject {
-    @Published var diagnosticsText = ""
     @Published var metricsText = ""
     @Published var stabilityText = ""
     @Published var events: [FeedEvent] = []
@@ -14,12 +13,17 @@ final class DiagnosticsViewModel: ObservableObject {
     func load() async {
         isLoading = true
         defer { isLoading = false }
-        async let diagnostics = fetchRaw("/api/system-diagnostics")
+        // BUGFIX: this used to also fetch "/api/system-diagnostics", which
+        // has never existed on the backend (confirmed live: 404) -- the
+        // "System Diagnostics" panel it fed always read "Unavailable:
+        // request failed" for every user, every time. The web /diagnostics
+        // page it's meant to mirror only has Stability + Metrics + Events,
+        // so there's nothing real to point that fetch at; removed rather
+        // than left calling a route that will never exist.
         async let metrics = fetchRaw("/api/metrics")
         async let stability = fetchRaw("/api/stability")
         async let loadedEvents = fetchEvents()
-        let (d, m, s, e) = await (diagnostics, metrics, stability, loadedEvents)
-        diagnosticsText = d
+        let (m, s, e) = await (metrics, stability, loadedEvents)
         metricsText = m
         stabilityText = s
         events = e

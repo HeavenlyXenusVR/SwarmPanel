@@ -100,6 +100,9 @@ struct ProfileView: View {
                     TextField("Bio", text: $viewModel.bio, axis: .vertical)
                     Toggle("Public Profile", isOn: $viewModel.isPublic)
                         .tint(SwarmTheme.accent)
+                    NavigationLink { AccountSecurityView() } label: {
+                        IconRow(icon: "lock.shield", tint: .red, title: "Account Security")
+                    }
                 } header: {
                     SectionLabel(title: "Account")
                 }
@@ -185,6 +188,7 @@ struct ProfileView: View {
                 Section {
                     NavigationLink { InvitesView() } label: { IconRow(icon: "envelope.badge.person.crop", tint: .blue, title: "Invite Bots") }
                     NavigationLink { UsersDirectoryView() } label: { IconRow(icon: "person.3", tint: .purple, title: "Swarm Directory") }
+                    NavigationLink { OtherProjectsView() } label: { IconRow(icon: "square.grid.2x2", tint: .pink, title: "My Other Projects") }
                 } header: {
                     SectionLabel(title: "Discover")
                 }
