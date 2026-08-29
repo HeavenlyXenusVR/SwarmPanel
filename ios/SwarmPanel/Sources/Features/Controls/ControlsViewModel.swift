@@ -161,6 +161,16 @@ final class ControlsViewModel: ObservableObject {
 
     func sendAction() async {
         guard !selectedBotKey.isEmpty, !guildId.isEmpty else { return }
+        // SET_HOME has no sane default for an empty channel (unlike PLAY,
+        // where the backend falls back to the bot's configured home
+        // channel) -- the backend now correctly 400s a blank one instead of
+        // silently writing an invalid home channel, so catch it locally
+        // first with a clear message rather than spending a round trip to
+        // learn the same thing, matching loadSavedQueue's existing pattern.
+        if action == .setHome, voiceChannelId.isEmpty {
+            errorMessage = "Select a voice channel before setting the home channel."
+            return
+        }
         isSending = true
         statusMessage = nil
         errorMessage = nil
