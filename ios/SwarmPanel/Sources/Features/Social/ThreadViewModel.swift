@@ -10,6 +10,7 @@ final class ThreadViewModel: ObservableObject {
     let accountId: Int
     let peerName: String
     private let api = APIClient.shared
+    private let socket = SwarmLiveSocket.shared
     private var pollTask: Task<Void, Never>?
 
     init(accountId: Int, peerName: String) {
@@ -17,16 +18,27 @@ final class ThreadViewModel: ObservableObject {
         self.peerName = peerName
     }
 
-    /// Mirrors the web thread view's 4s live poll so new incoming messages
-    /// show up without leaving and re-entering the conversation.
+    /// Live-push equivalent of the web thread view's window.swarmLive.watch
+    /// ("thread_messages", {account_id}) -- new incoming messages show up
+    /// without leaving and re-entering the conversation.
     func startPolling() {
         guard pollTask == nil else { return }
+        socket.watch("thread_messages", params: ["account_id": String(accountId)], as: MessagesResponse.self) { [weak self] result in
+            guard let self, case .success(let response) = result else { return }
+            self.messages = response.messages ?? self.messages
+        }
+        socket.connect()
+
+        // Fallback poll only while the socket is down, same pattern as
+        // DashboardViewModel/NotificationsViewModel.
         pollTask = Task { [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(5))
                 if Task.isCancelled { break }
-                await self.load(silent: true)
+                if !self.socket.isConnected {
+                    await self.load(silent: true)
+                }
             }
         }
     }
@@ -34,6 +46,7 @@ final class ThreadViewModel: ObservableObject {
     func stopPolling() {
         pollTask?.cancel()
         pollTask = nil
+        socket.unwatch("thread_messages")
     }
 
     func load(silent: Bool = false) async {

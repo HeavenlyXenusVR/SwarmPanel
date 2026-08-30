@@ -14,17 +14,32 @@ final class NotificationsViewModel: ObservableObject {
     @Published var errorMessage: String?
 
     private let api = APIClient.shared
+    private let socket = SwarmLiveSocket.shared
     private var pollTask: Task<Void, Never>?
+    private var watching = false
 
     func startPolling() {
-        guard pollTask == nil else { return }
+        guard !watching else { return }
+        watching = true
+        socket.watch("notifications", as: NotificationsSnapshot.self) { [weak self] result in
+            guard let self, case .success(let snapshot) = result else { return }
+            self.unreadCount = snapshot.unreadCount ?? 0
+            self.notifications = snapshot.notifications ?? self.notifications
+        }
+        socket.connect()
+
+        // Fallback poll only kicks in while the socket is actually down --
+        // same pattern as DashboardViewModel -- so the badge still updates
+        // if the connection drops and hasn't reconnected yet.
         pollTask = Task { [weak self] in
             guard let self else { return }
             await self.refreshUnreadCount()
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(20))
                 if Task.isCancelled { break }
-                await self.refreshUnreadCount()
+                if !self.socket.isConnected {
+                    await self.refreshUnreadCount()
+                }
             }
         }
     }
@@ -32,6 +47,8 @@ final class NotificationsViewModel: ObservableObject {
     func stopPolling() {
         pollTask?.cancel()
         pollTask = nil
+        watching = false
+        socket.unwatch("notifications")
     }
 
     func refreshUnreadCount() async {

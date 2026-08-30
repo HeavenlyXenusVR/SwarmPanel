@@ -256,6 +256,7 @@ struct ControlsView: View {
                 await viewModel.loadControlStateAndQueues()
             }
             .refreshOnForeground { await viewModel.loadControlStateAndQueues() }
+            .onDisappear { viewModel.stopWatchingControlState() }
             .notificationsBell(notificationsViewModel)
             .confirmationDialog(
                 "Delete \"\(deleteQueueTarget?.name ?? "")\"?",

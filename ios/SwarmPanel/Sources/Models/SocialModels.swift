@@ -63,6 +63,15 @@ struct FriendsResponse: Decodable {
     let friends: [AccountSummary]?
 }
 
+/// Shape of the "friends" live-push snapshot (routes.lua's
+/// SNAPSHOT_BUILDERS.friends) -- bundles friends + incoming + outgoing
+/// requests in one push since the Friends screen always shows all three.
+struct FriendsSnapshot: Decodable {
+    let friends: [AccountSummary]?
+    let incoming: [FriendRequest]?
+    let outgoing: [FriendRequest]?
+}
+
 // MARK: - Follow / friend-request actions
 
 struct FollowBody: Encodable {

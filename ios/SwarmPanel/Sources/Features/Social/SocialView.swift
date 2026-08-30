@@ -203,6 +203,7 @@ struct SocialView: View {
                 await viewModel.loadAll()
             }
             .refreshOnForeground { await viewModel.loadAll() }
+            .onDisappear { viewModel.stopWatching() }
             .notificationsBell(notificationsViewModel)
             }
         }

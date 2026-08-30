@@ -21,6 +21,7 @@ final class ControlsViewModel: ObservableObject {
     @Published var statusMessage: String?
 
     private let api = APIClient.shared
+    private let socket = SwarmLiveSocket.shared
 
     var voiceChannels: [InventoryChannel] {
         guilds.first(where: { $0.id == guildId })?.channels?.filter(\.isVoice) ?? []
@@ -121,8 +122,33 @@ final class ControlsViewModel: ObservableObject {
         }
     }
 
+    /// Registers/replaces the live-push watch for the current bot+guild so
+    /// control state (queue, now-playing, loop/filter mode) stays current
+    /// between explicit loads -- mirrors the web Controls page's
+    /// window.swarmLive.watch("control_state", {bot_key, guild_id}).
+    private func watchLiveControlState() {
+        guard !selectedBotKey.isEmpty, !guildId.isEmpty else {
+            socket.unwatch("control_state")
+            return
+        }
+        socket.watch(
+            "control_state",
+            params: ["bot_key": selectedBotKey, "guild_id": guildId],
+            as: ControlStateResponse.self
+        ) { [weak self] result in
+            guard let self, case .success(let state) = result else { return }
+            self.controlState = state.session
+        }
+        socket.connect()
+    }
+
+    func stopWatchingControlState() {
+        socket.unwatch("control_state")
+    }
+
     func loadControlStateAndQueues() async {
         guard !selectedBotKey.isEmpty, !guildId.isEmpty else { return }
+        watchLiveControlState()
         do {
             let state: ControlStateResponse = try await api.get(
                 "/api/bots/\(selectedBotKey)/control-state",

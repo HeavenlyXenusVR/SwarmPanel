@@ -12,6 +12,8 @@ final class SocialViewModel: ObservableObject {
     @Published var isLoading = false
 
     private let api = APIClient.shared
+    private let socket = SwarmLiveSocket.shared
+    private var watching = false
 
     func loadAll() async {
         isLoading = true
@@ -20,6 +22,33 @@ final class SocialViewModel: ObservableObject {
         async let friendsTask: Void = loadFriends()
         async let threadsTask: Void = loadThreads()
         _ = await (requestsTask, friendsTask, threadsTask)
+        startWatching()
+    }
+
+    /// Mirrors the web Friends page's window.swarmLive.watch("friends"/
+    /// "threads", ...) -- keeps the lists current between explicit loads
+    /// without a poll timer.
+    private func startWatching() {
+        guard !watching else { return }
+        watching = true
+        socket.watch("friends", as: FriendsSnapshot.self) { [weak self] result in
+            guard let self, case .success(let snapshot) = result else { return }
+            self.friends = snapshot.friends ?? self.friends
+            self.incomingRequests = snapshot.incoming ?? self.incomingRequests
+            self.outgoingRequests = snapshot.outgoing ?? self.outgoingRequests
+        }
+        socket.watch("threads", as: MessageThreadsResponse.self) { [weak self] result in
+            guard let self, case .success(let response) = result else { return }
+            self.threads = response.threads ?? self.threads
+        }
+        socket.connect()
+    }
+
+    func stopWatching() {
+        guard watching else { return }
+        watching = false
+        socket.unwatch("friends")
+        socket.unwatch("threads")
     }
 
     func search() async {

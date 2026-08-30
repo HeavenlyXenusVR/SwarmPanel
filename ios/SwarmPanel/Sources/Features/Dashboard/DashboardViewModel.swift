@@ -1,4 +1,3 @@
-import Combine
 import Foundation
 
 @MainActor
@@ -12,10 +11,9 @@ final class DashboardViewModel: ObservableObject {
     /// this is current data before the first real fetch completes.
     @Published var lastUpdatedAt: Date?
 
-    let socket = DashboardSocket()
+    private let socket = SwarmLiveSocket.shared
     private let api = APIClient.shared
     private var pollTask: Task<Void, Never>?
-    private var cancellables = Set<AnyCancellable>()
     private var started = false
 
     private static let cacheKey = "swarmpanel.dashboardSnapshot"
@@ -32,14 +30,11 @@ final class DashboardViewModel: ObservableObject {
         guard !started else { return }
         started = true
 
-        socket.$snapshot
-            .compactMap { $0 }
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] snapshot in
-                self?.response = snapshot
-                self?.persistSnapshot(snapshot)
-            }
-            .store(in: &cancellables)
+        socket.watch("dashboard", as: DashboardResponse.self) { [weak self] result in
+            guard let self, case .success(let snapshot) = result else { return }
+            self.response = snapshot
+            self.persistSnapshot(snapshot)
+        }
         socket.connect()
 
         pollTask = Task { [weak self] in
@@ -59,8 +54,7 @@ final class DashboardViewModel: ObservableObject {
         started = false
         pollTask?.cancel()
         pollTask = nil
-        cancellables.removeAll()
-        socket.disconnect()
+        socket.unwatch("dashboard")
     }
 
     func refresh() async {
