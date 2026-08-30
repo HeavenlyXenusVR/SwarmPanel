@@ -597,6 +597,117 @@ function M.register(cfg)
     return 200, data
   end)
 
+  -- Factored out of GET /api/bots below so the "invites" live-push builder
+  -- (SNAPSHOT_BUILDERS, defined further down) can call the identical logic
+  -- directly instead of duplicating it -- same pattern as
+  -- build_dashboard_payload above. Must be defined before SNAPSHOT_BUILDERS
+  -- (Lua locals aren't hoisted), which is why this moved up here rather
+  -- than staying next to the route handler that also uses it.
+  local function build_bots_payload(a)
+    local visible_bots = {}
+    for _, bot in ipairs(music_bots) do visible_bots[#visible_bots + 1] = bot end
+    visible_bots[#visible_bots + 1] = cfg.aria_bot
+
+    local bots_out = {}
+    for _, bot in ipairs(visible_bots) do
+      bots_out[#bots_out + 1] = {
+        key = bot.key, display_name = bot.display_name, name = bot.display_name,
+        kind = bot.kind, schema = bot.db_schema,
+        token_configured = (cfg.bot_tokens[bot.key] or "") ~= "",
+      }
+    end
+
+    -- Real invite cards: OAuth invite URL (needs only the bot's client id,
+    -- derived locally from the token — no Discord call) plus a best-effort
+    -- live identity/avatar lookup. A slow/unreachable Discord API for one
+    -- bot degrades that bot's card (identity_error set) rather than failing
+    -- the whole roster response.
+    local scoped = scoped_guild_id(a)
+    local public_scoped = (scoped ~= OWNER_SCOPE_SENTINEL) and scoped or nil
+
+    -- Mirrors _visible_music_bots_for_auth(): only worth computing when this
+    -- caller IS guild-scoped (an unscoped/admin caller's Python equivalent
+    -- short-circuits `scoped_guild_id and ...` straight to false too).
+    local visible_keys = {}
+    if public_scoped then
+      local ok, dash_data = pcall(dashboard.get_dashboard_data, music_bots)
+      if ok then
+        for _, bot in ipairs(dash_data.bots or {}) do
+          for _, gid in ipairs(bot.known_guild_ids or {}) do
+            if gid == public_scoped then visible_keys[bot.key] = true break end
+          end
+        end
+      end
+    end
+
+    local invite_bots = {}
+    for _, bot in ipairs(visible_bots) do
+      local token = cfg.bot_tokens[bot.key] or ""
+      local client_id = token ~= "" and discord_service.client_id_from_token(token) or nil
+      local identity, identity_error = {}, nil
+      if token ~= "" then
+        local ok, result = pcall(discord_service.fetch_identity, token)
+        if ok and result then
+          identity = result
+          client_id = identity.id or client_id
+        else
+          identity_error = tostring(result or "Discord identity lookup failed.")
+        end
+      end
+      local perms = (bot.kind == "orchestrator") and discord_service.ARIA_BOT_PERMISSIONS or discord_service.MUSIC_BOT_PERMISSIONS
+      local permission_integer = discord_service.permission_value(perms)
+      invite_bots[#invite_bots + 1] = {
+        key = bot.key, display_name = bot.display_name, name = bot.display_name,
+        kind = bot.kind, schema = bot.db_schema, token_configured = token ~= "",
+        client_id = client_id,
+        invite_url = client_id and discord_service.invite_url_for_bot(client_id, permission_integer, public_scoped) or nil,
+        permission_integer = string.format("%.0f", permission_integer),
+        permissions = perms,
+        capability_summary = discord_service.BOT_CAPABILITY_SUMMARIES[bot.kind] or "Discord bot with slash commands and server tools.",
+        accent = cfg.bot_accents and cfg.bot_accents[bot.key] or "#89b4fa",
+        connected_to_session_guild = (public_scoped ~= nil) and (visible_keys[bot.key] == true),
+        icon_url = identity.avatar_url,
+        identity_name = identity.global_name or identity.username,
+        identity_error = identity_error,
+      }
+    end
+
+    return { bots = bots_out, invite_bots = invite_bots, scoped_guild_id = public_scoped }
+  end
+
+  -- Factored out of GET /api/exports below for the same reason as
+  -- build_bots_payload above -- the "exports" live-push builder needs it.
+  local EXPORTS_DIR = (settings.scheduled_exports_dir and settings.scheduled_exports_dir ~= "")
+    and settings.scheduled_exports_dir or "./.runtime/exports"
+
+  local function build_exports_payload()
+    local snapshots = {}
+    local p = io.popen and io.popen('ls -1 "' .. EXPORTS_DIR:gsub('"', '') .. '" 2>/dev/null')
+    if p then
+      for date_dir in p:lines() do
+        if date_dir:match("^%d%d%d%d%-%d%d%-%d%d$") then
+          local files = {}
+          local p2 = io.popen('ls -1 "' .. EXPORTS_DIR:gsub('"', '') .. "/" .. date_dir:gsub('"', '') .. '" 2>/dev/null')
+          if p2 then
+            for fname in p2:lines() do
+              if fname:match("^[%w_.%-]+%.csv$") then
+                local f = io.open(EXPORTS_DIR .. "/" .. date_dir .. "/" .. fname, "rb")
+                local size = 0
+                if f then size = f:seek("end") or 0; f:close() end
+                files[#files + 1] = { name = fname, size_bytes = size }
+              end
+            end
+            p2:close()
+          end
+          if #files > 0 then snapshots[#snapshots + 1] = { date = date_dir, files = files } end
+        end
+      end
+      p:close()
+    end
+    table.sort(snapshots, function(x, y) return x.date > y.date end)
+    return { ok = true, enabled = settings.scheduled_exports_enabled or false, snapshots = snapshots }
+  end
+
   -- Swarm-wide "top tracks across all N bots this N days" leaderboard, admin
   -- only (fans out to every bot's own Postgres database, so it's a heavier
   -- query than anything guild-scoped -- see dashboard.lua's
@@ -678,6 +789,14 @@ function M.register(cfg)
   -- go through this helper instead of `params and params.x`.
   local function watch_param(params, field)
     return (type(params) == "table") and params[field] or nil
+  end
+  -- Fold the caller's admin/moderator tier into a builder's scope_key() so
+  -- build_cache (shared across every connection watching the same key on a
+  -- given tick) never lets one caller's auth outcome leak to another -- see
+  -- the SNAPSHOT_BUILDERS admin-gated entries below for why this matters.
+  local function admin_scope(a) return is_admin_auth(a) and "admin" or "denied" end
+  local function admin_or_mod_scope(a)
+    return (is_admin_auth(a) or is_moderator_auth(a)) and "admin_or_mod" or "denied"
   end
   -- ---------------------------------------------------------------------
   local SNAPSHOT_BUILDERS = {
@@ -785,6 +904,140 @@ function M.register(cfg)
         local ok, result = pcall(queues.list_saved_queues, gid, bot_key)
         if not ok then return false, tostring(result) end
         return true, { queues = result }
+      end,
+    },
+    -- Discord API calls (one fetch_identity per bot) are the actual work
+    -- here, not a DB query -- a much longer interval than the other keys to
+    -- avoid turning "no more client polling" into "hammering Discord's API
+    -- on a fast broadcast tick for every connected operator". Bot identity/
+    -- avatar essentially never changes minute to minute anyway.
+    invites = {
+      interval = 60,
+      scope_key = function(a) return dashboard_scope_cache_key(a) end,
+      build = function(a) return true, build_bots_payload(a) end,
+    },
+    -- Every admin/moderator-gated key below double-checks the CONNECTION's
+    -- own auth inside build() (not just at watch-time) -- entry.auth is
+    -- fixed for the socket's lifetime, but this mirrors each key's REST
+    -- equivalent exactly rather than trusting the client to only ever send
+    -- a "watch" for keys its UI happens to expose. scope_key() also folds
+    -- the caller's admin/moderator tier into the cache key: build_cache is
+    -- shared across every connection watching the same key THIS TICK, so if
+    -- it only ever returned a constant like "admin", the first caller's
+    -- pass/fail outcome (e.g. a rando's "denied") would get reused for a
+    -- real admin's connection processing the same key right after.
+    lumisound_admin = {
+      interval = 15,
+      scope_key = function(a) return admin_or_mod_scope(a) end,
+      build = function(a)
+        if not (is_admin_auth(a) or is_moderator_auth(a)) then return false, "Admin or moderator access required" end
+        local ok, data = pcall(lumisound.get_lumisound_admin_data, settings, 50)
+        if not ok then return false, tostring(data) end
+        return true, { data = data }
+      end,
+    },
+    -- stability/metrics/events power BOTH Diagnostics and Intel (they show
+    -- the identical fleet-wide data, just arranged differently) -- one
+    -- cache-shared build per tick regardless of which page(s) are watching.
+    -- Unlike the others below, /api/stability itself only ever required
+    -- plain auth (any signed-in operator), so no extra gating here.
+    stability = {
+      interval = 5,
+      scope_key = function() return "global" end,
+      build = function()
+        local ok, data = pcall(metrics.get_stability_snapshot, music_bots)
+        if not ok then return false, tostring(data) end
+        return true, data
+      end,
+    },
+    metrics_snapshot = {
+      interval = 5,
+      scope_key = function(a) return admin_scope(a) end,
+      build = function(a)
+        if not is_admin_auth(a) then return false, "Admin access required" end
+        local ok, data = pcall(metrics.get_metrics_snapshot, music_bots)
+        if not ok then return false, tostring(data) end
+        return true, data
+      end,
+    },
+    events = {
+      interval = 5,
+      scope_key = function(a) return admin_scope(a) end,
+      build = function(a)
+        if not is_admin_auth(a) then return false, "Admin access required" end
+        -- Mirrors GET /api/events exactly (sort by timestamp, dedup by
+        -- content key, trim to the requested limit) -- the Intel page reads
+        -- events.events the same way whether it came via REST or here.
+        local bounded_limit = 80
+        local ok1, bot_error_events = pcall(metrics.get_recent_bot_error_events, music_bots, bounded_limit)
+        if not ok1 then bot_error_events = {} end
+        local ok2, aria_medic_events = pcall(metrics.get_recent_aria_medic_events, math.max(5, math.floor(bounded_limit / 2)))
+        if not ok2 then aria_medic_events = {} end
+        local combined = {}
+        for _, e in ipairs(bot_error_events) do combined[#combined + 1] = e end
+        for _, e in ipairs(aria_medic_events) do combined[#combined + 1] = e end
+        table.sort(combined, function(x, y) return tostring(x.timestamp) < tostring(y.timestamp) end)
+        local seen, deduped = {}, {}
+        for _, event in ipairs(combined) do
+          local key = table.concat({
+            tostring(event.timestamp or ""), tostring(event.source or ""),
+            tostring(event.title or ""), tostring(event.description or ""), tostring(event.type or "feed_event"),
+          }, "\0")
+          if not seen[key] then
+            seen[key] = true
+            deduped[#deduped + 1] = event
+          end
+        end
+        local out = {}
+        local start_idx = math.max(1, #deduped - bounded_limit + 1)
+        for i = start_idx, #deduped do out[#out + 1] = deduped[i] end
+        return true, { events = out }
+      end,
+    },
+    -- Intel's two 24h trend charts (queued_tracks, active_bots) -- bundled
+    -- into one key since the page always renders both together.
+    trends = {
+      interval = 60,
+      scope_key = function(a) return admin_scope(a) end,
+      build = function(a)
+        if not is_admin_auth(a) then return false, "Admin access required" end
+        local out = {}
+        for _, metric in ipairs({ "queued_tracks", "active_bots" }) do
+          local ok1, points = pcall(metrics.get_metrics_history, metric, 24)
+          local ok2, anomalies = pcall(metrics.get_metric_anomalies, metric, 24)
+          out[metric] = { points = ok1 and points or {}, anomalies = ok2 and anomalies or {} }
+        end
+        return true, out
+      end,
+    },
+    audit_log = {
+      interval = 15,
+      scope_key = function(a) return admin_or_mod_scope(a) end,
+      build = function(a)
+        if not (is_admin_auth(a) or is_moderator_auth(a)) then return false, "Admin or moderator access required" end
+        local ok, data = pcall(audit.list_audit_log, 200, 0, nil)
+        if not ok then return false, tostring(data) end
+        return true, { data = data }
+      end,
+    },
+    alert_rules = {
+      interval = 30,
+      scope_key = function(a) return admin_or_mod_scope(a) end,
+      build = function(a)
+        if not (is_admin_auth(a) or is_moderator_auth(a)) then return false, "Admin or moderator access required" end
+        local ok, rules = pcall(alerts.list_alert_rules)
+        if not ok then return false, tostring(rules) end
+        return true, { rules = rules }
+      end,
+    },
+    exports = {
+      interval = 60,
+      scope_key = function(a) return admin_scope(a) end,
+      build = function(a)
+        if not is_admin_auth(a) then return false, "Admin access required" end
+        local ok, data = pcall(build_exports_payload)
+        if not ok then return false, tostring(data) end
+        return true, data
       end,
     },
   }
@@ -997,75 +1250,7 @@ function M.register(cfg)
   httpd.route("GET", "/api/bots", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
-    local visible_bots = {}
-    for _, bot in ipairs(music_bots) do visible_bots[#visible_bots + 1] = bot end
-    visible_bots[#visible_bots + 1] = cfg.aria_bot
-
-    local bots_out = {}
-    for _, bot in ipairs(visible_bots) do
-      bots_out[#bots_out + 1] = {
-        key = bot.key, display_name = bot.display_name, name = bot.display_name,
-        kind = bot.kind, schema = bot.db_schema,
-        token_configured = (cfg.bot_tokens[bot.key] or "") ~= "",
-      }
-    end
-
-    -- Real invite cards: OAuth invite URL (needs only the bot's client id,
-    -- derived locally from the token — no Discord call) plus a best-effort
-    -- live identity/avatar lookup. A slow/unreachable Discord API for one
-    -- bot degrades that bot's card (identity_error set) rather than failing
-    -- the whole roster response.
-    local scoped = scoped_guild_id(a)
-    local public_scoped = (scoped ~= OWNER_SCOPE_SENTINEL) and scoped or nil
-
-    -- Mirrors _visible_music_bots_for_auth(): only worth computing when this
-    -- caller IS guild-scoped (an unscoped/admin caller's Python equivalent
-    -- short-circuits `scoped_guild_id and ...` straight to false too).
-    local visible_keys = {}
-    if public_scoped then
-      local ok, dash_data = pcall(dashboard.get_dashboard_data, music_bots)
-      if ok then
-        for _, bot in ipairs(dash_data.bots or {}) do
-          for _, gid in ipairs(bot.known_guild_ids or {}) do
-            if gid == public_scoped then visible_keys[bot.key] = true break end
-          end
-        end
-      end
-    end
-
-    local invite_bots = {}
-    for _, bot in ipairs(visible_bots) do
-      local token = cfg.bot_tokens[bot.key] or ""
-      local client_id = token ~= "" and discord_service.client_id_from_token(token) or nil
-      local identity, identity_error = {}, nil
-      if token ~= "" then
-        local ok, result = pcall(discord_service.fetch_identity, token)
-        if ok and result then
-          identity = result
-          client_id = identity.id or client_id
-        else
-          identity_error = tostring(result or "Discord identity lookup failed.")
-        end
-      end
-      local perms = (bot.kind == "orchestrator") and discord_service.ARIA_BOT_PERMISSIONS or discord_service.MUSIC_BOT_PERMISSIONS
-      local permission_integer = discord_service.permission_value(perms)
-      invite_bots[#invite_bots + 1] = {
-        key = bot.key, display_name = bot.display_name, name = bot.display_name,
-        kind = bot.kind, schema = bot.db_schema, token_configured = token ~= "",
-        client_id = client_id,
-        invite_url = client_id and discord_service.invite_url_for_bot(client_id, permission_integer, public_scoped) or nil,
-        permission_integer = string.format("%.0f", permission_integer),
-        permissions = perms,
-        capability_summary = discord_service.BOT_CAPABILITY_SUMMARIES[bot.kind] or "Discord bot with slash commands and server tools.",
-        accent = cfg.bot_accents and cfg.bot_accents[bot.key] or "#89b4fa",
-        connected_to_session_guild = (public_scoped ~= nil) and (visible_keys[bot.key] == true),
-        icon_url = identity.avatar_url,
-        identity_name = identity.global_name or identity.username,
-        identity_error = identity_error,
-      }
-    end
-
-    return 200, { bots = bots_out, invite_bots = invite_bots, scoped_guild_id = public_scoped }
+    return 200, build_bots_payload(a)
   end)
 
   -- Port of app/routers/bots.py's GET /api/bots/{bot_key}/inventory: the
@@ -2423,37 +2608,10 @@ function M.register(cfg)
   -- normally be empty unless something else populates it. Path-traversal
   -- guards (date/filename regex + resolved-path containment check) are
   -- ported as-is since that's the actual security-relevant part.
-  local EXPORTS_DIR = (settings.scheduled_exports_dir and settings.scheduled_exports_dir ~= "")
-    and settings.scheduled_exports_dir or "./.runtime/exports"
-
   httpd.route("GET", "/api/exports", function(req)
     local a, status, err_body = require_admin(req)
     if not a then return status, err_body end
-    local snapshots = {}
-    local p = io.popen and io.popen('ls -1 "' .. EXPORTS_DIR:gsub('"', '') .. '" 2>/dev/null')
-    if p then
-      for date_dir in p:lines() do
-        if date_dir:match("^%d%d%d%d%-%d%d%-%d%d$") then
-          local files = {}
-          local p2 = io.popen('ls -1 "' .. EXPORTS_DIR:gsub('"', '') .. "/" .. date_dir:gsub('"', '') .. '" 2>/dev/null')
-          if p2 then
-            for fname in p2:lines() do
-              if fname:match("^[%w_.%-]+%.csv$") then
-                local f = io.open(EXPORTS_DIR .. "/" .. date_dir .. "/" .. fname, "rb")
-                local size = 0
-                if f then size = f:seek("end") or 0; f:close() end
-                files[#files + 1] = { name = fname, size_bytes = size }
-              end
-            end
-            p2:close()
-          end
-          if #files > 0 then snapshots[#snapshots + 1] = { date = date_dir, files = files } end
-        end
-      end
-      p:close()
-    end
-    table.sort(snapshots, function(x, y) return x.date > y.date end)
-    return 200, { ok = true, enabled = settings.scheduled_exports_enabled or false, snapshots = snapshots }
+    return 200, build_exports_payload()
   end)
 
   httpd.route("GET", "/api/exports/:date/:filename", function(req)

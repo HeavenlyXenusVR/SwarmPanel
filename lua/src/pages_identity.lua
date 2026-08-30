@@ -1173,35 +1173,30 @@ function M.register(cfg)
       ]],
     })
     local script = [[
-      async function loadDiagnostics() {
-        try {
-          const stability = await swarmFetch("/api/stability");
-          document.getElementById("diag-stability").innerHTML = '<pre class="json-panel">' + JSON.stringify(stability, null, 2).replace(/</g, "&lt;") + "</pre>";
-        } catch { /* ignore */ }
-        try {
-          const metrics = await swarmFetch("/api/metrics");
-          document.getElementById("diag-metrics").innerHTML = '<pre class="json-panel">' + JSON.stringify(metrics, null, 2).replace(/</g, "&lt;") + "</pre>";
-        } catch { /* ignore */ }
+      function applyStability(stability) {
+        document.getElementById("diag-stability").innerHTML = '<pre class="json-panel">' + JSON.stringify(stability, null, 2).replace(/</g, "&lt;") + "</pre>";
       }
-      async function loadAlerts() {
-        try {
-          const res = await swarmFetch("/api/alert-rules");
-          document.getElementById("diag-alerts").innerHTML = (res.rules || []).map((r) => `
-            <div class="alert-rule">
-              <span><strong>${r.rule_type}</strong> — ${r.threshold_minutes}m${r.escalation_minutes ? `, escalate after ${r.escalation_minutes}m` : ""}${r.escalate_email ? " (email)" : ""}</span>
-              <label class="switch"><input type="checkbox" data-toggle-rule="${r.id}" ${r.enabled ? "checked" : ""}> Enabled</label>
-              <button type="button" data-delete-rule="${r.id}">Delete</button>
-            </div>`).join("") || "<p>No alert rules.</p>";
-        } catch { /* ignore */ }
+      function applyDiagMetrics(metrics) {
+        document.getElementById("diag-metrics").innerHTML = '<pre class="json-panel">' + JSON.stringify(metrics, null, 2).replace(/</g, "&lt;") + "</pre>";
       }
-      async function loadExports() {
-        try {
-          const res = await swarmFetch("/api/exports");
-          const rows = (res.snapshots || []).flatMap((snap) => (snap.files || []).map((f) =>
-            `<div><a href="/api/exports/${snap.date}/${f.name}">${snap.date}/${f.name}</a> (${f.size_bytes}b)</div>`));
-          document.getElementById("diag-exports").innerHTML = rows.join("") || "<p>No exports.</p>";
-        } catch { /* ignore */ }
+      function applyAlerts(res) {
+        document.getElementById("diag-alerts").innerHTML = (res.rules || []).map((r) => `
+          <div class="alert-rule">
+            <span><strong>${r.rule_type}</strong> — ${r.threshold_minutes}m${r.escalation_minutes ? `, escalate after ${r.escalation_minutes}m` : ""}${r.escalate_email ? " (email)" : ""}</span>
+            <label class="switch"><input type="checkbox" data-toggle-rule="${r.id}" ${r.enabled ? "checked" : ""}> Enabled</label>
+            <button type="button" data-delete-rule="${r.id}">Delete</button>
+          </div>`).join("") || "<p>No alert rules.</p>";
       }
+      function applyExports(res) {
+        const rows = (res.snapshots || []).flatMap((snap) => (snap.files || []).map((f) =>
+          `<div><a href="/api/exports/${snap.date}/${f.name}">${snap.date}/${f.name}</a> (${f.size_bytes}b)</div>`));
+        document.getElementById("diag-exports").innerHTML = rows.join("") || "<p>No exports.</p>";
+      }
+      window.swarmLive.watch("stability", (msg) => { if (msg.type === "snapshot") applyStability(msg.data); });
+      window.swarmLive.watch("metrics_snapshot", (msg) => { if (msg.type === "snapshot") applyDiagMetrics(msg.data); });
+      window.swarmLive.watch("alert_rules", (msg) => { if (msg.type === "snapshot") applyAlerts(msg.data); });
+      window.swarmLive.watch("exports", (msg) => { if (msg.type === "snapshot") applyExports(msg.data); });
+      function refreshAlerts() { swarmFetch("/api/alert-rules").then(applyAlerts).catch(() => {}); }
       const alertForm = document.getElementById("alert-rule-form");
       alertForm.addEventListener("submit", async (e) => {
         e.preventDefault();
@@ -1219,12 +1214,12 @@ function M.register(cfg)
           });
           swarmToast("Alert rule created.", "success");
           alertForm.reset();
-          loadAlerts();
+          refreshAlerts();
         } catch (err) { swarmToast(err.message, "error"); }
       });
       document.getElementById("diag-alerts").addEventListener("click", async (e) => {
         const id = e.target.getAttribute("data-delete-rule");
-        if (id) { await swarmFetch(`/api/alert-rules/${id}/delete`, { method: "POST" }).catch(() => {}); loadAlerts(); }
+        if (id) { await swarmFetch(`/api/alert-rules/${id}/delete`, { method: "POST" }).catch(() => {}); refreshAlerts(); }
       });
       document.getElementById("diag-alerts").addEventListener("change", async (e) => {
         const id = e.target.getAttribute("data-toggle-rule");
@@ -1233,11 +1228,11 @@ function M.register(cfg)
           await swarmFetch(`/api/alert-rules/${id}/update`, { method: "POST", body: JSON.stringify({ enabled: e.target.checked }) });
         } catch (err) { swarmToast(err.message, "error"); e.target.checked = !e.target.checked; }
       });
-      swarmLiveRefresh(loadDiagnostics, 5000);
-      swarmLiveRefresh(loadAlerts, 30000);
-      swarmLiveRefresh(loadExports, 60000);
       document.getElementById("diag-refresh").addEventListener("click", () => {
-        loadDiagnostics(); loadAlerts(); loadExports();
+        swarmFetch("/api/stability").then(applyStability).catch(() => {});
+        swarmFetch("/api/metrics").then(applyDiagMetrics).catch(() => {});
+        refreshAlerts();
+        swarmFetch("/api/exports").then(applyExports).catch(() => {});
         swarmToast("Refreshed.", "success");
       });
     ]]

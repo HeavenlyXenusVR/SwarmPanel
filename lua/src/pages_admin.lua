@@ -449,12 +449,13 @@ function M.register(cfg)
         try {
           await swarmFetch(path, { method: "POST", body: JSON.stringify(payload) });
           swarmToast(message, "success");
-          loadLumisound();
+          // Instant feedback rather than waiting for the next live-push
+          // tick (up to 15s away) -- same pattern as Controls/Friends.
+          swarmFetch("/api/lumisound/admin").then(applyLumisound).catch(() => {});
         } catch (err) { swarmToast(err.message, "error"); }
       }
-      async function loadLumisound() {
+      function applyLumisound(res) {
         try {
-          const res = await swarmFetch("/api/lumisound/admin");
           const d = res.data || {};
           const summary = d.summary || {};
           const users = d.users || [];
@@ -507,7 +508,10 @@ function M.register(cfg)
         else if (t.hasAttribute("data-ls-resolve")) mutateLumisound("/api/lumisound/bug-reports/status", { report_id: t.getAttribute("data-ls-resolve"), status: "resolved" }, "Bug report resolved.");
         else if (t.hasAttribute("data-ls-reopen")) mutateLumisound("/api/lumisound/bug-reports/status", { report_id: t.getAttribute("data-ls-reopen"), status: "open" }, "Bug report reopened.");
       });
-      swarmLiveRefresh(loadLumisound, 15000);
+      window.swarmLive.watch("lumisound_admin", (msg) => {
+        if (msg.type === "snapshot_error") { swarmToast("Failed to load Lumisound data.", "error"); return; }
+        if (msg.type === "snapshot") applyLumisound(msg.data);
+      });
     ]=]
     return page_shell(req, a, "/lumisound-admin", "Lumisound Admin", body, script)
   end)
@@ -611,50 +615,53 @@ function M.register(cfg)
           });
         });
       }
-      async function loadTrends() {
-        try {
-          const results = await Promise.all(TREND_METRICS.map((m) =>
-            Promise.all([
-              swarmFetch(`/api/metrics/history?metric=${m.key}&hours=24`).catch(() => ({ points: [] })),
-              swarmFetch(`/api/metrics/anomalies?metric=${m.key}&hours=24`).catch(() => ({ anomalies: [] })),
-            ])
-          ));
-          const container = document.getElementById("intel-trends");
-          container.innerHTML = results.map(([hist, anom], i) =>
-            renderTrendChart(hist.points, TREND_METRICS[i].label, TREND_METRICS[i].color, anom.anomalies)).join("");
-          wireTrendHover(container);
-          const anomalyCount = results.reduce((sum, [, anom]) => sum + (anom.anomalies || []).length, 0);
-          document.getElementById("intel-anomaly-banner").innerHTML = anomalyCount
-            ? `<div class="notice notice-error">${anomalyCount} anomal${anomalyCount === 1 ? "y" : "ies"} flagged in the last 24h — points marked on the trend charts above deviate sharply from the window average.</div>`
-            : "";
-        } catch { /* ignore */ }
+      function applyTrends(out) {
+        const container = document.getElementById("intel-trends");
+        container.innerHTML = TREND_METRICS.map((m) => {
+          const t = out[m.key] || { points: [], anomalies: [] };
+          return renderTrendChart(t.points, m.label, m.color, t.anomalies);
+        }).join("");
+        wireTrendHover(container);
+        const anomalyCount = TREND_METRICS.reduce((sum, m) => sum + ((out[m.key] || {}).anomalies || []).length, 0);
+        document.getElementById("intel-anomaly-banner").innerHTML = anomalyCount
+          ? `<div class="notice notice-error">${anomalyCount} anomal${anomalyCount === 1 ? "y" : "ies"} flagged in the last 24h — points marked on the trend charts above deviate sharply from the window average.</div>`
+          : "";
       }
-      async function loadIntel() {
-        try {
-          const [metricsRes, stability, events] = await Promise.all([
-            swarmFetch("/api/metrics"), swarmFetch("/api/stability"), swarmFetch("/api/events?limit=80"),
-          ]);
-          document.getElementById("intel-metrics").innerHTML = '<pre class="json-panel">' + JSON.stringify(metricsRes, null, 2).replace(/</g, "&lt;") + "</pre>";
-          document.getElementById("intel-stability").innerHTML = '<pre class="json-panel">' + JSON.stringify(stability, null, 2).replace(/</g, "&lt;") + "</pre>";
-          // .event/-error/-warning had full CSS (severity-tinted card
-          // borders) but the events feed was rendered as a bare 3-column
-          // table with no description column at all -- description (the
-          // actually useful part of each event) was silently dropped.
-          const cards = (events.events || []).map((e) => {
-            const level = (e.level || "info").toLowerCase();
-            const cls = level === "error" ? "event-error" : level === "warning" ? "event-warning" : "";
-            return `<div class="event ${cls}">
-              <div><strong>${(e.title || e.type || "Event").replace(/</g, "&lt;")}</strong><span>${e.timestamp || ""}</span></div>
-              <p>${(e.description || "").replace(/</g, "&lt;")}</p>
-              <div><small>${(e.source || "").replace(/</g, "&lt;")}</small><small>${level}</small></div>
-            </div>`;
-          }).join("");
-          document.getElementById("intel-events").innerHTML = cards || '<div class="empty-state">No events.</div>';
-        } catch (err) { swarmToast("Failed to load intel.", "error"); }
+      window.swarmLive.watch("trends", (msg) => {
+        if (msg.type === "snapshot") applyTrends(msg.data);
+      });
+      function applyIntelMetrics(metricsRes) {
+        document.getElementById("intel-metrics").innerHTML = '<pre class="json-panel">' + JSON.stringify(metricsRes, null, 2).replace(/</g, "&lt;") + "</pre>";
       }
-      swarmLiveRefresh(loadIntel, 5000);
-      loadTrends();
-      swarmLiveRefresh(loadTrends, 60000);
+      function applyIntelStability(stability) {
+        document.getElementById("intel-stability").innerHTML = '<pre class="json-panel">' + JSON.stringify(stability, null, 2).replace(/</g, "&lt;") + "</pre>";
+      }
+      function applyIntelEvents(events) {
+        // .event/-error/-warning had full CSS (severity-tinted card
+        // borders) but the events feed was rendered as a bare 3-column
+        // table with no description column at all -- description (the
+        // actually useful part of each event) was silently dropped.
+        const cards = (events.events || []).map((e) => {
+          const level = (e.level || "info").toLowerCase();
+          const cls = level === "error" ? "event-error" : level === "warning" ? "event-warning" : "";
+          return `<div class="event ${cls}">
+            <div><strong>${(e.title || e.type || "Event").replace(/</g, "&lt;")}</strong><span>${e.timestamp || ""}</span></div>
+            <p>${(e.description || "").replace(/</g, "&lt;")}</p>
+            <div><small>${(e.source || "").replace(/</g, "&lt;")}</small><small>${level}</small></div>
+          </div>`;
+        }).join("");
+        document.getElementById("intel-events").innerHTML = cards || '<div class="empty-state">No events.</div>';
+      }
+      window.swarmLive.watch("metrics_snapshot", (msg) => {
+        if (msg.type === "snapshot_error") { swarmToast("Failed to load intel.", "error"); return; }
+        if (msg.type === "snapshot") applyIntelMetrics(msg.data);
+      });
+      window.swarmLive.watch("stability", (msg) => {
+        if (msg.type === "snapshot") applyIntelStability(msg.data);
+      });
+      window.swarmLive.watch("events", (msg) => {
+        if (msg.type === "snapshot") applyIntelEvents(msg.data);
+      });
     ]=]
     return page_shell(req, a, "/intel", "Intel", body, script)
   end)
@@ -672,9 +679,8 @@ function M.register(cfg)
     })
     local script = ([[
       const canRevert = %s;
-      async function loadAudit() {
+      function applyAudit(res) {
         try {
-          const res = await swarmFetch("/api/audit-log?limit=200");
           document.getElementById("audit-rows").innerHTML = ((res.data && res.data.entries) || []).map((e) => {
             let diff = "";
             try {
@@ -704,9 +710,15 @@ function M.register(cfg)
         const id = e.target.getAttribute("data-revert");
         if (!id) return;
         if (!confirm("Revert this action?")) return;
-        try { await swarmFetch(`/api/audit-log/${id}/revert`, { method: "POST" }); loadAudit(); } catch (err) { swarmToast(err.message, "error"); }
+        try {
+          await swarmFetch(`/api/audit-log/${id}/revert`, { method: "POST" });
+          swarmFetch("/api/audit-log?limit=200").then(applyAudit).catch(() => {});
+        } catch (err) { swarmToast(err.message, "error"); }
       });
-      swarmLiveRefresh(loadAudit, 15000);
+      window.swarmLive.watch("audit_log", (msg) => {
+        if (msg.type === "snapshot_error") { swarmToast("Failed to load audit log.", "error"); return; }
+        if (msg.type === "snapshot") applyAudit(msg.data);
+      });
     ]]):format(a.site_owner and "true" or "false")
     return page_shell(req, a, "/audit-log", "Audit Log", body, script)
   end)

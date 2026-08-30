@@ -529,33 +529,33 @@ function M.register(cfg)
       body = '<div id="invite-cards" class="invite-grid">' .. html.empty_state("Loading...") .. "</div>",
     })
     local script = [[
-      async function loadInvites() {
-        try {
-          const res = await swarmFetch("/api/bots");
-          const cards = (res.invite_bots || res.bots || []).map((b) => {
-            const avatar = b.icon_url
-              ? `<img class="avatar invite-avatar" src="${b.icon_url}" alt="">`
-              : `<span class="avatar invite-avatar avatar-fallback">${(b.identity_name || b.name || b.display_name || "?").slice(0, 1).toUpperCase()}</span>`;
-            return `
-            <div class="invite-card" style="--card-accent: ${b.accent || "#89b4fa"}">
-              <div class="invite-card-head">
-                ${avatar}
-                <div class="invite-card-copy">
-                  <strong>${b.name || b.display_name}</strong>
-                  <small>${(b.capability_summary || "").replace(/</g, "&lt;")}</small>
-                </div>
-                ${b.connected_to_session_guild ? '<span class="data-pill data-pill-live">In your guild</span>' : ""}
+      function applyInvites(res) {
+        const cards = (res.invite_bots || res.bots || []).map((b) => {
+          const avatar = b.icon_url
+            ? `<img class="avatar invite-avatar" src="${b.icon_url}" alt="">`
+            : `<span class="avatar invite-avatar avatar-fallback">${(b.identity_name || b.name || b.display_name || "?").slice(0, 1).toUpperCase()}</span>`;
+          return `
+          <div class="invite-card" style="--card-accent: ${b.accent || "#89b4fa"}">
+            <div class="invite-card-head">
+              ${avatar}
+              <div class="invite-card-copy">
+                <strong>${b.name || b.display_name}</strong>
+                <small>${(b.capability_summary || "").replace(/</g, "&lt;")}</small>
               </div>
-              ${b.identity_error ? `<p class="notice notice-error">${b.identity_error.replace(/</g, "&lt;")}</p>` : ""}
-              <p>
-                ${b.invite_url ? `<a class="button-link primary" href="${b.invite_url}" target="_blank" rel="noreferrer">Invite</a>` : "<span>No invite available</span>"}
-              </p>
-            </div>`;
-          }).join("");
-          document.getElementById("invite-cards").innerHTML = cards || "<p>No bots found.</p>";
-        } catch (err) { swarmToast("Failed to load bots.", "error"); }
+              ${b.connected_to_session_guild ? '<span class="data-pill data-pill-live">In your guild</span>' : ""}
+            </div>
+            ${b.identity_error ? `<p class="notice notice-error">${b.identity_error.replace(/</g, "&lt;")}</p>` : ""}
+            <p>
+              ${b.invite_url ? `<a class="button-link primary" href="${b.invite_url}" target="_blank" rel="noreferrer">Invite</a>` : "<span>No invite available</span>"}
+            </p>
+          </div>`;
+        }).join("");
+        document.getElementById("invite-cards").innerHTML = cards || "<p>No bots found.</p>";
       }
-      swarmLiveRefresh(loadInvites, 5000);
+      window.swarmLive.watch("invites", (msg) => {
+        if (msg.type === "snapshot_error") { swarmToast("Failed to load bots.", "error"); return; }
+        if (msg.type === "snapshot") applyInvites(msg.data);
+      });
     ]]
     return page_shell(req, a, "/invites", "Invites", body, script)
   end)
