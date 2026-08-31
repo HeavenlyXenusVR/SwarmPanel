@@ -156,7 +156,12 @@ end
 
 local function apply_cors(headers_out, req_headers)
   local origin = req_headers["origin"]
-  if origin_allowed(origin) then
+  -- Pass the request's own Host header exactly like handle_ws_upgrade does
+  -- above, so the same-origin bypass in origin_allowed() applies identically
+  -- on both paths -- without this, a future change to
+  -- PANEL_CORS_ALLOWED_ORIGINS/the origin-suffix regex could silently make
+  -- plain HTTP CORS behavior diverge from the WS upgrade's origin check.
+  if origin_allowed(origin, req_headers["host"]) then
     headers_out["Access-Control-Allow-Origin"] = origin
     headers_out["Access-Control-Allow-Credentials"] = "true"
     headers_out["Vary"] = "Origin"

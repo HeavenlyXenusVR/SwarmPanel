@@ -398,6 +398,16 @@ function M.register(cfg)
     local rl_status, rl_body = ratelimit.check(
       ("login-api:%s:%s"):format(req.client_ip or "unknown", username:lower():sub(1, 80)), 15, 900)
     if rl_status then return rl_status, rl_body end
+    -- Second, IP-independent cap keyed on username alone: the ip:username
+    -- bucket above stops one IP from hammering a username, but a
+    -- distributed/rotating-IP attacker can still brute-force a fixed
+    -- username (e.g. the PANEL_ADMIN_USERNAME account) at 15 attempts/900s
+    -- PER IP indefinitely across many IPs. This bucket is global across all
+    -- IPs for the same username, with a more generous window/count so
+    -- legitimate multi-IP admin use (phone + laptop + office) isn't blocked.
+    local rl2_status, rl2_body = ratelimit.check(
+      ("login-api-username:%s"):format(username:lower():sub(1, 80)), 30, 900)
+    if rl2_status then return rl2_status, rl2_body end
 
     local auth_result = nil
     if auth.verify_credentials(username, password, settings.admin_username, settings.admin_password) then
@@ -589,9 +599,19 @@ function M.register(cfg)
     return data
   end
 
+  -- DoS backstop: every require_auth-only (non-admin) endpoint below gets a
+  -- modest per-account rate limit, same ratelimit.lua mechanism the auth
+  -- routes above use, keyed on the account's username alone (any authorized
+  -- guild account, so no IP scoping needed) rather than being left
+  -- completely unbounded like upload/avatar/2fa routes already are limited
+  -- but these plain reads previously weren't. Admin-gated routes are left
+  -- alone (lower risk, already gated) as are routes that already carry
+  -- their own rate limit.
   httpd.route("GET", "/api/dashboard", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local ok, data = pcall(build_dashboard_payload, a, true)
     if not ok then return 503, { detail = "Dashboard unavailable: " .. tostring(data) } end
     return 200, data
@@ -716,6 +736,8 @@ function M.register(cfg)
   httpd.route("GET", "/api/swarm-leaderboard", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     if not is_admin_auth(a) then return 403, { detail = "Swarm-wide leaderboard is admin-only (it queries every bot's database)." } end
     local ok, data = pcall(dashboard.get_swarm_leaderboard, music_bots, { days = req.query.days, limit = req.query.limit })
     if not ok then return 503, { detail = "Swarm leaderboard unavailable: " .. tostring(data) } end
@@ -879,7 +901,15 @@ function M.register(cfg)
     },
     control_state = {
       interval = 2,
-      scope_key = function(a, params) return "cs:" .. tostring(watch_param(params, "bot_key")) .. ":" .. tostring(watch_param(params, "guild_id")) end,
+      -- Fold the caller's guild-scope identity into the cache key -- see the
+      -- admin/moderator-gated builders' scope_key()s below (and
+      -- dashboard_scope_cache_key above) for why: build_cache is shared
+      -- across every connection watching the same key THIS tick, so without
+      -- this, one operator's access check (require_bot_guild_access inside
+      -- build()) could get run once and its cached result reused for a
+      -- DIFFERENT connection watching the identical bot_key/guild_id whose
+      -- own auth would not actually pass that check.
+      scope_key = function(a, params) return "cs:" .. tostring(scoped_guild_id(a)) .. ":" .. tostring(watch_param(params, "bot_key")) .. ":" .. tostring(watch_param(params, "guild_id")) end,
       build = function(a, params)
         local bot_key, gid = watch_param(params, "bot_key"), watch_param(params, "guild_id")
         if not bot_key or not gid or gid == "" then return false, "bot_key/guild_id required" end
@@ -895,7 +925,11 @@ function M.register(cfg)
     },
     queues = {
       interval = 5,
-      scope_key = function(a, params) return "q:" .. tostring(watch_param(params, "guild_id")) .. ":" .. tostring(watch_param(params, "bot_key")) end,
+      -- Same fix as control_state above: fold the caller's guild-scope
+      -- identity in so require_guild_scope's per-connection outcome inside
+      -- build() can't be cached under a key that's identical for every
+      -- caller regardless of what guild(s) they're actually allowed to see.
+      scope_key = function(a, params) return "q:" .. tostring(scoped_guild_id(a)) .. ":" .. tostring(watch_param(params, "guild_id")) .. ":" .. tostring(watch_param(params, "bot_key")) end,
       build = function(a, params)
         local gid, bot_key = watch_param(params, "guild_id"), watch_param(params, "bot_key")
         if not gid or gid == "" then return false, "guild_id is required" end
@@ -1250,6 +1284,8 @@ function M.register(cfg)
   httpd.route("GET", "/api/bots", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     return 200, build_bots_payload(a)
   end)
 
@@ -1262,6 +1298,8 @@ function M.register(cfg)
   httpd.route("GET", "/api/bots/:bot_key/inventory", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local bot = bot_index[req.params.bot_key]
     if not bot then return 404, { detail = "Unknown bot key" } end
     local scoped = scoped_guild_id(a)
@@ -1303,6 +1341,8 @@ function M.register(cfg)
   httpd.route("GET", "/api/bots/:bot_key/control-state", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local gid = req.query.guild_id
     if not gid or gid == "" then return 400, { detail = "guild_id is required" } end
     local gerr_status, gerr_body = require_bot_guild_access(req, a, req.params.bot_key, gid)
@@ -1319,6 +1359,8 @@ function M.register(cfg)
   httpd.route("POST", "/api/bots/control", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local body = req.json or {}
     local action = tostring(body.action or body.command or ""):upper()
     if not control.VALID_ACTIONS[action] then return 400, { detail = "Unsupported action: " .. action } end
@@ -1607,6 +1649,8 @@ function M.register(cfg)
   httpd.route("GET", "/api/users/me", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local scoped_gid = account_guild_id(a)
     local username = tostring(a.username or settings.admin_username)
     if not scoped_gid then
@@ -1632,6 +1676,8 @@ function M.register(cfg)
   httpd.route("POST", "/api/users/me", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local scoped_gid = account_guild_id(a)
     local username = tostring(a.username or "")
     if not scoped_gid or username == "" then return 403, { detail = "Guild account access required to edit a public profile" } end
@@ -1647,6 +1693,8 @@ function M.register(cfg)
   httpd.route("GET", "/api/users/preferences", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local scoped_gid = account_guild_id(a)
     local username = tostring(a.username or "")
     local defaults = profiles.default_panel_preferences()
@@ -1662,6 +1710,8 @@ function M.register(cfg)
   httpd.route("POST", "/api/users/preferences", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local scoped_gid = account_guild_id(a)
     local username = tostring(a.username or "")
     if not scoped_gid or username == "" then return 403, { detail = "Guild account access required to save panel preferences" } end
@@ -1685,12 +1735,16 @@ function M.register(cfg)
   httpd.route("GET", "/api/appearance/presets", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     return 200, { panel = looks.PANEL_LOOKS, profile = looks.PROFILE_LOOKS }
   end)
 
   httpd.route("GET", "/api/users/search", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local q = tostring(req.query.q or ""):gsub("%s+", " "):sub(1, 80)
     local limit = math.max(1, math.min(tonumber(req.query.limit) or 24, 50))
     local viewer_id = select(1, account_id_for_auth(a))
@@ -1701,6 +1755,8 @@ function M.register(cfg)
   httpd.route("GET", "/api/users/directory", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local q = tostring(req.query.q or ""):gsub("%s+", " "):sub(1, 80)
     local limit = math.max(1, math.min(tonumber(req.query.limit) or 24, 50))
     local viewer_id = select(1, account_id_for_auth(a))
@@ -1741,6 +1797,8 @@ function M.register(cfg)
   httpd.route("GET", "/api/users/:account_id/profile", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local viewer_id = select(1, account_id_for_auth(a))
     local ok, profile = pcall(social.get_public_account_profile, req.params.account_id, viewer_id)
     if not ok or not profile then return 404, { detail = "Profile not found" } end
@@ -1756,6 +1814,8 @@ function M.register(cfg)
   httpd.route("POST", "/api/users/:account_id/follow", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local actor_id, aerr = account_id_for_auth(a)
     if not actor_id then return 403, { detail = aerr } end
     local following = (req.json or {}).following and true or false
@@ -1786,6 +1846,8 @@ function M.register(cfg)
   httpd.route("POST", "/api/users/:account_id/friend-request", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local actor_id, aerr = account_id_for_auth(a)
     if not actor_id then return 403, { detail = aerr } end
     local target = accounts.get_account_by_id(req.params.account_id)
@@ -1809,6 +1871,8 @@ function M.register(cfg)
   httpd.route("GET", "/api/friends/requests", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local actor_id, aerr = account_id_for_auth(a)
     if not actor_id then return 403, { detail = aerr } end
     return 200, {
@@ -1821,6 +1885,8 @@ function M.register(cfg)
   httpd.route("POST", "/api/friends/requests/:request_id", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local actor_id, aerr = account_id_for_auth(a)
     if not actor_id then return 403, { detail = aerr } end
     local ok, result = pcall(social.respond_account_friend_request, actor_id, req.params.request_id, (req.json or {}).action)
@@ -1838,6 +1904,8 @@ function M.register(cfg)
   httpd.route("GET", "/api/me/friends", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local actor_id, aerr = account_id_for_auth(a)
     if not actor_id then return 403, { detail = aerr } end
     return 200, { ok = true, friends = social.list_account_friends(actor_id) }
@@ -1846,6 +1914,8 @@ function M.register(cfg)
   httpd.route("GET", "/api/messages/threads", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local actor_id, aerr = account_id_for_auth(a)
     if not actor_id then return 403, { detail = aerr } end
     return 200, { ok = true, threads = social.list_account_message_threads(actor_id) }
@@ -1854,6 +1924,8 @@ function M.register(cfg)
   httpd.route("GET", "/api/messages/:account_id", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local actor_id, aerr = account_id_for_auth(a)
     if not actor_id then return 403, { detail = aerr } end
     local target = accounts.get_account_by_id(req.params.account_id)
@@ -1873,6 +1945,8 @@ function M.register(cfg)
   httpd.route("POST", "/api/messages/:account_id", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local actor_id, aerr = account_id_for_auth(a)
     if not actor_id then return 403, { detail = aerr } end
     local target = accounts.get_account_by_id(req.params.account_id)
@@ -1893,6 +1967,8 @@ function M.register(cfg)
   httpd.route("GET", "/api/notifications", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local actor_id, aerr = account_id_for_auth(a)
     if not actor_id then return 403, { detail = aerr } end
     local limit = math.max(1, math.min(tonumber(req.query.limit) or 30, 100))
@@ -1902,6 +1978,8 @@ function M.register(cfg)
   httpd.route("GET", "/api/notifications/unread-count", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local actor_id, aerr = account_id_for_auth(a)
     if not actor_id then return 403, { detail = aerr } end
     return 200, { ok = true, unread_count = social.unread_notification_count(actor_id) }
@@ -1910,6 +1988,8 @@ function M.register(cfg)
   httpd.route("POST", "/api/notifications/:notification_id/read", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local actor_id, aerr = account_id_for_auth(a)
     if not actor_id then return 403, { detail = aerr } end
     social.mark_notification_read(req.params.notification_id, actor_id)
@@ -1919,6 +1999,8 @@ function M.register(cfg)
   httpd.route("POST", "/api/notifications/read-all", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local actor_id, aerr = account_id_for_auth(a)
     if not actor_id then return 403, { detail = aerr } end
     social.mark_all_notifications_read(actor_id)
@@ -2073,6 +2155,8 @@ function M.register(cfg)
   httpd.route("GET", "/api/queues", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local gid = req.query.guild_id
     if not gid or gid == "" then return 400, { detail = "guild_id is required" } end
     local gerr_status, gerr_body = require_guild_scope(req, a, gid)
@@ -2085,6 +2169,8 @@ function M.register(cfg)
   httpd.route("POST", "/api/queues", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local body = req.json or {}
     if not body.guild_id or tostring(body.guild_id) == "" then return 400, { detail = "guild_id is required" } end
     local gerr_status, gerr_body = require_guild_scope(req, a, body.guild_id)
@@ -2101,6 +2187,8 @@ function M.register(cfg)
   httpd.route("POST", "/api/queues/:queue_id/rename", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local body = req.json or {}
     if not body.guild_id or tostring(body.guild_id) == "" then return 400, { detail = "guild_id is required" } end
     local gerr_status, gerr_body = require_guild_scope(req, a, body.guild_id)
@@ -2114,6 +2202,8 @@ function M.register(cfg)
   httpd.route("POST", "/api/queues/:queue_id/delete", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local body = req.json or {}
     if not body.guild_id or tostring(body.guild_id) == "" then return 400, { detail = "guild_id is required" } end
     local gerr_status, gerr_body = require_guild_scope(req, a, body.guild_id)
@@ -2129,6 +2219,8 @@ function M.register(cfg)
   httpd.route("GET", "/api/guilds/:guild_id/control-matrix", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local gid = req.params.guild_id
     local gerr_status, gerr_body = require_guild_scope(req, a, gid)
     if gerr_status then return gerr_status, gerr_body end
@@ -2151,6 +2243,8 @@ function M.register(cfg)
   httpd.route("GET", "/api/guilds/:guild_id/leaderboard", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local gid = req.params.guild_id
     local gerr_status, gerr_body = require_guild_scope(req, a, gid)
     if gerr_status then return gerr_status, gerr_body end
@@ -2166,6 +2260,8 @@ function M.register(cfg)
   httpd.route("GET", "/api/music-intelligence", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local gid = req.query.guild_id
     local scoped = scoped_guild_id(a)
     if scoped and scoped ~= OWNER_SCOPE_SENTINEL then
@@ -2423,6 +2519,8 @@ function M.register(cfg)
   httpd.route("GET", "/api/stability", function(req)
     local a, status, err_body = require_auth(req)
     if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
     local ok, data = pcall(metrics.get_stability_snapshot, music_bots)
     if not ok then return 500, { detail = "Stability snapshot unavailable: " .. tostring(data) } end
     return 200, data
@@ -2719,8 +2817,19 @@ function M.register(cfg)
   end
 
   httpd.route("GET", "/api/projects/lumisound/download", function(req)
-    local a, status, err_body = require_auth(req)
+    -- Gated to admin/moderator (not just any registered guild account):
+    -- this triggers a server-side `gh release download` against a private
+    -- repo using this box's GH_TOKEN, and the only prior anti-abuse control
+    -- was a weak filesystem ".pending"-marker dedup with no real rate limit
+    -- and no privilege check -- any registered account could repeatedly
+    -- trigger GitHub API/bandwidth usage. Rate-limited too, same
+    -- ratelimit.lua pattern used by the auth routes above.
+    local a, status, err_body = require_admin_or_moderator(req)
     if not a then return status, err_body end
+
+    local rl_status, rl_body = ratelimit.check(
+      ("lumisound-download:%s"):format(tostring(a.username or "unknown"):lower()), 5, 3600)
+    if rl_status then return rl_status, rl_body end
 
     local tag = lumisound_latest_tag()
     if not tag then return 502, { detail = "Could not reach GitHub to check the latest Lumisound release. Try again shortly." } end
