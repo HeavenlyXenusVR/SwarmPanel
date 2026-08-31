@@ -13,8 +13,45 @@
 -- string as a SQL string literal, which Postgres implicitly casts to bigint
 -- in a bigint column/comparison context, so this is safe and precise.
 local db = require("db")
+local notify = require("notify")
+local config = require("config")
 
 local M = {}
+
+-- Gate: mirrors swarmlua.command_gate's relay-before-execute pattern (see
+-- the Lua music bots' own poll_direct_orders/poll_swarm_overrides) for the
+-- three actions below (CLEAR/RESET_QUEUE/SHUFFLE) that mutate a bot's queue
+-- tables directly from here rather than going through the gated
+-- swarm_direct_orders/swarm_overrides tables those bots poll -- those three
+-- bypassed "commands only accepted from GWS Commands" entirely, since
+-- nothing about them ever reached a bot's own poll loop to gate. Posts a
+-- summary into the target bot's own GWS Commands thread using that bot's
+-- own Discord token (already held here for the DM/verification flow in
+-- notify.lua) and only proceeds if that succeeds -- same fail-closed
+-- contract as the bot-side gate.
+local function relay_to_command_thread(bot, gid, action, actor)
+  local thread_row = db.fetchone(bot.db_schema, string.format(
+    "SELECT thread_id FROM %s_command_thread WHERE guild_id = %%s", bot.table_prefix), gid)
+  local thread_id = thread_row and thread_row.thread_id
+  if not thread_id then
+    return false, ("%s's GWS Commands channel isn't set up in this server yet -- try again shortly."):format(bot.display_name)
+  end
+  local token = config.bot_tokens[bot.key]
+  if not token or token == "" then
+    return false, "No Discord token configured for " .. bot.display_name .. "."
+  end
+  local status, resp = notify.bot_api_call("POST", "/channels/" .. tostring(thread_id) .. "/messages", token, {
+    embeds = { {
+      title = "\xE2\x96\xB6\xEF\xB8\x8F " .. tostring(action),
+      description = ("**Command:** `%s`\n**Guild:** `%s`\n**Issued by:** %s"):format(tostring(action), tostring(gid), tostring(actor or "unknown")),
+      color = 0x5865F2,
+    } },
+  })
+  if type(status) ~= "number" or status >= 300 then
+    return false, "Could not post to " .. bot.display_name .. "'s GWS Commands channel: " .. tostring((type(resp) == "table" and resp.message) or status)
+  end
+  return true, nil
+end
 
 local VALID_ACTIONS = {
   PAUSE = true, RESUME = true, SKIP = true, STOP = true, RESTART = true,
@@ -244,6 +281,8 @@ function M.control_bot(bot, gid, action, payload, actor)
       result.message = "Restart signal queued for " .. bot.display_name .. "."
 
     elseif action == "CLEAR" then
+      local relay_ok, relay_err = relay_to_command_thread(bot, gid, action, actor)
+      if not relay_ok then error(relay_err, 0) end
       clear_pending_orders(schema, prefix, gid, bot.key)
       set_override(schema, prefix, gid, bot.key, "STOP", actor)
       ensure_queue_table(schema, prefix)
@@ -260,6 +299,8 @@ function M.control_bot(bot, gid, action, payload, actor)
       result.message = string.format("Cleared the queue and current playback for guild %s on %s.", gid, bot.display_name)
 
     elseif action == "RESET_QUEUE" then
+      local relay_ok, relay_err = relay_to_command_thread(bot, gid, action, actor)
+      if not relay_ok then error(relay_err, 0) end
       ensure_queue_table(schema, prefix)
       db.execute(schema, string.format("DELETE FROM %s_queue WHERE guild_id = %%s AND bot_name = %%s", prefix), gid, bot.key)
       pcall(db.execute, schema, string.format("DELETE FROM %s_queue_backup WHERE guild_id = %%s AND bot_name = %%s", prefix), gid, bot.key)
@@ -289,6 +330,8 @@ function M.control_bot(bot, gid, action, payload, actor)
       result.message = string.format("Filter mode set to %s for guild %s on %s.", mode, gid, bot.display_name)
 
     elseif action == "SHUFFLE" then
+      local relay_ok, relay_err = relay_to_command_thread(bot, gid, action, actor)
+      if not relay_ok then error(relay_err, 0) end
       local shuffled = shuffle_live_queue(schema, prefix, gid, bot.key)
       result.queue_count = shuffled
       result.message = string.format("Shuffled %d queued tracks for guild %s on %s.", shuffled, gid, bot.display_name)

@@ -159,6 +159,13 @@ local function http_bot_call(method, path, token, payload)
   return status, (decode_ok and type(decoded) == "table") and decoded or {}
 end
 
+-- Exported for control.lua's command-gate relay (posting a command summary
+-- into a bot's own GWS Commands thread, as that bot, before a panel action
+-- that mutates its queue tables directly is allowed to proceed) -- same
+-- bot-authenticated call this file already uses for DM verification, just
+-- generalized past the two DM-shaped call sites below.
+M.bot_api_call = http_bot_call
+
 -- Opens (or reuses) a DM channel with discord_user_id and sends `content`.
 -- Returns true on success, or false + a user-facing error message. Fails
 -- closed on any ambiguity (network error, non-2xx, missing channel id)
