@@ -67,6 +67,11 @@ local function ensure_overrides_table(schema, prefix)
     "ALTER TABLE %s_swarm_overrides ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0", prefix))
   pcall(db.execute, schema, string.format(
     "ALTER TABLE %s_swarm_overrides ADD COLUMN IF NOT EXISTS last_error TEXT NULL", prefix))
+  -- issued_by: who (panel username) committed this override -- read by the
+  -- Lua bots' swarmlua.command_gate relay, which posts it into that bot's
+  -- own "GWS Commands" Discord thread before executing.
+  pcall(db.execute, schema, string.format(
+    "ALTER TABLE %s_swarm_overrides ADD COLUMN IF NOT EXISTS issued_by TEXT", prefix))
 end
 
 local function ensure_direct_orders_table(schema, prefix)
@@ -88,6 +93,11 @@ local function ensure_direct_orders_table(schema, prefix)
     "ALTER TABLE %s_swarm_direct_orders ADD COLUMN IF NOT EXISTS attempts INT NOT NULL DEFAULT 0", prefix))
   pcall(db.execute, schema, string.format(
     "ALTER TABLE %s_swarm_direct_orders ADD COLUMN IF NOT EXISTS last_error TEXT NULL", prefix))
+  -- issued_by: who (panel username) committed this order -- read by the
+  -- Lua bots' swarmlua.command_gate relay, which posts it into that bot's
+  -- own "GWS Commands" Discord thread before executing.
+  pcall(db.execute, schema, string.format(
+    "ALTER TABLE %s_swarm_direct_orders ADD COLUMN IF NOT EXISTS issued_by TEXT", prefix))
 end
 
 local function ensure_queue_table(schema, prefix)
@@ -104,16 +114,16 @@ local function ensure_home_table(schema, prefix)
         PRIMARY KEY (guild_id, bot_name))]], prefix))
 end
 
-local function set_override(schema, prefix, gid, bot_key, command)
+local function set_override(schema, prefix, gid, bot_key, command, actor)
   ensure_overrides_table(schema, prefix)
   local ok, err = db.execute(
     schema,
     string.format(
-      [[INSERT INTO %s_swarm_overrides (guild_id, bot_name, command, attempts) VALUES (%%s, %%s, %%s, 0)
-        ON CONFLICT (guild_id, bot_name) DO UPDATE SET command = EXCLUDED.command]],
+      [[INSERT INTO %s_swarm_overrides (guild_id, bot_name, command, attempts, issued_by) VALUES (%%s, %%s, %%s, 0, %%s)
+        ON CONFLICT (guild_id, bot_name) DO UPDATE SET command = EXCLUDED.command, issued_by = EXCLUDED.issued_by]],
       prefix
     ),
-    gid, bot_key, command
+    gid, bot_key, command, actor or "unknown"
   )
   -- Previously unchecked: a failed write here (e.g. the not-null-without-
   -- default bug above) left the panel reporting success while the bot never
@@ -126,15 +136,15 @@ local function clear_pending_orders(schema, prefix, gid, bot_key)
   pcall(db.execute, schema, string.format("DELETE FROM %s_swarm_direct_orders WHERE guild_id = %%s AND bot_name = %%s", prefix), gid, bot_key)
 end
 
-local function insert_direct_order(schema, prefix, bot_key, gid, vc_id, text_channel_id, command, data)
+local function insert_direct_order(schema, prefix, bot_key, gid, vc_id, text_channel_id, command, data, actor)
   ensure_direct_orders_table(schema, prefix)
   local ok, err = db.execute(
     schema,
     string.format(
-      "INSERT INTO %s_swarm_direct_orders (bot_name, guild_id, vc_id, text_channel_id, command, data) VALUES (%%s, %%s, %%s, %%s, %%s, %%s)",
+      "INSERT INTO %s_swarm_direct_orders (bot_name, guild_id, vc_id, text_channel_id, command, data, issued_by) VALUES (%%s, %%s, %%s, %%s, %%s, %%s, %%s)",
       prefix
     ),
-    bot_key, gid, vc_id, text_channel_id, command, data
+    bot_key, gid, vc_id, text_channel_id, command, data, actor or "unknown"
   )
   -- Previously unchecked, same as set_override()'s earlier fix -- a failed
   -- write here left the panel reporting success while the bot never saw
@@ -204,9 +214,10 @@ local function smart_query_from_title(title)
 end
 
 -- Returns (result_table, err). result_table has at least {action=, message=}.
-function M.control_bot(bot, gid, action, payload)
+function M.control_bot(bot, gid, action, payload, actor)
   local schema, prefix = bot.db_schema, bot.table_prefix
   action = tostring(action or ""):upper()
+  actor = tostring(actor or "unknown")
   if not VALID_ACTIONS[action] then return nil, "Unsupported action: " .. action end
 
   local result = { action = action, command = action }
@@ -215,7 +226,7 @@ function M.control_bot(bot, gid, action, payload)
 
     if action == "PAUSE" or action == "RESUME" or action == "SKIP" or action == "STOP" then
       clear_pending_orders(schema, prefix, gid, bot.key)
-      set_override(schema, prefix, gid, bot.key, action)
+      set_override(schema, prefix, gid, bot.key, action, actor)
       pcall(db.execute, schema, string.format("ALTER TABLE %s_playback_state ADD COLUMN IF NOT EXISTS is_paused BOOLEAN DEFAULT FALSE", prefix))
       if action == "PAUSE" then
         db.execute(schema, string.format("UPDATE %s_playback_state SET is_paused = TRUE, is_playing = FALSE WHERE guild_id = %%s AND bot_name = %%s", prefix), gid, bot.key)
@@ -228,13 +239,13 @@ function M.control_bot(bot, gid, action, payload)
 
     elseif action == "RESTART" then
       clear_pending_orders(schema, prefix, "0", bot.key)
-      set_override(schema, prefix, "0", bot.key, "RESTART")
+      set_override(schema, prefix, "0", bot.key, "RESTART", actor)
       pcall(db.execute, schema, string.format("UPDATE %s_playback_state SET is_playing = FALSE, is_paused = FALSE WHERE bot_name = %%s", prefix), bot.key)
       result.message = "Restart signal queued for " .. bot.display_name .. "."
 
     elseif action == "CLEAR" then
       clear_pending_orders(schema, prefix, gid, bot.key)
-      set_override(schema, prefix, gid, bot.key, "STOP")
+      set_override(schema, prefix, gid, bot.key, "STOP", actor)
       ensure_queue_table(schema, prefix)
       db.execute(schema, string.format("DELETE FROM %s_queue WHERE guild_id = %%s AND bot_name = %%s", prefix), gid, bot.key)
       pcall(db.execute, schema, string.format("DELETE FROM %s_queue_backup WHERE guild_id = %%s AND bot_name = %%s", prefix), gid, bot.key)
@@ -273,7 +284,7 @@ function M.control_bot(bot, gid, action, payload)
         [[INSERT INTO %s_guild_settings (guild_id, filter_mode) VALUES (%%s, %%s)
           ON CONFLICT (guild_id) DO UPDATE SET filter_mode = EXCLUDED.filter_mode]], prefix
       ), gid, mode)
-      set_override(schema, prefix, gid, bot.key, "UPDATE_FILTER")
+      set_override(schema, prefix, gid, bot.key, "UPDATE_FILTER", actor)
       result.filter_mode = mode
       result.message = string.format("Filter mode set to %s for guild %s on %s.", mode, gid, bot.display_name)
 
@@ -317,7 +328,7 @@ function M.control_bot(bot, gid, action, payload)
 
       local seed_title = tostring(seed.title or seed.video_url or "")
       local query_text = "ytmsearch:" .. smart_query_from_title(seed_title) .. " radio"
-      insert_direct_order(schema, prefix, bot.key, gid, voice_channel_id, text_channel_id, "PLAY", query_text)
+      insert_direct_order(schema, prefix, bot.key, gid, voice_channel_id, text_channel_id, "PLAY", query_text, actor)
       pcall(db.execute, schema, string.format(
         [[CREATE TABLE IF NOT EXISTS %s_smart_recommendations (
             id SERIAL PRIMARY KEY, guild_id BIGINT NOT NULL, requester_id BIGINT DEFAULT NULL,
@@ -345,20 +356,20 @@ function M.control_bot(bot, gid, action, payload)
       local voice_channel_id = channel_id_or_default(payload.voice_channel_id)
       local text_channel_id = channel_id_or_default(payload.text_channel_id)
       local shuffled = prime_panel_playback_defaults(schema, prefix, gid, bot.key)
-      insert_direct_order(schema, prefix, bot.key, gid, voice_channel_id, text_channel_id, "PLAY", source_url)
+      insert_direct_order(schema, prefix, bot.key, gid, voice_channel_id, text_channel_id, "PLAY", source_url, actor)
       result.loop_mode = "queue"
       result.shuffled_queue_count = shuffled
       result.message = string.format("Queued a direct PLAY order for %s in guild %s.", bot.display_name, gid)
 
     elseif action == "RECOVER" then
       local voice_channel_id = channel_id_or_default(type(payload) == "table" and (payload.voice_channel_id or payload.vc_id) or nil)
-      insert_direct_order(schema, prefix, bot.key, gid, voice_channel_id, "0", "RECOVER", "panel")
+      insert_direct_order(schema, prefix, bot.key, gid, voice_channel_id, "0", "RECOVER", "panel", actor)
       result.message = string.format("Queued a direct RECOVER order for %s in guild %s.", bot.display_name, gid)
 
     elseif action == "LEAVE" then
       clear_pending_orders(schema, prefix, gid, bot.key)
       local force_leave = type(payload) == "table" and payload.force and true or false
-      insert_direct_order(schema, prefix, bot.key, gid, "0", "0", "LEAVE", force_leave and "force" or "")
+      insert_direct_order(schema, prefix, bot.key, gid, "0", "0", "LEAVE", force_leave and "force" or "", actor)
       result.message = string.format("Queued a direct LEAVE order for %s in guild %s.", bot.display_name, gid)
 
     elseif action == "SET_HOME" then
@@ -381,7 +392,7 @@ function M.control_bot(bot, gid, action, payload)
       local position_seconds = math.max(0, tonumber(payload.position_seconds) or 0)
       ensure_direct_orders_table(schema, prefix)
       db.execute(schema, string.format("DELETE FROM %s_swarm_direct_orders WHERE guild_id = %%s AND bot_name = %%s AND command = 'SEEK'", prefix), gid, bot.key)
-      insert_direct_order(schema, prefix, bot.key, gid, "0", "0", "SEEK", tostring(math.floor(position_seconds)))
+      insert_direct_order(schema, prefix, bot.key, gid, "0", "0", "SEEK", tostring(math.floor(position_seconds)), actor)
       result.position_seconds = math.floor(position_seconds)
       result.message = string.format("Seek order queued for %s in guild %s at position %ds.", bot.display_name, gid, math.floor(position_seconds))
     end

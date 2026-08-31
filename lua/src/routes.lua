@@ -1391,7 +1391,7 @@ function M.register(cfg)
     -- direct_orders/overrides rows get deleted right after processing, so
     -- once a command succeeded there was no way to answer "what URL did I
     -- send to which bot" after the fact.
-    local ok, result_or_err, maybe_err = pcall(control.control_bot, bot, gid, action, body.payload)
+    local ok, result_or_err, maybe_err = pcall(control.control_bot, bot, gid, action, body.payload, a.username)
     if not ok then
       audit.record_audit_log(a.username, "swarm_bot_control", {
         target_type = "music_bot", target_id = bot_key,
