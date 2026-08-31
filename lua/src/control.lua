@@ -302,9 +302,43 @@ function M.control_bot(bot, gid, action, payload, actor)
       local relay_ok, relay_err = relay_to_command_thread(bot, gid, action, actor)
       if not relay_ok then error(relay_err, 0) end
       ensure_queue_table(schema, prefix)
+      -- Capture whatever playlist is currently tracked as active for this
+      -- guild+bot BEFORE wiping anything, so it can be resynced fresh
+      -- afterward -- previously this just cleared state and claimed it
+      -- "will repopulate automatically", which was never actually true for
+      -- a guild with no other command in flight to trigger a re-resolve.
+      local active_playlist = db.fetchone(schema, string.format(
+        "SELECT playlist_url, requester_id, channel_id FROM %s_active_playlists WHERE guild_id = %%s AND bot_name = %%s", prefix
+      ), gid, bot.key)
       db.execute(schema, string.format("DELETE FROM %s_queue WHERE guild_id = %%s AND bot_name = %%s", prefix), gid, bot.key)
-      pcall(db.execute, schema, string.format("DELETE FROM %s_queue_backup WHERE guild_id = %%s AND bot_name = %%s", prefix), gid, bot.key)
-      result.message = string.format("Cleared the queue and backup queue for guild %s on %s — it will repopulate automatically.", gid, bot.display_name)
+      -- BUGFIX: this used to be a bare pcall with the result discarded --
+      -- any failure (missing table, schema drift) silently left the backup
+      -- queue untouched while reporting success. Surface it like every
+      -- other previously-silent DB-write failure in this file already was.
+      local backup_ok, backup_err = pcall(db.execute, schema, string.format("DELETE FROM %s_queue_backup WHERE guild_id = %%s AND bot_name = %%s", prefix), gid, bot.key)
+      if not backup_ok then error("failed to clear backup queue: " .. tostring(backup_err), 0) end
+      -- BUGFIX: "current playing" was never actually cleared -- only CLEAR's
+      -- branch touched playback_state, RESET_QUEUE left the last-known
+      -- title/position sitting there stale even though the queue backing it
+      -- was gone.
+      pcall(db.execute, schema, string.format(
+        [[UPDATE %s_playback_state SET title = NULL, video_url = NULL, position_seconds = 0,
+          is_playing = FALSE, is_paused = FALSE WHERE guild_id = %%s AND bot_name = %%s]], prefix
+      ), gid, bot.key)
+
+      if active_playlist and active_playlist.playlist_url and active_playlist.playlist_url ~= "" then
+        local home_row = db.fetchone(schema, string.format(
+          "SELECT home_vc_id FROM %s_bot_home_channels WHERE guild_id = %%s AND bot_name = %%s", prefix
+        ), gid, bot.key)
+        local voice_channel_id = channel_id_or_default((home_row and home_row.home_vc_id) or active_playlist.channel_id)
+        local text_channel_id = channel_id_or_default(active_playlist.channel_id)
+        insert_direct_order(schema, prefix, bot.key, gid, voice_channel_id, text_channel_id, "PLAY", active_playlist.playlist_url, actor)
+        result.message = string.format(
+          "Cleared the queue, backup queue, and current playback for guild %s on %s, and queued a fresh resync from its saved playlist.", gid, bot.display_name)
+      else
+        result.message = string.format(
+          "Cleared the queue, backup queue, and current playback for guild %s on %s -- no saved playlist to resync from.", gid, bot.display_name)
+      end
 
     elseif action == "LOOP" then
       local mode = tostring((type(payload) == "table" and payload.loop_mode) or payload or ""):lower()

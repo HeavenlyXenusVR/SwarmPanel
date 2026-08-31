@@ -242,6 +242,15 @@ function M.register(cfg)
       }
       window.swarmLive.watch("control_state", (msg) => {
         if (msg.type === "snapshot") applyControlState(msg.data);
+        // BUGFIX: an initial watch (no bot_key/guild_id yet -- see the
+        // eager subscribe below) or a stale/invalid pair pushes back
+        // snapshot_error, which this handler used to silently drop --
+        // #control-state just stayed on its empty server-rendered markup
+        // forever with no indication anything had gone wrong.
+        else if (msg.type === "snapshot_error") {
+          document.getElementById("control-state").innerHTML =
+            `<div class="empty-state">Couldn't load control state: ${(msg.error || "unknown error").replace(/</g, "&lt;")}</div>`;
+        }
       });
       function resubscribeControlState() {
         const botKey = form.bot_key.value, guildId = form.guild_id.value;
@@ -371,7 +380,20 @@ function M.register(cfg)
           updateCommandPreview();
         } catch { /* bot token/inventory unavailable -- selects just stay empty */ }
       }
-      loadChannels();
+      // BUGFIX: the pre-selected bot/guild's control_state and queues were
+      // never subscribed to at page load -- both watches only ever get
+      // real bot_key/guild_id params from the change listeners above, which
+      // never fire on their own (the <select>s already show their correct
+      // default value from the server-rendered markup, so nothing ever
+      // changes it). The panel looked blank/idle until the user picked a
+      // DIFFERENT bot at least once. Mirrors the bot_key change listener's
+      // own await-then-subscribe order (see its BUGFIX comment above) so
+      // guild_id is guaranteed resolved first.
+      (async () => {
+        await loadChannels();
+        refreshControlState();
+        resubscribeQueues();
+      })();
 
       // BUGFIX (live-push migration): was swarmFetch on a 30s
       // swarmLiveRefresh poll. applyQueues() is the pure renderer, fed by
@@ -393,6 +415,11 @@ function M.register(cfg)
       }
       window.swarmLive.watch("queues", (msg) => {
         if (msg.type === "snapshot") applyQueues(msg.data);
+        // Same visibility fix as the control_state watch above.
+        else if (msg.type === "snapshot_error") {
+          document.getElementById("saved-queues").innerHTML =
+            `<div class="empty-state">Couldn't load saved queues: ${(msg.error || "unknown error").replace(/</g, "&lt;")}</div>`;
+        }
       });
       function resubscribeQueues() {
         const botKey = form.bot_key.value, guildId = form.guild_id.value;
