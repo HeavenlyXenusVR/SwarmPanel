@@ -307,7 +307,26 @@ function M.register(cfg)
       // after loadChannels() had finally caught up. Awaiting loadChannels()
       // first guarantees guild_id is already correct before
       // refreshControlState() ever reads it.
+      // BUGFIX: applyControlState() above only ever fills voice/text channel
+      // when the select is EMPTY (so it doesn't clobber an operator mid-
+      // picking a channel for a PLAY/SET_HOME order). That guard has no
+      // memory of WHICH bot it was last filled for, so once it was set for
+      // bot A it stayed permanently non-empty -- switching to bot B still
+      // passed loadChannels() bot B's own channel list (so the dropdown
+      // wasn't literally frozen), but since the old value usually matched a
+      // real option in bot B's guild too (channels are guild-scoped, and
+      // most bots here share one guild), the select just silently kept
+      // showing bot A's home/feedback channel forever, and applyControlState
+      // never got a chance to apply bot B's actual home_channel_id /
+      // feedback_channel_id. Clearing both selects on an actual bot/guild
+      // switch (not on every keystroke -- this is the "change" listener, so
+      // an in-progress PLAY/SET_HOME pick on the SAME bot is untouched)
+      // re-opens that guard so the next control_state push fills in the
+      // newly selected bot's real channels instead of the previous one's.
       form.bot_key.addEventListener("change", async () => {
+        form.voice_channel_id.value = "";
+        form.text_channel_id.value = "";
+        pendingVoiceChannelId = ""; pendingTextChannelId = "";
         if (form.guild_id.dataset.scoped !== "1") {
           // Setting .value directly here would silently no-op -- the new
           // bot's guild options (real names) haven't loaded yet, so there's
@@ -320,7 +339,12 @@ function M.register(cfg)
         refreshControlState();
         resubscribeQueues();
       });
-      form.guild_id.addEventListener("change", () => { refreshControlState(); resubscribeQueues(); loadChannels(); });
+      form.guild_id.addEventListener("change", () => {
+        form.voice_channel_id.value = "";
+        form.text_channel_id.value = "";
+        pendingVoiceChannelId = ""; pendingTextChannelId = "";
+        refreshControlState(); resubscribeQueues(); loadChannels();
+      });
 
       let pendingVoiceChannelId = "", pendingTextChannelId = "";
       let channelsRequestId = 0;
