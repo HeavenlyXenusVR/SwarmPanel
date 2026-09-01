@@ -746,7 +746,7 @@ function M.register(cfg)
           <div class="appearance-preview-shell" id="appearance-preview-shell">
             <div class="preview-topline"><span></span><strong>Live Preview</strong></div>
             <div class="appearance-preview-hero">
-              <div class="preview-tabs"><span class="nav-item">Dashboard</span><span class="nav-item">Controls</span><span class="nav-item">Users</span></div>
+              <div class="preview-tabs" id="preview-tabs"><span class="nav-item active">Dashboard</span><span class="nav-item">Controls</span><span class="nav-item">Users</span></div>
               <h3>SwarmPanel</h3>
               <div class="appearance-preview-meta">
                 <span class="appearance-value-pill" id="preview-theme-pill">Dark</span>
@@ -1035,6 +1035,19 @@ function M.register(cfg)
         document.getElementById("profile-backdrop-readout").textContent = /^https?:\/\//.test(backdropUrl)
           ? `Image set, ${backdropStrength}% strength` : `No image -- ${backdropStrength}% accent tint only`;
       }
+      // The preview's Dashboard/Controls/Users labels share the real .nav-item
+      // class (same hover-highlight and press animation as actual nav links),
+      // so they read as clickable, but had no handler at all -- clicking did
+      // literally nothing. They don't swap the sample card's content (there's
+      // only ever one "Fleet Command" example), but toggling which one is
+      // "active" is what actually lets the Tabs setting's rail/underline/
+      // minimal styles show their biggest visual difference -- the .active
+      // look -- which otherwise never rendered anywhere in this preview.
+      document.getElementById("preview-tabs").addEventListener("click", (e) => {
+        const tab = e.target.closest(".nav-item");
+        if (!tab) return;
+        for (const el of e.currentTarget.children) el.classList.toggle("active", el === tab);
+      });
       document.getElementById("appearance-form").addEventListener("input", () => { markDirty(); updatePreview(); });
       document.getElementById("appearance-form").addEventListener("submit", async (e) => {
         e.preventDefault();
