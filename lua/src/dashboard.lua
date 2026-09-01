@@ -251,14 +251,20 @@ local function music_bot_snapshot(bot)
     )
     for _, row in ipairs(rows) do
       local gid = gid_key(row.guild_id)
-      filter_map[gid] = {
-        filter_mode = row.filter_mode or "none",
-        loop_mode = row.loop_mode or "queue",
-        transition_mode = row.transition_mode or "off",
-        fade_seconds = tonumber(row.fade_seconds) or 5.0,
-        fade_curve = row.fade_curve or "linear",
-      }
-      known_guilds[gid] = true
+      -- BUGFIX: this loop (unlike playback_map above it) assigned straight
+      -- into filter_map[gid] with no nil check -- t[nil] = v is a hard Lua
+      -- runtime error, so a NULL guild_id here would abort this bot's
+      -- entire dashboard snapshot instead of just skipping one row.
+      if gid then
+        filter_map[gid] = {
+          filter_mode = row.filter_mode or "none",
+          loop_mode = row.loop_mode or "queue",
+          transition_mode = row.transition_mode or "off",
+          fade_seconds = tonumber(row.fade_seconds) or 5.0,
+          fade_curve = row.fade_curve or "linear",
+        }
+        known_guilds[gid] = true
+      end
     end
   end
 
@@ -268,8 +274,10 @@ local function music_bot_snapshot(bot)
     )
     for _, row in ipairs(rows) do
       local gid = gid_key(row.guild_id)
-      queue_map[gid] = db.toint(row.queue_len, 0)
-      known_guilds[gid] = true
+      if gid then
+        queue_map[gid] = db.toint(row.queue_len, 0)
+        known_guilds[gid] = true
+      end
     end
   end
 
@@ -278,7 +286,17 @@ local function music_bot_snapshot(bot)
       schema, "SELECT guild_id, COUNT(*) AS backup_len FROM " .. names.backup .. " WHERE bot_name = %s GROUP BY guild_id", bot.key
     )
     for _, row in ipairs(rows) do
-      backup_map[gid_key(row.guild_id)] = db.toint(row.backup_len, 0)
+      -- BUGFIX: this loop never set known_guilds[gid] -- a guild whose only
+      -- surviving state is a stale backup queue (playback_state/
+      -- guild_settings rows already cleared after the bot left voice) never
+      -- got added to sorted_guild_ids below, so its row silently never
+      -- rendered anywhere on the dashboard despite backup_map holding real
+      -- data for it.
+      local gid = gid_key(row.guild_id)
+      if gid then
+        backup_map[gid] = db.toint(row.backup_len, 0)
+        known_guilds[gid] = true
+      end
     end
   end
 
@@ -286,8 +304,10 @@ local function music_bot_snapshot(bot)
     local rows = db.fetchall(schema, "SELECT guild_id, home_vc_id FROM " .. names.home .. " WHERE bot_name = %s LIMIT 500", bot.key)
     for _, row in ipairs(rows) do
       local gid = gid_key(row.guild_id)
-      home_map[gid] = row.home_vc_id and gid_key(row.home_vc_id) or nil
-      known_guilds[gid] = true
+      if gid then
+        home_map[gid] = row.home_vc_id and gid_key(row.home_vc_id) or nil
+        known_guilds[gid] = true
+      end
     end
   end
 
@@ -299,8 +319,10 @@ local function music_bot_snapshot(bot)
     )
     for _, row in ipairs(rows) do
       local gid = gid_key(row.guild_id)
-      metrics_map[gid] = row
-      known_guilds[gid] = true
+      if gid then
+        metrics_map[gid] = row
+        known_guilds[gid] = true
+      end
     end
   end
 
@@ -315,20 +337,27 @@ local function music_bot_snapshot(bot)
     )
     for _, row in ipairs(rows) do
       local gid = gid_key(row.guild_id)
-      intel_map[gid] = {
-        learned_tracks = db.toint(row.learned_tracks, 0),
-        plays = db.toint(row.plays, 0),
-        likes = db.toint(row.likes, 0),
-        dislikes = db.toint(row.dislikes, 0),
-      }
-      known_guilds[gid] = true
+      if gid then
+        intel_map[gid] = {
+          learned_tracks = db.toint(row.learned_tracks, 0),
+          plays = db.toint(row.plays, 0),
+          likes = db.toint(row.likes, 0),
+          dislikes = db.toint(row.dislikes, 0),
+        }
+        known_guilds[gid] = true
+      end
     end
   end
 
   if exists[names.recommendations] then
     local rows = db.fetchall(schema, "SELECT guild_id, COUNT(*) AS recommendations FROM " .. names.recommendations .. " GROUP BY guild_id LIMIT 500")
     for _, row in ipairs(rows) do
-      reco_map[gid_key(row.guild_id)] = db.toint(row.recommendations, 0)
+      -- BUGFIX: same known_guilds gap as the backup loop above.
+      local gid = gid_key(row.guild_id)
+      if gid then
+        reco_map[gid] = db.toint(row.recommendations, 0)
+        known_guilds[gid] = true
+      end
     end
   end
 
@@ -736,7 +765,11 @@ function M.get_dashboard_data(music_bots)
   return {
     generated_at = os.date("!%Y-%m-%dT%H:%M:%SZ"),
     bots = bots,
-    node_health = node_health_ok and node_health or { lavalink = { status = "unknown" }, nodelink = { status = "unknown" } },
+    -- BUGFIX: this fallback predates the 2026-08-17 lavalink2/lavalink3
+    -- nodes (NODE_NAMES above) -- harmless today since pages.lua defaults
+    -- any missing key to {status="unknown"} anyway, but keep it in sync
+    -- with NODE_NAMES so a future reader doesn't have to know that.
+    node_health = node_health_ok and node_health or { lavalink = { status = "unknown" }, lavalink2 = { status = "unknown" }, lavalink3 = { status = "unknown" }, nodelink = { status = "unknown" } },
   }
 end
 
