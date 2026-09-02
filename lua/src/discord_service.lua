@@ -123,6 +123,32 @@ function M.fetch_guild_channels(token, guild_id)
   return out
 end
 
+M.CHANNEL_TYPE_VOICE = 2
+M.CHANNEL_TYPE_STAGE = 13
+
+-- Converts a channel between GUILD_VOICE (2) and GUILD_STAGE_VOICE (13).
+-- Discord supports this as a plain partial PATCH (the same operation the
+-- client's own channel-settings "Channel Type" control performs) -- only
+-- `type` is sent, so every other field (name, position, bitrate, user
+-- limit, permission overwrites) is left exactly as the owner already had
+-- it; Discord's PATCH semantics only touch fields actually present in the
+-- request body. Requires Manage Channels in that channel, which every
+-- music bot's invite already grants (see M.MUSIC_BOT_PERMISSIONS below).
+function M.set_channel_type(token, channel_id, channel_type)
+  local rest = rest_for(token)
+  local data, err = rest:patch("/channels/" .. tostring(channel_id), { type = channel_type })
+  if not data then return false, err end
+  -- Successful PATCH invalidates this channel's (and its guild's channel
+  -- list's) cached read -- otherwise a channel picker/inventory view could
+  -- keep showing the pre-conversion type for up to CACHE_TTL (5 min).
+  for key in pairs(cache) do
+    if key:find("/channels/" .. tostring(channel_id), 1, true) or key:find("/guilds/", 1, true) then
+      cache[key] = nil
+    end
+  end
+  return true, nil
+end
+
 -- Port of app/discord_api.py's DiscordInventoryService.fetch_inventory():
 -- the full per-bot guild+channel tree used by the Controls page's
 -- guild/channel pickers. Previously NOT ported (see this file's header

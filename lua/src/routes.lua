@@ -9,6 +9,7 @@ local db = require("db")
 local accounts = require("accounts")
 local dashboard = require("dashboard")
 local control = require("control")
+local channel_convert = require("channel_convert")
 local social = require("social")
 local profiles = require("profiles")
 local audit = require("audit")
@@ -1405,6 +1406,33 @@ function M.register(cfg)
       details = cjson.encode({ action = action, guild_id = gid, payload = body.payload, ok = result ~= nil, error = (not result) and tostring(cerr) or nil }),
     })
     if not result then return 400, { detail = tostring(cerr) } end
+    result.ok = true
+    return 200, result
+  end)
+
+  -- Converts every home-channel-connected bot's channel in one guild
+  -- between voice and stage, in a single click (see channel_convert.lua's
+  -- own header for why this is safe/scoped the way it is -- playback
+  -- itself is untouched, only the underlying Discord channel object's
+  -- type). direction: "stage" or "voice".
+  httpd.route("POST", "/api/guilds/:guild_id/convert-channels", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-write:%s"):format(tostring(a.username or "unknown"):lower()), 10, 60)
+    if rl_status then return rl_status, rl_body end
+    local gid = req.params.guild_id
+    local gerr_status, gerr_body = require_guild_scope(req, a, gid)
+    if gerr_status then return gerr_status, gerr_body end
+    local direction = tostring((req.json or {}).direction or ""):lower()
+    if direction ~= "stage" and direction ~= "voice" then
+      return 400, { detail = "direction must be 'stage' or 'voice'" }
+    end
+    local ok, result = pcall(channel_convert.convert_guild_channels, cfg, gid, direction)
+    audit.record_audit_log(a.username, "swarm_convert_channels", {
+      target_type = "guild", target_id = tostring(gid),
+      details = cjson.encode({ direction = direction, ok = ok, result = ok and result or tostring(result) }),
+    })
+    if not ok then return 500, { detail = "Channel conversion failed: " .. tostring(result) } end
     result.ok = true
     return 200, result
   end)

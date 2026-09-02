@@ -123,6 +123,7 @@ function M.register(cfg)
         %s
         <div id="saved-queues"></div>
         %s
+        %s
         </div>
         </div>
       ]]):format(html.join(bot_options), guild_field, html.join(action_options),
@@ -134,7 +135,28 @@ function M.register(cfg)
             <button type="button" id="recover-all-btn" class="button-link primary">Recover All Stale Sessions</button>
             <div id="recover-all-result"></div>
           </div>
-        ]]):format(html.section_head("Fleet Recovery")) or ""),
+        ]]):format(html.section_head("Fleet Recovery")) or "",
+        -- Voice<->stage conversion: visible to any account with access to
+        -- this page (a guild-scoped account for its own guild, an admin for
+        -- whichever guild is selected above) -- unlike Fleet Recovery this
+        -- isn't a site-wide/admin-only action, it operates on exactly the
+        -- one guild currently selected in the form. Every bot already knows
+        -- how to play correctly from a stage channel (auto-unsuppress,
+        -- request-to-speak fallback, stage topics -- see channel_convert.lua's
+        -- own header); this only flips the underlying Discord channel type
+        -- for every bot's home channel in that guild, keeping everything
+        -- else (name, position, permissions) exactly as the owner had it.
+        ([[
+          %s
+          <div class="panel">
+            <p>Converts every home-channel-connected bot's voice channel in the selected guild to a stage channel, or back -- names and every other channel setting are left untouched either way.</p>
+            <div class="actions-row">
+              <button type="button" id="convert-to-stage-btn" class="button-link primary">Convert to Stage Channels</button>
+              <button type="button" id="convert-to-voice-btn" class="button-link">Convert to Voice Channels</button>
+            </div>
+            <div id="convert-channels-result"></div>
+          </div>
+        ]]):format(html.section_head("Stage / Voice Channel Conversion"))),
     })
 
     local script = [[
@@ -564,6 +586,44 @@ function M.register(cfg)
           }
         });
       }
+    ]] .. [[
+      // Stage/voice channel conversion -- operates on whatever guild is
+      // currently selected in the form above (locked to the account's own
+      // guild for a scoped account, per guild_field's data-scoped attr).
+      async function convertChannels(direction, btn) {
+        const guildId = form.guild_id.value;
+        if (!guildId) { swarmToast("Choose a guild first.", "error"); return; }
+        const label = direction === "stage" ? "stage channels" : "voice channels";
+        if (!confirm(`Convert every home-channel-connected bot's channel in this guild to ${label}? Channel names and every other setting stay the same.`)) return;
+        const resultBox = document.getElementById("convert-channels-result");
+        const otherBtn = direction === "stage" ? document.getElementById("convert-to-voice-btn") : document.getElementById("convert-to-stage-btn");
+        btn.disabled = true;
+        if (otherBtn) otherBtn.disabled = true;
+        resultBox.innerHTML = "";
+        try {
+          const res = await swarmFetch(`/api/guilds/${guildId}/convert-channels`, {
+            method: "POST",
+            body: JSON.stringify({ direction }),
+          });
+          const n = (res.converted || []).length;
+          const failedN = (res.failed || []).length;
+          let msg = `Converted ${n} channel(s) to ${label}`;
+          if (res.skipped_no_home_channel) msg += ` (${res.skipped_no_home_channel} bot(s) had no home channel set)`;
+          if (failedN) msg += ` -- ${failedN} failed: ` + res.failed.map(f => f.error).join("; ");
+          resultBox.innerHTML = `<div class="notice notice-${failedN ? "error" : "success"}">${msg}.</div>`;
+          swarmToast(failedN ? `${failedN} channel(s) failed to convert.` : `Converted ${n} channel(s) to ${label}.`, failedN ? "error" : "success");
+          refreshControlState();
+        } catch (err) {
+          resultBox.innerHTML = '<div class="notice notice-error">' + err.message + "</div>";
+        } finally {
+          btn.disabled = false;
+          if (otherBtn) otherBtn.disabled = false;
+        }
+      }
+      const convertToStageBtn = document.getElementById("convert-to-stage-btn");
+      const convertToVoiceBtn = document.getElementById("convert-to-voice-btn");
+      if (convertToStageBtn) convertToStageBtn.addEventListener("click", () => convertChannels("stage", convertToStageBtn));
+      if (convertToVoiceBtn) convertToVoiceBtn.addEventListener("click", () => convertChannels("voice", convertToVoiceBtn));
     ]]
 
     return page_shell(req, a, "/controls", "Controls", body, script)
