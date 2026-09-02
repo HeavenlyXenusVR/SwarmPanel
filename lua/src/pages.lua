@@ -290,7 +290,7 @@ function M.register(cfg)
         and '<div class="bot-card-offline-overlay"><span class="bot-card-offline-label">Offline</span></div>' or ""
 
       bot_cards[#bot_cards + 1] = ([[
-        <article class="bot-card%s" style="--card-accent: %s">
+        <article class="bot-card%s" data-bot-key="%s" style="--card-accent: %s">
           %s
           <div class="bot-head">
             <span class="bot-dot"></span>
@@ -316,7 +316,7 @@ function M.register(cfg)
             %s
           </div>
         </article>
-      ]]):format(offline_overlay ~= "" and " bot-card-offline" or "", html.esc(accent),
+      ]]):format(offline_overlay ~= "" and " bot-card-offline" or "", html.esc(bot.key), html.esc(accent),
         offline_overlay,
         html.esc(bot.display_name), html.esc(bot.heartbeat_status or bot.status or "telemetry ready"),
         tone, label,
@@ -603,14 +603,20 @@ function M.register(cfg)
         // that caused a reload storm (confirmed: 8 reloads in 15s even
         // throttled), which is worse than the original do-nothing bug, not
         // better. Patching just the 4 spotlight numbers directly from the
-        // payload avoids re-deriving the rest of the page (bot cards,
-        // session table, etc. still need a real reload to update, same
-        // gap as before) but makes the one thing users actually glance at
-        // continuously -- Bots Online / Live Sessions / Queue Depth /
-        // Guilds Served -- genuinely live with zero reload risk. Mirrors
-        // pages.lua's own online_bots/live_count/total_queue/total_backup/
-        // total_guilds aggregation (see bot_is_offline above) -- keep the
-        // two in sync if that logic ever changes.
+        // payload avoided re-deriving the rest of the page, but left every
+        // bot card and the session table on whatever position/duration/
+        // title/badge the page happened to render at load -- once a track's
+        // tickPlaybackCounters() (app.js) clamped its counter to the
+        // track's own duration, that card was frozen at "5:36 / 5:36"
+        // forever (or stuck showing a track that had already ended and a
+        // new one started) until a manual reload. Fixed the same way this
+        // page already fixes the spotlight numbers -- patch the DOM directly
+        // from the payload instead of reloading -- just extended to the bot
+        // cards and session rows below. Mirrors pages.lua's own
+        // bot_is_offline/best_session/playback_badge functions (Lua) so a
+        // card looks identical whether it was server-rendered on load or
+        // live-patched afterward; keep the two in sync if that logic ever
+        // changes.
         function patchDashboardMetrics(data) {
           const bots = (data && data.bots) || [];
           let online = 0, live = 0, queue = 0, backup = 0, guilds = 0;
@@ -630,8 +636,118 @@ function M.register(cfg)
           setText("metric-queue-backup", String(backup));
           setText("metric-guilds-served", String(guilds));
         }
+        function escHtml(s) { return String(s == null ? "" : s).replace(/</g, "&lt;"); }
+        function botIsOffline(bot) {
+          const statusLower = String(bot.status || "").toLowerCase();
+          if (statusLower === "offline") return true;
+          const age = Number(bot.heartbeat_age_seconds);
+          return Number.isFinite(age) && age > 120;
+        }
+        function bestSession(bot) {
+          for (const s of bot.sessions || []) { if (s.is_playing) return s; }
+          return (bot.sessions && bot.sessions[0]) || null;
+        }
+        function playbackBadge(session, bot) {
+          if (botIsOffline(bot)) return ["danger", "Offline"];
+          if (session && session.is_playing) return ["live", "Live"];
+          if (session && session.is_paused) return ["soft", "Paused"];
+          const statusLower = String(bot.heartbeat_status || bot.status || "").toLowerCase();
+          if (statusLower.indexOf("stale") !== -1) return ["danger", "Stale"];
+          return ["off", "Idle"];
+        }
+        function renderPlaybackWrap(session, botKey) {
+          if (!session) return "";
+          const duration = Math.floor(session.duration_seconds || 0);
+          const pos = session.position_seconds || 0;
+          const pct = duration > 0 ? Math.min(100, Math.floor((100 * pos) / duration)) : 0;
+          return `
+            <div class="bot-playback-wrap" data-playback-counter data-position="${escHtml(pos)}" data-observed-at="${escHtml(session.position_observed_at || 0)}" data-duration="${escHtml(session.duration_seconds || 0)}" data-playing="${session.is_playing === true}">
+              <div class="bot-seek-bar" data-seek-bar data-bot-key="${escHtml(botKey)}" data-guild-id="${escHtml(session.guild_id)}" data-duration="${duration}">
+                <div class="bot-seek-track">
+                  <div class="bot-seek-fill" data-playback-bar style="width:${pct}%"></div>
+                  <div class="bot-seek-thumb" data-seek-thumb style="left:${pct}%"></div>
+                </div>
+              </div>
+              <div class="bot-seek-times"><span data-seek-current></span><span data-seek-duration></span></div>
+            </div>`;
+        }
+        function renderBotCardInner(bot) {
+          const session = bestSession(bot);
+          const [tone, label] = playbackBadge(session, bot);
+          const thumb = (session && session.thumbnail)
+            ? `<img class="bot-thumb" src="${escHtml(session.thumbnail)}" alt="" loading="lazy">`
+            : '<div class="bot-thumb bot-thumb-empty">&#9835;</div>';
+          const nowTitle = (session && session.title) || bot.error || bot.schema || "Waiting for live playback.";
+          const nowSub = (session && (session.media_source_label || session.session_state_label)) || "Live state will fill in automatically.";
+          const offline = botIsOffline(bot);
+          const offlineOverlay = offline ? '<div class="bot-card-offline-overlay"><span class="bot-card-offline-label">Offline</span></div>' : "";
+          const age = Number(bot.heartbeat_age_seconds);
+          const uptimeSpan = Number.isFinite(age) ? `<span data-bot-uptime>heartbeat ${Math.floor(age)}s ago</span>` : "";
+          return `
+            ${offlineOverlay}
+            <div class="bot-head">
+              <span class="bot-dot"></span>
+              <div class="bot-head-copy">
+                <h3>${escHtml(bot.display_name)}</h3>
+                <small>${escHtml(bot.heartbeat_status || bot.status || "telemetry ready")}</small>
+              </div>
+              <span class="data-pill data-pill-${tone}">${escHtml(label)}</span>
+            </div>
+            <div class="bot-now">
+              ${thumb}
+              <div class="bot-now-copy">
+                <strong>${escHtml(nowTitle)}</strong>
+                <small>${escHtml(nowSub)}</small>
+              </div>
+            </div>
+            ${renderPlaybackWrap(session, bot.key)}
+            <div class="chip-row">
+              <span>${bot.active_playing_count || 0} live</span>
+              <span>${bot.known_guild_count || 0} guilds</span>
+              <span data-queue-pressure>${bot.queue_depth || 0} queued</span>
+              <span data-queue-pressure>${bot.backup_queue_depth || 0} backup</span>
+              ${uptimeSpan}
+            </div>`;
+        }
+        function patchBotCards(data) {
+          for (const bot of (data && data.bots) || []) {
+            const card = document.querySelector(`[data-bot-key="${window.CSS && CSS.escape ? CSS.escape(bot.key) : bot.key}"]`);
+            if (!card) continue;
+            card.classList.toggle("bot-card-offline", botIsOffline(bot));
+            card.innerHTML = renderBotCardInner(bot);
+          }
+        }
+        function renderSessionRow(s) {
+          const duration = s.duration_seconds || 0;
+          const pct = duration > 0 ? Math.min(100, Math.floor((100 * (s.position_seconds || 0)) / duration)) : 0;
+          return `
+            <tr>
+              <td>${escHtml(s.bot_display || s.bot_name)}</td>
+              <td>${escHtml(s.title || "—")}</td>
+              <td>${escHtml(s.session_state_label || "")}</td>
+              <td style="max-width:160px">
+                <div class="bot-playback compact" data-playback-counter data-position="${escHtml(s.position_seconds || 0)}" data-observed-at="${escHtml(s.position_observed_at || 0)}" data-duration="${escHtml(s.duration_seconds || 0)}" data-playing="${s.is_playing === true}">
+                  <div class="bot-playback-bar" aria-hidden="true"><span data-playback-bar style="width:${pct}%"></span></div>
+                  <span data-playback-label></span>
+                </div>
+              </td>
+              <td>${s.queue_count || 0} queued</td>
+            </tr>`;
+        }
+        function patchSessionsTable(data) {
+          const tbody = document.querySelector("#sessions-table tbody");
+          if (!tbody) return;
+          const rows = ((data && data.sessions) || []).filter((s) => s.is_playing || s.is_paused || (s.title && s.title !== ""));
+          tbody.innerHTML = rows.length
+            ? rows.map(renderSessionRow).join("")
+            : `<tr><td colspan="5">${escHtml("Nothing playing right now.")}</td></tr>`;
+        }
         window.swarmLive.watch("dashboard", (msg) => {
-          if (msg.type === "snapshot") patchDashboardMetrics(msg.data);
+          if (msg.type === "snapshot") {
+            patchDashboardMetrics(msg.data);
+            patchBotCards(msg.data);
+            patchSessionsTable(msg.data);
+          }
         });
       </script>
     ]]
