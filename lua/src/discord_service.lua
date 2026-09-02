@@ -173,17 +173,38 @@ function M.recreate_channel_as_type(token, channel_id, new_type)
     return true, tostring(full.id), nil -- already the target type -- nothing to do
   end
 
-  local created, cerr = rest:post("/guilds/" .. tostring(full.guild_id) .. "/channels", {
-    name = full.name,
-    type = new_type,
-    parent_id = denull_field(full.parent_id),
-    position = full.position,
-    permission_overwrites = full.permission_overwrites,
-    bitrate = full.bitrate,
-    user_limit = full.user_limit,
-    rtc_region = denull_field(full.rtc_region),
-    nsfw = full.nsfw,
-  })
+  local function build_payload(include_bitrate)
+    local payload = {
+      name = full.name,
+      type = new_type,
+      parent_id = denull_field(full.parent_id),
+      position = full.position,
+      permission_overwrites = full.permission_overwrites,
+      user_limit = full.user_limit,
+      rtc_region = denull_field(full.rtc_region),
+      nsfw = full.nsfw,
+    }
+    if include_bitrate then payload.bitrate = full.bitrate end
+    return payload
+  end
+
+  local created, cerr = rest:post("/guilds/" .. tostring(full.guild_id) .. "/channels", build_payload(true))
+
+  -- BUGFIX 2026-09-02 (confirmed live): a stage channel's max bitrate is
+  -- well below a regular voice channel's -- carrying over a voice
+  -- channel's own (often higher) bitrate verbatim gets flatly rejected,
+  -- 400 code 30052 "Bitrate is too high for channel of this type", on
+  -- EVERY conversion whose source channel was configured above whatever
+  -- that lower cap actually is. Not hardcoding the real cap here (it could
+  -- change, and stage vs voice may differ by guild boost level) -- instead
+  -- retry once without `bitrate` at all on exactly this error, so Discord
+  -- applies its own default for the target type instead of failing
+  -- outright over a value that was fine for the OLD type.
+  local bitrate_dropped = false
+  if not created and tostring(cerr):find("30052", 1, true) then
+    created, cerr = rest:post("/guilds/" .. tostring(full.guild_id) .. "/channels", build_payload(false))
+    bitrate_dropped = created ~= nil
+  end
   if not created then return false, nil, "could not create replacement channel: " .. tostring(cerr) end
 
   local _, derr = rest:delete("/channels/" .. tostring(channel_id))
@@ -199,8 +220,15 @@ function M.recreate_channel_as_type(token, channel_id, new_type)
     end
   end
 
+  local warning = bitrate_dropped
+    and ("created at the default bitrate for a " .. (new_type == M.CHANNEL_TYPE_STAGE and "stage" or "voice") .. " channel -- the original bitrate was too high for that channel type")
+    or nil
   if derr then
-    return true, tostring(created.id), "created the replacement channel but couldn't delete the old one (" .. tostring(derr) .. ") -- it's now an orphaned duplicate, safe to delete by hand"
+    local delete_warning = "created the replacement channel but couldn't delete the old one (" .. tostring(derr) .. ") -- it's now an orphaned duplicate, safe to delete by hand"
+    warning = warning and (warning .. "; " .. delete_warning) or delete_warning
+  end
+  if warning then
+    return true, tostring(created.id), warning
   end
   return true, tostring(created.id), nil
 end
