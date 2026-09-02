@@ -126,27 +126,83 @@ end
 M.CHANNEL_TYPE_VOICE = 2
 M.CHANNEL_TYPE_STAGE = 13
 
--- Converts a channel between GUILD_VOICE (2) and GUILD_STAGE_VOICE (13).
--- Discord supports this as a plain partial PATCH (the same operation the
--- client's own channel-settings "Channel Type" control performs) -- only
--- `type` is sent, so every other field (name, position, bitrate, user
--- limit, permission overwrites) is left exactly as the owner already had
--- it; Discord's PATCH semantics only touch fields actually present in the
--- request body. Requires Manage Channels in that channel, which every
--- music bot's invite already grants (see M.MUSIC_BOT_PERMISSIONS below).
-function M.set_channel_type(token, channel_id, channel_type)
+-- BUGFIX 2026-09-02 (confirmed live, twice -- once against a real home
+-- channel, once again against a disposable empty test channel with zero
+-- connections to rule out "active session" as the cause): a plain PATCH
+-- /channels/:id with a new `type` does NOT work for GUILD_VOICE <->
+-- GUILD_STAGE_VOICE -- Discord rejects it outright with 400
+-- CHANNEL_TYPE_CHANGE_INVALID ("This channel's type cannot be changed"),
+-- unconditionally, not a permissions or connection-state issue. This was
+-- the previous (wrong) implementation of this function; Discord simply
+-- does not support that conversion via PATCH, full stop -- the ONLY way
+-- confirmed to actually work is delete the old channel and create a new
+-- one of the target type, which is what this now does. Real, unavoidable
+-- costs of that approach (surfaced to the operator, not hidden): the
+-- channel gets a NEW id (every caller of this function is responsible for
+-- updating anything that stored the old one, e.g. bot_home_channels),
+-- any in-channel chat history on the old channel is gone (deletion isn't
+-- recoverable), and anyone currently connected is disconnected for the
+-- swap rather than smoothly transitioned. What DOES carry over cleanly
+-- (confirmed live): name, category (parent_id), position, permission
+-- overwrites, bitrate, user_limit, rtc_region, nsfw -- captured from the
+-- old channel via GET before creating the new one, so the operator sees
+-- the same setup they had, just under a new id.
+--
+-- Ordering is deliberate: create the replacement FIRST, only delete the
+-- original after that succeeds -- if creation fails, nothing is lost (the
+-- original channel and its history are untouched). If the new channel
+-- gets created but the delete fails for some reason, that's a far more
+-- recoverable state (an orphaned duplicate, easy to clean up by hand)
+-- than the reverse.
+--
+-- Returns (ok, new_channel_id, err_or_warning). `ok` false means nothing
+-- usable was created (fatal). `ok` true with a non-nil third value means
+-- the new channel exists and is real/usable, but something non-fatal
+-- needs the operator's attention (currently: the old channel couldn't be
+-- deleted, so it's still sitting there as a duplicate).
+local function denull_field(v)
+  if v == cjson.null then return nil end
+  return v
+end
+
+function M.recreate_channel_as_type(token, channel_id, new_type)
   local rest = rest_for(token)
-  local data, err = rest:patch("/channels/" .. tostring(channel_id), { type = channel_type })
-  if not data then return false, err end
-  -- Successful PATCH invalidates this channel's (and its guild's channel
-  -- list's) cached read -- otherwise a channel picker/inventory view could
-  -- keep showing the pre-conversion type for up to CACHE_TTL (5 min).
+  local full, ferr = rest:get("/channels/" .. tostring(channel_id))
+  if not full then return false, nil, "could not read existing channel: " .. tostring(ferr) end
+  if tonumber(full.type) == new_type then
+    return true, tostring(full.id), nil -- already the target type -- nothing to do
+  end
+
+  local created, cerr = rest:post("/guilds/" .. tostring(full.guild_id) .. "/channels", {
+    name = full.name,
+    type = new_type,
+    parent_id = denull_field(full.parent_id),
+    position = full.position,
+    permission_overwrites = full.permission_overwrites,
+    bitrate = full.bitrate,
+    user_limit = full.user_limit,
+    rtc_region = denull_field(full.rtc_region),
+    nsfw = full.nsfw,
+  })
+  if not created then return false, nil, "could not create replacement channel: " .. tostring(cerr) end
+
+  local _, derr = rest:delete("/channels/" .. tostring(channel_id))
+
+  -- Invalidate every cached read touching this guild/channel -- otherwise
+  -- a channel picker could keep listing the deleted channel (or missing
+  -- the new one) for up to CACHE_TTL (5 min).
   for key in pairs(cache) do
-    if key:find("/channels/" .. tostring(channel_id), 1, true) or key:find("/guilds/", 1, true) then
+    if key:find("/channels/" .. tostring(channel_id), 1, true)
+        or key:find("/channels/" .. tostring(created.id), 1, true)
+        or key:find("/guilds/", 1, true) then
       cache[key] = nil
     end
   end
-  return true, nil
+
+  if derr then
+    return true, tostring(created.id), "created the replacement channel but couldn't delete the old one (" .. tostring(derr) .. ") -- it's now an orphaned duplicate, safe to delete by hand"
+  end
+  return true, tostring(created.id), nil
 end
 
 -- Port of app/discord_api.py's DiscordInventoryService.fetch_inventory():

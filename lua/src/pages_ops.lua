@@ -594,7 +594,11 @@ function M.register(cfg)
         const guildId = form.guild_id.value;
         if (!guildId) { swarmToast("Choose a guild first.", "error"); return; }
         const label = direction === "stage" ? "stage channels" : "voice channels";
-        if (!confirm(`Convert every home-channel-connected bot's channel in this guild to ${label}? Channel names and every other setting stay the same.`)) return;
+        // Discord doesn't support an in-place type change (confirmed live,
+        // see discord_service.lua's recreate_channel_as_type) -- this
+        // actually deletes and recreates each channel, so the confirm
+        // prompt says so plainly rather than implying a seamless swap.
+        if (!confirm(`Convert every home-channel-connected bot's channel in this guild to ${label}?\n\nDiscord doesn't support converting a channel in place, so this deletes each channel and recreates it as a ${direction === "stage" ? "stage" : "voice"} channel with the same name, category, position, and permissions. Anyone currently connected will be briefly disconnected, and any in-channel chat history on that channel will be lost.`)) return;
         const resultBox = document.getElementById("convert-channels-result");
         const otherBtn = direction === "stage" ? document.getElementById("convert-to-voice-btn") : document.getElementById("convert-to-stage-btn");
         btn.disabled = true;
@@ -605,13 +609,16 @@ function M.register(cfg)
             method: "POST",
             body: JSON.stringify({ direction }),
           });
-          const n = (res.converted || []).length;
+          const converted = res.converted || [];
           const failedN = (res.failed || []).length;
-          let msg = `Converted ${n} channel(s) to ${label}`;
+          const warnings = converted.filter(c => c.warning);
+          let msg = `Converted ${converted.length} channel(s) to ${label}`;
           if (res.skipped_no_home_channel) msg += ` (${res.skipped_no_home_channel} bot(s) had no home channel set)`;
+          if (warnings.length) msg += ` -- ${warnings.length} with a warning: ` + warnings.map(c => c.warning).join("; ");
           if (failedN) msg += ` -- ${failedN} failed: ` + res.failed.map(f => f.error).join("; ");
-          resultBox.innerHTML = `<div class="notice notice-${failedN ? "error" : "success"}">${msg}.</div>`;
-          swarmToast(failedN ? `${failedN} channel(s) failed to convert.` : `Converted ${n} channel(s) to ${label}.`, failedN ? "error" : "success");
+          const hasIssue = failedN > 0 || warnings.length > 0;
+          resultBox.innerHTML = `<div class="notice notice-${hasIssue ? "error" : "success"}">${msg}.</div>`;
+          swarmToast(hasIssue ? `Converted ${converted.length}, but check the details below.` : `Converted ${converted.length} channel(s) to ${label}.`, hasIssue ? "error" : "success");
           refreshControlState();
         } catch (err) {
           resultBox.innerHTML = '<div class="notice notice-error">' + err.message + "</div>";
