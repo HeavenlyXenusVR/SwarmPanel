@@ -39,6 +39,34 @@ function Pg:ensure()
   return true
 end
 
+-- BUGFIX 2026-09-13: pgmoon's receive_message() (init.lua ~line 957) returns
+-- `nil, "receive_message: failed to get type: " .. err` when the socket read
+-- itself fails (peer closed, idle-killed, reset) -- but it does NOT clear
+-- self.sock on that path, only on paths that call conn:disconnect() (which we
+-- never do on this side). So after the underlying TCP connection dies (a
+-- Postgres-side idle timeout, a network blip, anything short of us calling
+-- disconnect ourselves), self.conn.sock stays a truthy-but-dead socket object
+-- forever -- the "not self.conn.sock" check below never trips, :ensure()
+-- keeps believing the connection is fine, and every single query on this Pg
+-- instance fails with this same "closed" error from then on, with no
+-- self-healing, until the whole process is restarted by hand. Confirmed live
+-- across the fleet's logs (sapphire: "db error: receive_message: failed to
+-- get type: closed") -- and since this same q()/Pg instance backs EVERY
+-- DB-dependent path (poll_direct_orders, recovery_watchdog, get_home_channel,
+-- playback state), one dead connection silently breaks direct orders from
+-- Aria/SwarmPanel AND the in-process voice-recovery watchdog at the same
+-- time, on whichever bot happens to hit it -- exactly the "stops responding
+-- to Aria and never recovers voice after being up for days" symptom. A
+-- genuine Postgres-side SQL error (bad query, constraint violation) comes
+-- back through this same nil+string-error shape too (see receive_query_result
+-- in pgmoon), but always as "SEVERITY: message" (parse_error's format) --
+-- never with this literal internal Lua-side tag -- so matching on the tag
+-- itself is exact, with no risk of mistaking a real SQL error for a dead
+-- socket.
+local function is_dead_connection_error(err)
+  return type(err) == "string" and err:find("^receive_message: failed to get type:") ~= nil
+end
+
 -- query(sql, ...) -> rows, err. Params are escaped via pgmoon's built-in escaping.
 function Pg:query(sql, ...)
   local ok, err = self:ensure()
@@ -70,7 +98,12 @@ function Pg:query(sql, ...)
     -- I/O-level connection loss, so that's the actual signal to reconnect
     -- on -- a live socket with a nil query result is just a real error to
     -- hand back to the caller.
-    if not self.conn.sock then
+    if not self.conn.sock or is_dead_connection_error(err2) then
+      -- Best-effort: the socket is already dead, so a terminate-message
+      -- send inside disconnect() failing is expected and harmless -- this
+      -- is just trying to free the fd instead of leaking it, not something
+      -- worth surfacing as a query failure.
+      pcall(function() self.conn:disconnect() end)
       self.conn = nil
       local ok2 = self:ensure()
       if not ok2 then return nil, err2 end
