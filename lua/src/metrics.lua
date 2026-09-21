@@ -102,6 +102,38 @@ function M.get_metrics_snapshot(music_bots)
   return { generated_at = os.date("!%Y-%m-%dT%H:%M:%SZ"), totals = totals, bots = bots }
 end
 
+-- swarm_metrics_history predates this rewrite (migrated from the Python
+-- app) and shipped with nothing but its primary key. Every read of it --
+-- get_metrics_history/get_metric_anomalies, i.e. every Intel-page trend
+-- chart -- filters on (metric_key, captured_at), so each chart was doing a
+-- full scan of the whole table to return a few hundred rows. Measured live
+-- 2026-09-20 at 105k rows: 1192ms per chart, against 5ms with this index.
+-- On top of that the table had no retention at all and was growing ~3.2k
+-- rows/day since 2026-07-24, so the scan got steadily worse on a Postgres
+-- volume that lives on a slow USB disk.
+--
+-- Both are fixed here rather than by hand on the live DB so a fresh deploy
+-- gets them too. IF NOT EXISTS keeps this a no-op after the first run.
+local HISTORY_RETENTION_DAYS = 45 -- get_metrics_history caps lookback at 30d; this leaves headroom
+local history_schema_ready = false
+
+function M.ensure_history_schema()
+  if history_schema_ready then return end
+  history_schema_ready = true
+  pcall(db.execute, "accountlogins",
+    "CREATE INDEX IF NOT EXISTS swarm_metrics_history_key_time_idx ON swarm_metrics_history (metric_key, captured_at)")
+end
+
+-- Bounded, low-frequency retention sweep, same shape as telemetry.lua's:
+-- called from the capture loop in main.lua, and only actually runs on 1 in
+-- `probability_denominator` ticks so it costs nothing on a normal pass.
+function M.maybe_cleanup_history(retention_days, probability_denominator)
+  if math.random(1, probability_denominator or 12) ~= 1 then return end
+  pcall(db.execute, "accountlogins",
+    ("DELETE FROM swarm_metrics_history WHERE captured_at < now() - interval '%d days'")
+      :format(tonumber(retention_days) or HISTORY_RETENTION_DAYS))
+end
+
 function M.record_metric_sample(metric_key, metric_value, guild_id)
   -- The live swarm_metrics_history table has no DEFAULT on captured_at
   -- (verified via information_schema.columns) -- an INSERT that omits it

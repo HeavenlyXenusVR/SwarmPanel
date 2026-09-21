@@ -675,7 +675,42 @@ function M.get_music_intelligence_summary(music_bots, guild_id, bot_key, limit)
   return { totals = totals, bots = result_bots }
 end
 
+-- The three aria_* "recent activity" widgets below are all
+-- ORDER BY created_at DESC, id DESC LIMIT <6, and this whole function runs
+-- on the WS broadcast loop's 2-second dashboard tick -- so their cost is
+-- paid continuously, not once per page view.
+--
+-- Measured live 2026-09-20, none of them had an index matching that sort:
+-- aria_swarm_events had no created_at index at all (full parallel sort of
+-- 304,822 rows, 12,660 buffers read off a Postgres volume that lives on a
+-- slow USB disk) and took 4001ms to return 6 rows. aria_operator_decisions
+-- had created_at alone (503ms) and aria_infra_history had it only as the
+-- second column of (target_name, created_at), unusable for a global sort
+-- (271ms). ~4.8s per dashboard build, against a 2s tick -- the loop could
+-- never keep up, so it simply ran back-to-back forever. With these three
+-- indexes the same queries are 2.1ms / 1.5ms / 1.6ms.
+--
+-- Created from here rather than in Aria's own schema bootstrap because this
+-- is the consumer that needs them and the one whose latency they explain --
+-- same precedent as control.lua, which already creates tables it depends on
+-- inside the music bots' schemas. IF NOT EXISTS makes it a no-op after the
+-- first run, and the whole thing is pcall'd: a panel that cannot create an
+-- index must still render the dashboard, just slower.
+local aria_indexes_ready = false
+local function ensure_aria_dashboard_indexes()
+  if aria_indexes_ready then return end
+  aria_indexes_ready = true
+  for _, stmt in ipairs({
+    "CREATE INDEX IF NOT EXISTS aria_swarm_events_created_id_idx ON aria_swarm_events (created_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS aria_operator_decisions_created_id_idx ON aria_operator_decisions (created_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS aria_infra_history_created_id_idx ON aria_infra_history (created_at DESC, id DESC)",
+  }) do
+    pcall(db.execute, "discord_aria", stmt)
+  end
+end
+
 function M.get_dashboard_data(music_bots)
+  ensure_aria_dashboard_indexes()
   local bots = {}
   local total_active = 0
   for _, bot in ipairs(music_bots) do

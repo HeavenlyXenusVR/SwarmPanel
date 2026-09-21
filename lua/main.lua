@@ -78,9 +78,37 @@ local METRICS_HISTORY_CAPTURE_INTERVAL_SECONDS = 300
 copas.addthread(function()
   copas.sleep(30)
   while true do
+    -- Index + retention for swarm_metrics_history; see metrics.lua's own
+    -- comment for the measured cost of having had neither.
+    pcall(metrics.ensure_history_schema)
     local ok, err = pcall(metrics.capture_metrics_snapshot, config.music_bots)
     if not ok then print("[swarmpanel-lua] metrics history capture failed: " .. tostring(err)) end
+    pcall(metrics.maybe_cleanup_history)
     copas.sleep(METRICS_HISTORY_CAPTURE_INTERVAL_SECONDS)
+  end
+end)
+
+-- Panel-wide telemetry/analytics (2026-09-14, per operator request): a
+-- structured, queryable event log (swarmpanel_telemetry_events, fed by
+-- httpd.lua's per-request recorder + audit.lua's admin-action fan-out +
+-- routes.lua's login analytics) plus a periodic process resource/activity
+-- snapshot (swarmpanel_process_stats), matching the same pattern already
+-- deployed fleet-wide across the 13 music bots + Aria.
+local PROCESS_START_TIME = socket.gettime()
+local TELEMETRY_SNAPSHOT_INTERVAL_SECONDS = 30
+copas.addthread(function()
+  while true do
+    copas.sleep(TELEMETRY_SNAPSHOT_INTERVAL_SECONDS)
+    local ok, err = pcall(function()
+      telemetry.snapshot({
+        memory_kb = collectgarbage("count"),
+        uptime_seconds = math.floor(socket.gettime() - PROCESS_START_TIME),
+        active_websocket_count = telemetry.active_websocket_count(),
+        requests_last_interval = telemetry.pop_request_count(),
+      })
+      telemetry.maybe_cleanup(30, 40)
+    end)
+    if not ok then print("[swarmpanel-lua] telemetry snapshot failed: " .. tostring(err)) end
   end
 end)
 

@@ -25,7 +25,29 @@ local function read_file(relpath)
   return data
 end
 
+-- robots.txt: this panel is reachable from the public internet (the access
+-- telemetry shows real crawler traffic from Bing/AWS/etc), and it had no
+-- robots.txt at all -- so every crawler that came looking got a 404 and had
+-- no instruction not to index the thing. 43 of the panel's logged 404s over
+-- one week were exactly this, all of them /robots.txt or /sitemap.xml.
+--
+-- This is an operator console behind a login, so the correct answer for
+-- every well-behaved crawler is "index nothing". Served inline rather than
+-- from a file: it is three lines, and a missing file must not turn into
+-- another 404. It is not a security control -- anything ignoring robots.txt
+-- ignores this too; the login and ratelimit.lua are what actually guard the
+-- panel -- it just keeps the console out of search results and stops the
+-- 404 noise from burying real ones in the telemetry.
+local ROBOTS_TXT = "User-agent: *\nDisallow: /\n"
+
 function M.register()
+  httpd.route("GET", "/robots.txt", function()
+    return 200, ROBOTS_TXT, {
+      ["Content-Type"] = "text/plain; charset=utf-8",
+      ["Cache-Control"] = "public, max-age=86400",
+    }
+  end)
+
   for _, asset in ipairs(ASSETS) do
     httpd.route("GET", asset.path, function(req)
       local data = read_file(asset.file)
