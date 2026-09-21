@@ -238,9 +238,88 @@ function M.register(cfg)
       return "off", "Idle"
     end
 
+    -- "2h 14m" / "34m" / "45s" -- for Aria's own custom card below (see
+    -- BUGFIX 2026-09-14 just below the bot_cards loop). No existing helper
+    -- for this anywhere in the codebase; every other "time ago" rendering
+    -- on this page is a raw "%ds ago" (see the heartbeat chip further
+    -- down), which reads fine for seconds/minutes but not for a
+    -- multi-hour process uptime.
+    local function format_uptime(seconds)
+      seconds = math.floor(tonumber(seconds) or 0)
+      if seconds < 60 then return seconds .. "s" end
+      local minutes = math.floor(seconds / 60)
+      if minutes < 60 then return minutes .. "m" end
+      local hours = math.floor(minutes / 60)
+      minutes = minutes % 60
+      if hours < 24 then return ("%dh %dm"):format(hours, minutes) end
+      local days = math.floor(hours / 24)
+      hours = hours % 24
+      return ("%dd %dh"):format(days, hours)
+    end
+
     local bot_cards = {}
     local all_sessions = {}
     for _, bot in ipairs(data.bots) do
+      -- BUGFIX 2026-09-14 (per operator report, screenshot confirmed: "the
+      -- panel is still treating Aria's card like it's a music bot"): this
+      -- loop rendered every single bot.kind through the identical
+      -- now-playing/seek-bar/"X live, X guilds, X queued, X backup" music
+      -- card template, Aria included -- dashboard.lua's own fix (removing
+      -- her borrowed known_guild_count/active_playing_count numbers, adding
+      -- real memory_kb/uptime_seconds) only fixed the DATA; this template
+      -- never had a branch to render those real fields differently, so her
+      -- card just showed the same layout with zeros instead of wrong
+      -- numbers, and her real fields (memory/uptime/medic summary) weren't
+      -- displayed anywhere at all. Orchestrator (Aria) now gets her own
+      -- card body entirely -- real process stats and medic/interaction
+      -- counts, no now-playing thumbnail/seek bar/queue chips that don't
+      -- apply to her.
+      if bot.kind == "orchestrator" then
+        local medic = bot.medic_summary or {}
+        local uptime_chip = bot.uptime_seconds and ("up " .. html.esc(format_uptime(bot.uptime_seconds))) or ""
+        local memory_chip = bot.memory_kb and (tostring(math.floor(bot.memory_kb / 1024)) .. " MB mem") or ""
+        local heartbeat_chip = (tonumber(bot.heartbeat_age_seconds) ~= nil)
+          and ("heartbeat " .. math.floor(bot.heartbeat_age_seconds) .. "s ago")
+          or ""
+        local offline_overlay = bot_is_offline(bot)
+          and '<div class="bot-card-offline-overlay"><span class="bot-card-offline-label">Offline</span></div>' or ""
+        bot_cards[#bot_cards + 1] = ([[
+          <article class="bot-card bot-card-orchestrator%s" data-bot-key="%s" style="--card-accent: %s">
+            <div data-bot-offline-overlay>%s</div>
+            <div class="bot-head">
+              <span class="bot-dot"></span>
+              <div class="bot-head-copy">
+                <h3>%s</h3>
+                <small>Autonomous swarm orchestrator</small>
+              </div>
+              <span class="data-pill data-pill-%s" data-bot-badge>%s</span>
+            </div>
+            <div class="bot-now">
+              <div class="bot-thumb bot-thumb-empty">&#9881;</div>
+              <div class="bot-now-copy">
+                <strong data-bot-now-title>%d pending repair%s, %d pending infra task%s</strong>
+                <small data-bot-now-sub>%d interaction%s recorded &middot; %d critical, %d recoverable health issue%s</small>
+              </div>
+            </div>
+            <div class="chip-row">
+              <span data-chip="uptime">%s</span>
+              <span data-chip="memory">%s</span>
+              <span data-chip="heartbeat">%s</span>
+            </div>
+          </article>
+        ]]):format(
+          offline_overlay ~= "" and " bot-card-offline" or "", html.esc(bot.key), html.esc(config.bot_accents[bot.key] or "#cba6f7"),
+          offline_overlay,
+          html.esc(bot.display_name),
+          bot_is_offline(bot) and "danger" or "live", bot_is_offline(bot) and "Offline" or "Online",
+          medic.pending_repairs or 0, (medic.pending_repairs == 1) and "" or "s",
+          medic.pending_infra or 0, (medic.pending_infra == 1) and "" or "s",
+          bot.recent_interaction_count or 0, (bot.recent_interaction_count == 1) and "" or "s",
+          medic.critical_health or 0, medic.recoverable_health or 0, (medic.recoverable_health == 1) and "" or "s",
+          uptime_chip, memory_chip, heartbeat_chip)
+        goto continue_bot_card
+      end
+
       local session = best_session(bot)
       local tone, label = playback_badge(session, bot)
       local accent = config.bot_accents[bot.key] or "#89b4fa"
@@ -251,6 +330,20 @@ function M.register(cfg)
       else
         thumb = '<div class="bot-thumb bot-thumb-empty">&#9835;</div>'
       end
+      -- BUGFIX 2026-09-14 (per operator report + video: cards flicker near
+      -- the playtime counters): the live-update JS (see the inline <script>
+      -- below, patchBotCards) used to replace this ENTIRE card's innerHTML
+      -- on every ~2s WS push (SNAPSHOT_BUILDERS.dashboard.interval=2,
+      -- routes.lua) -- and since some bot's position_seconds changes on
+      -- nearly every tick, that push fires almost continuously, tearing
+      -- down and recreating the <img> thumbnail and seek-bar DOM every time
+      -- (a fresh <img> forces a re-decode/repaint; a fresh seek-bar resets
+      -- whatever transition was in flight) -- a constant, visible flash
+      -- right where the eye is already looking. patchBotCards now patches
+      -- specific fields in place instead of rebuilding the card, which
+      -- needs each field to have a stable selector -- data-bot-thumb-wrap/
+      -- -badge/-now-title/-now-sub/-playback-host/-chip below are exactly
+      -- that, matching 1:1 what the JS now queries.
 
       local now_title = (session and session.title and session.title ~= "") and session.title
         or bot.error or bot.schema or "Waiting for live playback."
@@ -291,28 +384,28 @@ function M.register(cfg)
 
       bot_cards[#bot_cards + 1] = ([[
         <article class="bot-card%s" data-bot-key="%s" style="--card-accent: %s">
-          %s
+          <div data-bot-offline-overlay>%s</div>
           <div class="bot-head">
             <span class="bot-dot"></span>
             <div class="bot-head-copy">
               <h3>%s</h3>
               <small>%s</small>
             </div>
-            <span class="data-pill data-pill-%s">%s</span>
+            <span class="data-pill data-pill-%s" data-bot-badge>%s</span>
           </div>
           <div class="bot-now">
-            %s
+            <div data-bot-thumb-wrap>%s</div>
             <div class="bot-now-copy">
-              <strong>%s</strong>
-              <small>%s</small>
+              <strong data-bot-now-title>%s</strong>
+              <small data-bot-now-sub>%s</small>
             </div>
           </div>
-          %s
+          <div data-bot-playback-host>%s</div>
           <div class="chip-row">
-            <span>%d live</span>
-            <span>%d guilds</span>
-            <span data-queue-pressure>%d queued</span>
-            <span data-queue-pressure>%d backup</span>
+            <span data-chip="live">%d live</span>
+            <span data-chip="guilds">%d guilds</span>
+            <span data-queue-pressure data-chip="queued">%d queued</span>
+            <span data-queue-pressure data-chip="backup">%d backup</span>
             %s
           </div>
         </article>
@@ -340,6 +433,8 @@ function M.register(cfg)
         s.bot_display = bot.display_name
         all_sessions[#all_sessions + 1] = s
       end
+
+      ::continue_bot_card::
     end
 
     local session_rows = {}
@@ -351,20 +446,24 @@ function M.register(cfg)
         -- own (100% of its container), so dropped into a wide table column
         -- it stretched across nearly the full row. The bare 160px cap here
         -- matches PlaybackCounter's compact rendering in ControlState.
+        -- data-session-row is a stable per-(bot,guild) key (see
+        -- patchSessionsTable's own comment below) so live updates can patch
+        -- an existing row in place instead of rebuilding the whole table.
         session_rows[#session_rows + 1] = ([[
-          <tr>
-            <td>%s</td>
-            <td>%s</td>
-            <td>%s</td>
+          <tr data-session-row="%s">
+            <td data-session-bot>%s</td>
+            <td data-session-title>%s</td>
+            <td data-session-state>%s</td>
             <td style="max-width:160px">
               <div class="bot-playback compact" data-playback-counter data-position="%s" data-observed-at="%s" data-duration="%s" data-playing="%s">
                 <div class="bot-playback-bar" aria-hidden="true"><span data-playback-bar style="width:%d%%"></span></div>
                 <span data-playback-label></span>
               </div>
             </td>
-            <td>%d queued</td>
+            <td data-session-queue>%d queued</td>
           </tr>
         ]]):format(
+          html.esc(tostring(s.bot_key or "") .. ":" .. tostring(s.guild_id or "")),
           html.esc(s.bot_display), html.esc(s.title or "—"), html.esc(s.session_state_label or ""),
           tostring(s.position_seconds or 0), tostring(s.position_observed_at or 0), tostring(s.duration_seconds or 0),
           tostring(s.is_playing == true),
@@ -587,7 +686,7 @@ function M.register(cfg)
         html.section_head("Audio Nodes"), html.join(node_pills),
         html.section_head("Bots"), html.join(bot_cards),
         html.section_head("Live Sessions"),
-        #session_rows > 0 and html.join(session_rows) or ('<tr><td colspan="5">' .. html.esc("Nothing playing right now.") .. "</td></tr>")),
+        #session_rows > 0 and html.join(session_rows) or ('<tr data-session-empty><td colspan="5">' .. html.esc("Nothing playing right now.") .. "</td></tr>")),
     })
 
     body = boot_screen .. body .. [[
@@ -671,76 +770,212 @@ function M.register(cfg)
               <div class="bot-seek-times"><span data-seek-current></span><span data-seek-duration></span></div>
             </div>`;
         }
-        function renderBotCardInner(bot) {
+        // BUGFIX 2026-09-14 (per operator report + video: cards flicker
+        // near the playtime counters): patchBotCards used to call
+        // card.innerHTML = renderBotCardInner(bot) for EVERY bot on EVERY
+        // dashboard snapshot -- and SNAPSHOT_BUILDERS.dashboard pushes every
+        // 2s (routes.lua) whenever ANY bot's position_seconds changed,
+        // which across a 13-bot fleet is nearly continuous. Blowing away
+        // and rebuilding the whole card every ~2s destroys and recreates
+        // the <img> thumbnail (forces a re-decode/repaint) and the seek-bar
+        // DOM (resets whatever transition was mid-flight) -- a constant
+        // visible flash exactly where the eye is already looking. Below
+        // patches only the specific fields that can actually change, using
+        // the stable data-bot-* hooks pages.lua's server-rendered card
+        // markup now provides (see that template's own comment) -- the
+        // image/seek-bar elements are only ever touched when their actual
+        // value changes, and the existing tickPlaybackCounters() 1s loop
+        // keeps animating the position smoothly and uninterrupted in
+        // between pushes, same as it always did.
+        function setText(el, text) { if (el && el.textContent !== text) el.textContent = text; }
+        // Mirrors pages.lua's own format_uptime() (server-side, used for the
+        // orchestrator card's initial render) so live patches format the
+        // same way instead of showing a raw seconds count.
+        function formatUptimeJs(totalSeconds) {
+          let seconds = Math.floor(Number(totalSeconds) || 0);
+          if (seconds < 60) return seconds + "s";
+          let minutes = Math.floor(seconds / 60);
+          if (minutes < 60) return minutes + "m";
+          let hours = Math.floor(minutes / 60);
+          minutes = minutes % 60;
+          if (hours < 24) return hours + "h " + minutes + "m";
+          const days = Math.floor(hours / 24);
+          hours = hours % 24;
+          return days + "d " + hours + "h";
+        }
+        function setOfflineOverlay(card, offline) {
+          const host = card.querySelector("[data-bot-offline-overlay]");
+          if (!host) return;
+          const wantHtml = offline ? '<div class="bot-card-offline-overlay"><span class="bot-card-offline-label">Offline</span></div>' : "";
+          if (host.innerHTML !== wantHtml) host.innerHTML = wantHtml;
+        }
+        function patchMusicBotCard(card, bot) {
+          setOfflineOverlay(card, botIsOffline(bot));
           const session = bestSession(bot);
           const [tone, label] = playbackBadge(session, bot);
-          const thumb = (session && session.thumbnail)
-            ? `<img class="bot-thumb" src="${escHtml(session.thumbnail)}" alt="" loading="lazy">`
-            : '<div class="bot-thumb bot-thumb-empty">&#9835;</div>';
+          const badge = card.querySelector("[data-bot-badge]");
+          if (badge) {
+            const cls = `data-pill data-pill-${tone}`;
+            if (badge.className !== cls) badge.className = cls;
+            setText(badge, label);
+          }
           const nowTitle = (session && session.title) || bot.error || bot.schema || "Waiting for live playback.";
           const nowSub = (session && (session.media_source_label || session.session_state_label)) || "Live state will fill in automatically.";
-          const offline = botIsOffline(bot);
-          const offlineOverlay = offline ? '<div class="bot-card-offline-overlay"><span class="bot-card-offline-label">Offline</span></div>' : "";
+          setText(card.querySelector("[data-bot-now-title]"), nowTitle);
+          setText(card.querySelector("[data-bot-now-sub]"), nowSub);
+
+          const thumbWrap = card.querySelector("[data-bot-thumb-wrap]");
+          if (thumbWrap) {
+            const wantSrc = session && session.thumbnail;
+            const img = thumbWrap.querySelector("img.bot-thumb");
+            if (wantSrc) {
+              if (img) { if (img.getAttribute("src") !== wantSrc) img.setAttribute("src", wantSrc); }
+              else thumbWrap.innerHTML = `<img class="bot-thumb" src="${escHtml(wantSrc)}" alt="" loading="lazy">`;
+            } else if (img) {
+              thumbWrap.innerHTML = '<div class="bot-thumb bot-thumb-empty">&#9835;</div>';
+            }
+          }
+
+          const playbackHost = card.querySelector("[data-bot-playback-host]");
+          const existingWrap = card.querySelector("[data-playback-counter]");
+          if (session) {
+            if (existingWrap) {
+              // In-place attribute update only -- the seek-bar/thumb/track
+              // child elements are left completely untouched, so no reflow
+              // or repaint of them happens here at all.
+              existingWrap.setAttribute("data-position", String(session.position_seconds || 0));
+              existingWrap.setAttribute("data-observed-at", String(session.position_observed_at || 0));
+              existingWrap.setAttribute("data-duration", String(session.duration_seconds || 0));
+              existingWrap.setAttribute("data-playing", String(session.is_playing === true));
+              const seekBar = existingWrap.querySelector("[data-seek-bar]");
+              if (seekBar) {
+                const dur = Math.floor(session.duration_seconds || 0);
+                if (seekBar.getAttribute("data-guild-id") !== String(session.guild_id)) seekBar.setAttribute("data-guild-id", String(session.guild_id));
+                if (seekBar.getAttribute("data-duration") !== String(dur)) seekBar.setAttribute("data-duration", String(dur));
+              }
+            } else if (playbackHost) {
+              playbackHost.innerHTML = renderPlaybackWrap(session, bot.key);
+            }
+          } else if (existingWrap && playbackHost) {
+            playbackHost.innerHTML = "";
+          }
+
+          setText(card.querySelector('[data-chip="live"]'), `${bot.active_playing_count || 0} live`);
+          setText(card.querySelector('[data-chip="guilds"]'), `${bot.known_guild_count || 0} guilds`);
+          setText(card.querySelector('[data-chip="queued"]'), `${bot.queue_depth || 0} queued`);
+          setText(card.querySelector('[data-chip="backup"]'), `${bot.backup_queue_depth || 0} backup`);
           const age = Number(bot.heartbeat_age_seconds);
-          const uptimeSpan = Number.isFinite(age) ? `<span data-bot-uptime>heartbeat ${Math.floor(age)}s ago</span>` : "";
-          return `
-            ${offlineOverlay}
-            <div class="bot-head">
-              <span class="bot-dot"></span>
-              <div class="bot-head-copy">
-                <h3>${escHtml(bot.display_name)}</h3>
-                <small>${escHtml(bot.heartbeat_status || bot.status || "telemetry ready")}</small>
-              </div>
-              <span class="data-pill data-pill-${tone}">${escHtml(label)}</span>
-            </div>
-            <div class="bot-now">
-              ${thumb}
-              <div class="bot-now-copy">
-                <strong>${escHtml(nowTitle)}</strong>
-                <small>${escHtml(nowSub)}</small>
-              </div>
-            </div>
-            ${renderPlaybackWrap(session, bot.key)}
-            <div class="chip-row">
-              <span>${bot.active_playing_count || 0} live</span>
-              <span>${bot.known_guild_count || 0} guilds</span>
-              <span data-queue-pressure>${bot.queue_depth || 0} queued</span>
-              <span data-queue-pressure>${bot.backup_queue_depth || 0} backup</span>
-              ${uptimeSpan}
-            </div>`;
+          const upEl = card.querySelector("[data-bot-uptime]");
+          if (upEl && Number.isFinite(age)) setText(upEl, `heartbeat ${Math.floor(age)}s ago`);
+        }
+        function patchOrchestratorCard(card, bot) {
+          const offline = botIsOffline(bot);
+          setOfflineOverlay(card, offline);
+          const badge = card.querySelector("[data-bot-badge]");
+          if (badge) {
+            const cls = `data-pill data-pill-${offline ? "danger" : "live"}`;
+            if (badge.className !== cls) badge.className = cls;
+            setText(badge, offline ? "Offline" : "Online");
+          }
+          const medic = bot.medic_summary || {};
+          const repairs = medic.pending_repairs || 0;
+          const infra = medic.pending_infra || 0;
+          setText(card.querySelector("[data-bot-now-title]"),
+            `${repairs} pending repair${repairs === 1 ? "" : "s"}, ${infra} pending infra task${infra === 1 ? "" : "s"}`);
+          const interactions = bot.recent_interaction_count || 0;
+          const recoverable = medic.recoverable_health || 0;
+          setText(card.querySelector("[data-bot-now-sub]"),
+            `${interactions} interaction${interactions === 1 ? "" : "s"} recorded · ${medic.critical_health || 0} critical, ${recoverable} recoverable health issue${recoverable === 1 ? "" : "s"}`);
+          if (bot.uptime_seconds != null) setText(card.querySelector('[data-chip="uptime"]'), `up ${formatUptimeJs(bot.uptime_seconds)}`);
+          if (bot.memory_kb != null) setText(card.querySelector('[data-chip="memory"]'), `${Math.floor(bot.memory_kb / 1024)} MB mem`);
+          const age = Number(bot.heartbeat_age_seconds);
+          if (Number.isFinite(age)) setText(card.querySelector('[data-chip="heartbeat"]'), `heartbeat ${Math.floor(age)}s ago`);
         }
         function patchBotCards(data) {
           for (const bot of (data && data.bots) || []) {
             const card = document.querySelector(`[data-bot-key="${window.CSS && CSS.escape ? CSS.escape(bot.key) : bot.key}"]`);
             if (!card) continue;
             card.classList.toggle("bot-card-offline", botIsOffline(bot));
-            card.innerHTML = renderBotCardInner(bot);
+            if (bot.kind === "orchestrator") patchOrchestratorCard(card, bot);
+            else patchMusicBotCard(card, bot);
           }
         }
+        function sessionRowKey(s) { return `${s.bot_key || ""}:${s.guild_id || ""}`; }
         function renderSessionRow(s) {
           const duration = s.duration_seconds || 0;
           const pct = duration > 0 ? Math.min(100, Math.floor((100 * (s.position_seconds || 0)) / duration)) : 0;
           return `
-            <tr>
-              <td>${escHtml(s.bot_display || s.bot_name)}</td>
-              <td>${escHtml(s.title || "—")}</td>
-              <td>${escHtml(s.session_state_label || "")}</td>
+            <tr data-session-row="${escHtml(sessionRowKey(s))}">
+              <td data-session-bot>${escHtml(s.bot_display || s.bot_name)}</td>
+              <td data-session-title>${escHtml(s.title || "—")}</td>
+              <td data-session-state>${escHtml(s.session_state_label || "")}</td>
               <td style="max-width:160px">
                 <div class="bot-playback compact" data-playback-counter data-position="${escHtml(s.position_seconds || 0)}" data-observed-at="${escHtml(s.position_observed_at || 0)}" data-duration="${escHtml(s.duration_seconds || 0)}" data-playing="${s.is_playing === true}">
                   <div class="bot-playback-bar" aria-hidden="true"><span data-playback-bar style="width:${pct}%"></span></div>
                   <span data-playback-label></span>
                 </div>
               </td>
-              <td>${s.queue_count || 0} queued</td>
+              <td data-session-queue>${s.queue_count || 0} queued</td>
             </tr>`;
+        }
+        // BUGFIX 2026-09-14 (per operator report, same class of bug as
+        // patchBotCards above): this used to rebuild the ENTIRE tbody on
+        // every ~2s dashboard push, tearing down and recreating every
+        // row's playback-bar DOM even when nothing about that row actually
+        // changed. Now diffs against the existing rows (matched by the
+        // stable data-session-row bot_key:guild_id key, same identity
+        // dashboard.lua's own session-dedupe uses) -- an unchanged row's
+        // DOM is left completely untouched, a changed row is patched in
+        // place, and only genuinely new/gone sessions add or remove a row.
+        function patchSessionRow(tr, s) {
+          setText(tr.querySelector("[data-session-bot]"), s.bot_display || s.bot_name || "");
+          setText(tr.querySelector("[data-session-title]"), s.title || "—");
+          setText(tr.querySelector("[data-session-state]"), s.session_state_label || "");
+          setText(tr.querySelector("[data-session-queue]"), `${s.queue_count || 0} queued`);
+          const wrap = tr.querySelector("[data-playback-counter]");
+          if (wrap) {
+            wrap.setAttribute("data-position", String(s.position_seconds || 0));
+            wrap.setAttribute("data-observed-at", String(s.position_observed_at || 0));
+            wrap.setAttribute("data-duration", String(s.duration_seconds || 0));
+            wrap.setAttribute("data-playing", String(s.is_playing === true));
+          }
         }
         function patchSessionsTable(data) {
           const tbody = document.querySelector("#sessions-table tbody");
           if (!tbody) return;
           const rows = ((data && data.sessions) || []).filter((s) => s.is_playing || s.is_paused || (s.title && s.title !== ""));
-          tbody.innerHTML = rows.length
-            ? rows.map(renderSessionRow).join("")
-            : `<tr><td colspan="5">${escHtml("Nothing playing right now.")}</td></tr>`;
+          if (rows.length === 0) {
+            // Only replace if it isn't already showing the placeholder --
+            // avoids the same needless-rebuild flicker for the empty state.
+            if (!tbody.querySelector("[data-session-empty]")) {
+              tbody.innerHTML = `<tr data-session-empty><td colspan="5">${escHtml("Nothing playing right now.")}</td></tr>`;
+            }
+            return;
+          }
+          const emptyRow = tbody.querySelector("[data-session-empty]");
+          if (emptyRow) emptyRow.remove();
+          const existing = new Map();
+          tbody.querySelectorAll("[data-session-row]").forEach((tr) => existing.set(tr.getAttribute("data-session-row"), tr));
+          const wantKeys = new Set();
+          let prevEl = null;
+          for (const s of rows) {
+            const key = sessionRowKey(s);
+            wantKeys.add(key);
+            let tr = existing.get(key);
+            if (tr) {
+              patchSessionRow(tr, s);
+            } else {
+              tr = document.createElement("template");
+              tr.innerHTML = renderSessionRow(s).trim();
+              tr = tr.content.firstElementChild;
+            }
+            // Keep row order matching the server's own sort -- insert/move
+            // right after the previous row we just placed.
+            if (prevEl) { if (prevEl.nextSibling !== tr) prevEl.after(tr); }
+            else if (tbody.firstChild !== tr) tbody.insertBefore(tr, tbody.firstChild);
+            prevEl = tr;
+          }
+          for (const [key, tr] of existing) { if (!wantKeys.has(key)) tr.remove(); }
         }
         window.swarmLive.watch("dashboard", (msg) => {
           if (msg.type === "snapshot") {

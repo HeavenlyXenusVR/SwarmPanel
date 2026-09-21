@@ -15,6 +15,8 @@
 local db = require("db")
 local notify = require("notify")
 local config = require("config")
+local telemetry = require("telemetry")
+local socket = require("socket")
 
 local M = {}
 
@@ -40,6 +42,7 @@ local function relay_to_command_thread(bot, gid, action, actor)
   if not token or token == "" then
     return false, "No Discord token configured for " .. bot.display_name .. "."
   end
+  local t0 = socket.gettime()
   local status, resp = notify.bot_api_call("POST", "/channels/" .. tostring(thread_id) .. "/messages", token, {
     embeds = { {
       title = "\xE2\x96\xB6\xEF\xB8\x8F " .. tostring(action),
@@ -47,7 +50,16 @@ local function relay_to_command_thread(bot, gid, action, actor)
       color = 0x5865F2,
     } },
   })
-  if type(status) ~= "number" or status >= 300 then
+  -- Distinct from the bot_command telemetry below this function -- this is
+  -- an actual outbound Discord REST call (panel -> Discord API directly,
+  -- not panel -> bot's own poll-table), so it gets its own event_name/
+  -- category rather than being folded into the DB-write command telemetry.
+  local relay_ok = type(status) == "number" and status < 300
+  pcall(telemetry.record, "discord_api", "relay_command_thread", {
+    guild_id = gid, username = actor, numeric_value = (socket.gettime() - t0) * 1000,
+    metadata = { bot_key = bot.key, action = action, success = relay_ok, status = status },
+  })
+  if not relay_ok then
     return false, "Could not post to " .. bot.display_name .. "'s GWS Commands channel: " .. tostring((type(resp) == "table" and resp.message) or status)
   end
   return true, nil
@@ -251,11 +263,28 @@ local function smart_query_from_title(title)
 end
 
 -- Returns (result_table, err). result_table has at least {action=, message=}.
+--
+-- Command telemetry (2026-09-14, per operator request): every call --
+-- both the /api/bots/control route and channel_convert.lua's direct
+-- RECOVER call -- is recorded into swarmpanel_bot_commands as ONE row
+-- covering the full round trip this function actually performs: the
+-- command sent out (action/bot_key/guild_id/payload) and the outcome
+-- received back (success/message/error), since this DB-write-then-poll
+-- architecture has no separate synchronous bot ACK to record apart from
+-- what this function itself returns. See telemetry.lua's own header for
+-- the secrets guarantee.
 function M.control_bot(bot, gid, action, payload, actor)
+  local t0 = socket.gettime()
   local schema, prefix = bot.db_schema, bot.table_prefix
   action = tostring(action or ""):upper()
   actor = tostring(actor or "unknown")
-  if not VALID_ACTIONS[action] then return nil, "Unsupported action: " .. action end
+  if not VALID_ACTIONS[action] then
+    pcall(telemetry.record, "bot_command", action, {
+      guild_id = gid, username = actor, numeric_value = (socket.gettime() - t0) * 1000,
+      metadata = { bot_key = bot and bot.key, success = false, error = "unsupported_action" },
+    })
+    return nil, "Unsupported action: " .. action
+  end
 
   local result = { action = action, command = action }
   local ok, err = pcall(function()
@@ -477,10 +506,19 @@ function M.control_bot(bot, gid, action, payload, actor)
     db.execute(schema, "COMMIT")
   end)
 
+  local latency_ms = (socket.gettime() - t0) * 1000
   if not ok then
     pcall(db.execute, schema, "ROLLBACK")
+    pcall(telemetry.record, "bot_command", action, {
+      guild_id = gid, username = actor, numeric_value = latency_ms,
+      metadata = { bot_key = bot.key, success = false, error = tostring(err), payload = payload },
+    })
     return nil, tostring(err)
   end
+  pcall(telemetry.record, "bot_command", action, {
+    guild_id = gid, username = actor, numeric_value = latency_ms,
+    metadata = { bot_key = bot.key, success = true, message = result.message, payload = payload },
+  })
   return result, nil
 end
 

@@ -4,8 +4,15 @@
 local db = require("db")
 local config = require("config")
 local Redis = require("swarmlua.redis")
+local telemetry = require("telemetry")
 
 local M = {}
+
+-- Persists across calls within this process (get_dashboard_data runs on
+-- both the ~2s WS broadcast loop and every /api/dashboard request) so the
+-- edge-triggered telemetry below (see get_dashboard_data's Aria section)
+-- fires once per actual state change, not once per call.
+local last_known_aria_online = nil
 
 -- Cross-bot node-health scoreboard (see Music/lua-shared/swarmlua/
 -- nodepool.lua) -- one shared Redis hash per Lavalink-protocol node
@@ -154,39 +161,29 @@ local function derive_thumbnail_url(video_url)
   return "https://i.ytimg.com/vi/" .. video_id .. "/hqdefault.jpg"
 end
 
--- Music/track-downloader (see Music/track-downloader/main.py) caches
--- resolved YouTube tracks by video ID into /audiocache, shared read-only
--- into this container (see docker-compose.yml's `- /mnt/fastssd/audiocache:
--- /audiocache:ro` on the swarmpanel service -- mounted for exactly this,
--- previously unused: nothing ever actually checked it, so every session
--- showed as streaming live from YouTube even when it was really playing
--- back from the local cache lib/swarmlua/lavalink.lua's _localize_track()
--- transparently swaps in). video_id.* glob (extension varies by source
--- format -- webm/opus/m4a all seen in practice) via a plain `ls`, not
--- lfs.dir, since this project has no lfs dependency; cheap enough for a
--- dashboard-scale (hundreds of rows) admin page.
-local AUDIOCACHE_DIR = "/audiocache"
-local function is_locally_cached(video_id)
-  if not video_id or video_id == "" then return false end
-  -- video_id only ever comes from extract_youtube_video_id()'s own
-  -- pattern captures (never raw user input reaching this file), but this
-  -- still guards against a shell-meaningful character reaching `ls` if
-  -- that ever changes.
-  if video_id:match("[^%w%-_]") then return false end
-  local ok, handle = pcall(io.popen, ("ls %s/%s.* 2>/dev/null"):format(AUDIOCACHE_DIR, video_id))
-  if not ok or not handle then return false end
-  local listing = handle:read("*l")
-  handle:close()
-  return listing ~= nil and listing ~= ""
-end
-
-local function detect_media_source(video_url)
+-- BUGFIX 2026-09-14 (per operator report: the panel claims bots are
+-- "playing from local cache" when they aren't): this used to guess via
+-- `ls /audiocache/<video_id>.*` (see docker-compose.yml's read-only
+-- /mnt/fastssd/audiocache mount) -- i.e. "does ANY cached file for this
+-- video ID exist anywhere, ever". That's a fundamentally wrong question:
+-- lib/swarmlua/lavalink.lua's own header confirms bots stream directly by
+-- default and only opt INTO the local/cached path (force_local) after
+-- direct streaming has already failed a few times for that specific play --
+-- so a file existing on disk from some PAST play (the cache has been
+-- accumulating since June, 3000+ files) says nothing about whether THIS
+-- CURRENT session actually used it. Every bot already records the real,
+-- per-play ground truth itself: <prefix>_playback_events.forced_local, set
+-- from the exact same `force_local` value passed into that resolve (see
+-- e.g. strife.lua's log_playback_event call right after update_player
+-- succeeds). detect_media_source now takes that real flag directly instead
+-- of re-deriving a guess from the filesystem -- see forced_local_map below,
+-- built from that same table.
+local function detect_media_source(video_url, is_forced_local)
   video_url = video_url or ""
   if video_url == "" then return { key = "unknown", label = "Unknown" } end
   local host = video_url:match("^https?://([^/]+)")
   if host and YOUTUBE_HOSTS[host:lower()] then
-    local video_id = extract_youtube_video_id(video_url)
-    if is_locally_cached(video_id) then
+    if is_forced_local then
       return { key = "local_cache", label = "Cached (local)" }
     end
     return { key = "youtube", label = "YouTube" }
@@ -209,10 +206,12 @@ local function music_bot_snapshot(bot)
     metrics = prefix .. "_metrics",
     intelligence = prefix .. "_track_intelligence",
     recommendations = prefix .. "_smart_recommendations",
+    playback_events = prefix .. "_playback_events",
   }
   local exists = db.batch_table_exists(schema, {
     names.playback, names.settings, names.queue, names.backup,
     names.home, names.heartbeat, names.metrics, names.intelligence, names.recommendations,
+    names.playback_events,
   })
 
   -- IMPORTANT: guild_id/channel_id are Discord snowflakes (bigint, routinely
@@ -240,6 +239,39 @@ local function music_bot_snapshot(bot)
       if gid then
         playback_map[gid] = row
         known_guilds[gid] = true
+      end
+    end
+  end
+
+  -- Real "is this specific track actually playing from the local cache"
+  -- data -- see detect_media_source's own header. One batched query per
+  -- bot (not per guild): every currently-tracked track_uid's most recent
+  -- track_start event tells us the real force_local value that resolve
+  -- actually used.
+  local forced_local_map = {}
+  if exists[names.playback_events] then
+    local uids, seen = {}, {}
+    for _, row in pairs(playback_map) do
+      if row.track_uid and row.track_uid ~= "" and not seen[row.track_uid] then
+        seen[row.track_uid] = true
+        uids[#uids + 1] = row.track_uid
+      end
+    end
+    if #uids > 0 then
+      local marks = {}
+      for i = 1, #uids do marks[i] = "%s" end
+      local ok, rows = pcall(db.fetchall, schema, string.format(
+        [[SELECT track_uid, forced_local FROM %s WHERE event_type = 'track_start' AND track_uid IN (%s) ORDER BY created_at DESC]],
+        names.playback_events, table.concat(marks, ", ")
+      ), unpack(uids))
+      if ok then
+        for _, row in ipairs(rows) do
+          -- ORDER BY created_at DESC above -- first row seen per track_uid
+          -- is the most recent track_start, which is what we want.
+          if forced_local_map[row.track_uid] == nil then
+            forced_local_map[row.track_uid] = db.tobool(row.forced_local)
+          end
+        end
       end
     end
   end
@@ -384,7 +416,7 @@ local function music_bot_snapshot(bot)
     for k, v in pairs(intel_map[gid] or {}) do smart[k] = v end
     smart.recommendations = reco_map[gid] or 0
 
-    local source_info = detect_media_source(playback.video_url)
+    local source_info = detect_media_source(playback.video_url, playback.track_uid and forced_local_map[playback.track_uid])
     local metric_age = db.toint(metric.metric_age_seconds, 999999)
     local metric_fresh = next(metric) ~= nil and metric_age <= 90
     local is_playing = metric_fresh and db.tobool(metric.player_playing) or db.tobool(playback.is_playing)
@@ -728,7 +760,7 @@ function M.get_dashboard_data(music_bots)
     end
   end
 
-  local aria_heartbeat_age, aria_heartbeat_status = nil, "n/a"
+  local aria_heartbeat_age, aria_memory_kb, aria_uptime_seconds = nil, nil, nil
   local aria_recent_interactions, aria_recent_interaction_count = {}, 0
   local aria_medic_summary = {
     pending_repairs = 0, pending_infra = 0, critical_health = 0, recoverable_health = 0,
@@ -736,13 +768,24 @@ function M.get_dashboard_data(music_bots)
   }
 
   local ok = pcall(function()
-    local row = db.fetchone(
-      "discord_aria",
-      "SELECT status, EXTRACT(EPOCH FROM (NOW() - last_pulse))::int AS age FROM swarm_health WHERE bot_name = 'aria'"
-    )
-    if row then
-      aria_heartbeat_age = db.toint(row.age)
-      aria_heartbeat_status = row.status
+    -- BUGFIX 2026-09-14 (per operator report: Aria's card shows garbage --
+    -- see also the known_guild_count/active_playing_count removal below):
+    -- this used to read discord_aria.swarm_health, a MariaDB-era leftover
+    -- table the current Lua Aria rewrite has never once written to (see
+    -- aria.lua's own comment on this near its `health` command) -- it held
+    -- exactly one row, frozen since 2026-08-23, always reporting
+    -- status='online' regardless of whether the process was actually up.
+    -- aria_process_heartbeat is Aria's own real liveness signal (the same
+    -- one aria_watchdog trusts, upserted every 15s) -- use that instead.
+    local row = db.fetchone("discord_aria", "SELECT EXTRACT(EPOCH FROM (NOW() - updated_at))::int AS age FROM aria_process_heartbeat WHERE id = 1")
+    if row then aria_heartbeat_age = db.toint(row.age) end
+    -- Real per-process stats (memory/uptime) -- see lib/swarmlua/telemetry.lua's
+    -- 30s snapshot loop in aria.lua. Genuinely Aria-specific data for her
+    -- own card, not borrowed/summed from the music bots.
+    local stats_row = db.fetchone("discord_aria", "SELECT memory_kb, uptime_seconds FROM aria_process_stats WHERE bot_name = 'aria'")
+    if stats_row then
+      aria_memory_kb = db.toint(stats_row.memory_kb)
+      aria_uptime_seconds = db.toint(stats_row.uptime_seconds)
     end
     local count_row = db.fetchone("discord_aria", "SELECT COUNT(*) AS total FROM aria_interactions")
     aria_recent_interaction_count = db.toint(count_row and count_row.total, 0)
@@ -773,23 +816,49 @@ function M.get_dashboard_data(music_bots)
     )
   end)
 
-  local aria_status_real = (aria_heartbeat_age ~= nil and aria_heartbeat_age < 120) and "ONLINE" or "OFFLINE"
+  -- BUGFIX 2026-09-14: heartbeat_status used to be copied verbatim from the
+  -- dead swarm_health row above (always "online", regardless of reality) --
+  -- a second field that could (and did) directly contradict `status`. One
+  -- real status, derived from one real source, used for both.
+  local aria_online = aria_heartbeat_age ~= nil and aria_heartbeat_age < 120
+  local aria_status_real = aria_online and "ONLINE" or "OFFLINE"
 
-  local known_guild_total = 0
-  for _, b in ipairs(bots) do known_guild_total = known_guild_total + (b.known_guild_count or 0) end
-
+  -- BUGFIX 2026-09-14 (per operator report: "the panel treats her as a
+  -- music bot" -- her card showed known_guild_count/active_playing_count
+  -- that were actually the SUM of every music bot's own guild/playing
+  -- counts, mis-attributed onto Aria's entry instead of describing her at
+  -- all -- e.g. "22 guilds" and "16 playing" for an orchestrator with no
+  -- voice sessions). Aria gets her own custom card shape below: real
+  -- process stats (memory/uptime, from aria_process_stats -- see
+  -- lib/swarmlua/telemetry.lua's snapshot loop in aria.lua) and her real
+  -- medic/interaction data, with NO music-bot-shaped fields that don't
+  -- apply to her (no sessions/known_guild_count/active_playing_count --
+  -- omitted, not zeroed, so a consuming UI can tell "not applicable" apart
+  -- from "zero of these right now").
   bots[#bots + 1] = {
     key = "aria", display_name = "Aria", kind = "orchestrator", schema = "discord_aria",
     status = aria_status_real,
     heartbeat_age_seconds = aria_heartbeat_age,
-    heartbeat_status = aria_heartbeat_status,
-    active_playing_count = total_active,
-    known_guild_count = known_guild_total,
-    sessions = {},
+    memory_kb = aria_memory_kb,
+    uptime_seconds = aria_uptime_seconds,
     recent_interactions = aria_recent_interactions,
     recent_interaction_count = aria_recent_interaction_count,
     medic_summary = aria_medic_summary,
   }
+
+  -- Telemetry (per operator request): edge-triggered, not per-call -- this
+  -- function runs on the ~2s WS broadcast loop, so recording every call
+  -- would flood the table for a signal that's only actually interesting on
+  -- a state change. last_known_aria_online is a module-level local (see top
+  -- of file) so this correctly fires once per real transition regardless of
+  -- how many times get_dashboard_data runs per second.
+  if last_known_aria_online ~= nil and last_known_aria_online ~= aria_online then
+    pcall(telemetry.record, "aria", aria_online and "online" or "offline", {
+      numeric_value = aria_heartbeat_age,
+      metadata = { memory_kb = aria_memory_kb, uptime_seconds = aria_uptime_seconds },
+    })
+  end
+  last_known_aria_online = aria_online
 
   -- pcall'd: Redis being unreachable must degrade to node_health.*=unknown,
   -- not take the whole dashboard route down (get_node_health() already

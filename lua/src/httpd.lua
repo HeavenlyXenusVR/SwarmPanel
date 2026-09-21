@@ -38,6 +38,7 @@ local cjson = require("cjson.safe")
 cjson.encode_empty_table_as_object(false)
 local ws_handshake = require("websocket.handshake")
 local ws_sync = require("websocket.sync")
+local telemetry = require("telemetry")
 
 local M = {}
 M.routes = {} -- { {method=, pattern=, keys={}, handler=} }
@@ -81,10 +82,10 @@ local function match_route(method, path)
         if caps[1] ~= nil then
           local params = {}
           for i, k in ipairs(r.keys) do params[k] = caps[i] end
-          return r.handler, params
+          return r.handler, params, r.pattern
         end
       elseif path:match(r.regex) then
-        return r.handler, {}
+        return r.handler, {}, r.pattern
       end
     end
   end
@@ -252,17 +253,31 @@ local function handle_ws_upgrade(sock, headers, path, query, handler)
   conn = ws_sync.extend(conn)
 
   local req = { path = path, query = query or {}, headers = headers }
+  telemetry.ws_connected()
+  pcall(telemetry.record, "websocket", "connect", { path = path })
+  local ws_start = socket.gettime()
   local ok, err = pcall(handler, conn, req, sock)
   if not ok then
     print("[swarmpanel-lua] ws handler error: " .. tostring(err))
   end
+  telemetry.ws_disconnected()
+  pcall(telemetry.record, "websocket", "disconnect", { path = path, numeric_value = socket.gettime() - ws_start })
   if conn.state ~= "CLOSED" then
     pcall(function() conn:close() end)
   end
   pcall(function() sock:close() end)
 end
 
+-- Request-level telemetry (2026-09-14, per operator request): records
+-- every HTTP request into swarmpanel_telemetry_events -- category "http",
+-- event_name the matched ROUTE PATTERN (e.g. "/api/accounts/:id", not the
+-- raw path) to keep cardinality low, with method/path/status/latency/
+-- client_ip/username as columns. Declared as locals the outer pcall's error
+-- path can still reach, since a request that throws never gets far enough
+-- to run the success-path recording below.
 local function handle_connection(sock)
+  telemetry.count_request()
+  local req_method, req_path, req_start = nil, nil, socket.gettime()
   local ok, err = pcall(function()
     local first_line, headers = read_headers(sock)
     if not first_line then return end
@@ -271,7 +286,9 @@ local function handle_connection(sock)
       send_response(sock, 400, "Bad Request", {}, cjson.encode({ detail = "Malformed request line" }))
       return
     end
+    req_method = method
     local path, qs = path_and_query:match("^([^?]*)%??(.*)$")
+    req_path = path
     local query = parse_query(qs)
 
     if method == "GET" and (headers["upgrade"] or ""):lower() == "websocket" then
@@ -299,22 +316,27 @@ local function handle_connection(sock)
       return
     end
 
-    local handler, params = match_route(method, path)
-    if not handler then
-      resp_headers["Content-Type"] = "application/json"
-      send_response(sock, 404, "Not Found", resp_headers, cjson.encode({ detail = "Not found" }))
-      return
-    end
-
     -- Client IP: prefer X-Forwarded-For (this panel typically sits behind
     -- the cloudflared/ngrok tunnel in .bin/, see task #12), falling back to
     -- the raw peer address for direct/local connections. Mirrors
-    -- security.py's _client_ip().
+    -- security.py's _client_ip(). Computed before the route-match check
+    -- below so both the 404 and success telemetry recordings can use it.
     local xff = (headers["x-forwarded-for"] or ""):match("^[^,]+")
     local client_ip = (xff and xff:match("^%s*(.-)%s*$") ~= "" and xff:match("^%s*(.-)%s*$")) or nil
     if not client_ip then
       local peer_ok, peer_ip = pcall(function() return (sock:getpeername()) end)
       client_ip = (peer_ok and peer_ip) or "unknown"
+    end
+
+    local handler, params, pattern = match_route(method, path)
+    if not handler then
+      resp_headers["Content-Type"] = "application/json"
+      send_response(sock, 404, "Not Found", resp_headers, cjson.encode({ detail = "Not found" }))
+      pcall(telemetry.record, "http", "404", {
+        method = method, path = path, status_code = 404,
+        client_ip = client_ip, numeric_value = (socket.gettime() - req_start) * 1000,
+      })
+      return
     end
 
     local req = {
@@ -345,9 +367,21 @@ local function handle_connection(sock)
       body_out = tostring(resp_body or "")
     end
     send_response(sock, status, STATUS_TEXT[status] or "OK", resp_headers, body_out)
+    -- req.auth is set (as a side effect) by routes.lua's get_auth/
+    -- require_auth whenever the request carried a valid session -- never
+    -- the raw token itself, just the already-verified identity.
+    pcall(telemetry.record, "http", pattern or path, {
+      method = method, path = path, status_code = status, client_ip = client_ip,
+      username = req.auth and req.auth.username, guild_id = req.auth and req.auth.guild_id,
+      numeric_value = (socket.gettime() - req_start) * 1000,
+    })
   end)
   if not ok then
     pcall(send_response, sock, 500, "Internal Server Error", { ["Content-Type"] = "application/json" }, cjson.encode({ detail = "Internal server error" }))
+    pcall(telemetry.record, "http", "error", {
+      method = req_method, path = req_path, status_code = 500,
+      numeric_value = (socket.gettime() - req_start) * 1000, text_value = tostring(err),
+    })
   end
   pcall(function() sock:close() end)
 end

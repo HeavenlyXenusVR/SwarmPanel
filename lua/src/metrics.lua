@@ -15,6 +15,13 @@ function M.get_metrics_snapshot(music_bots)
   local bots, totals = {}, {
     bots = 0, guilds = 0, voice_connected = 0, playing = 0, paused = 0,
     queued_tracks = 0, backup_tracks = 0, recovering = 0, lavalink_ready = 0, stale_metrics = 0,
+    -- Live proxy for fleet-wide listening activity, backing the dashboard
+    -- cards' playtime counters -- sum of position_seconds across every
+    -- currently-playing session. Not itself a duration/elapsed-time total
+    -- (a paused/idle session contributes 0), so trending this over time
+    -- (see capture_metrics_snapshot below) shows actual listening activity
+    -- rising and falling, not just wall-clock time passing.
+    total_position_seconds = 0,
   }
 
   for _, bot in ipairs(music_bots) do
@@ -89,7 +96,10 @@ function M.get_metrics_snapshot(music_bots)
     for _, item in ipairs(metrics) do
       totals.guilds = totals.guilds + 1
       if item.voice_connected then totals.voice_connected = totals.voice_connected + 1 end
-      if item.player_playing then totals.playing = totals.playing + 1 end
+      if item.player_playing then
+        totals.playing = totals.playing + 1
+        totals.total_position_seconds = totals.total_position_seconds + item.position_seconds
+      end
       if item.player_paused then totals.paused = totals.paused + 1 end
       totals.queued_tracks = totals.queued_tracks + item.queue_count
       totals.backup_tracks = totals.backup_tracks + item.backup_queue_count
@@ -170,10 +180,32 @@ function M.capture_metrics_snapshot(music_bots)
     active_bots = totals.bots, voice_connected = totals.voice_connected, playing = totals.playing,
     queued_tracks = totals.queued_tracks, backup_tracks = totals.backup_tracks,
     connected_guilds = totals.guilds, stale_metrics = totals.stale_metrics,
+    -- Dashboard-card playtime telemetry (per operator request): same
+    -- trending mechanism as every other fleet metric here, so the Intel
+    -- page's existing chart/anomaly-detection code picks it up for free.
+    total_position_seconds = totals.total_position_seconds,
   }
   for key, value in pairs(samples) do
     if value ~= nil then M.record_metric_sample(key, value) end
   end
+
+  -- Aria telemetry (per operator request, alongside dashboard.lua's fix for
+  -- her card showing the music bots' own numbers): a real, Aria-specific
+  -- trend sample -- online/offline + memory/uptime from her own
+  -- aria_process_heartbeat/aria_process_stats (see
+  -- Music/lib/swarmlua/telemetry.lua's snapshot loop in aria.lua), not
+  -- anything borrowed from the music-bot fleet.
+  local aok = pcall(function()
+    local hb = db.fetchone("discord_aria", "SELECT EXTRACT(EPOCH FROM (NOW() - updated_at))::int AS age FROM aria_process_heartbeat WHERE id = 1")
+    local age = hb and db.toint(hb.age)
+    local stats = db.fetchone("discord_aria", "SELECT memory_kb, uptime_seconds FROM aria_process_stats WHERE bot_name = 'aria'")
+    M.record_metric_sample("aria_online", (age ~= nil and age < 120) and 1 or 0)
+    if stats then
+      if stats.memory_kb ~= nil then M.record_metric_sample("aria_memory_kb", db.toint(stats.memory_kb)) end
+      if stats.uptime_seconds ~= nil then M.record_metric_sample("aria_uptime_seconds", db.toint(stats.uptime_seconds)) end
+    end
+  end)
+  if not aok then print("[swarmpanel-lua] capture_metrics_snapshot: aria sample unavailable") end
 end
 
 function M.get_stability_snapshot(music_bots)

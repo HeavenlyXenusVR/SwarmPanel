@@ -13,6 +13,7 @@ local channel_convert = require("channel_convert")
 local social = require("social")
 local profiles = require("profiles")
 local audit = require("audit")
+local telemetry = require("telemetry")
 local queues = require("queues")
 local alerts = require("alerts")
 local admin_browser = require("admin_browser")
@@ -66,7 +67,14 @@ function M.register(cfg)
     local token = auth.extract_bearer_token(req.headers["authorization"])
     if not token and req.cookies then token = req.cookies[SESSION_COOKIE] end
     if not token then return nil end
-    return auth.verify_api_token(settings.session_secret, token)
+    local a = auth.verify_api_token(settings.session_secret, token)
+    -- Side effect, not just a return value: httpd.lua's request-telemetry
+    -- recorder (see its own comment) reads req.auth AFTER the handler
+    -- returns to attribute the request to a username/guild -- never the
+    -- token itself, just the already-verified identity this call already
+    -- computed, so no second lookup/cost is paid for it.
+    if a then req.auth = a end
+    return a
   end
 
   -- Set-Cookie value for a freshly-issued token. HttpOnly (no client JS
@@ -434,7 +442,19 @@ function M.register(cfg)
       end
     end
 
-    if not auth_result then return 401, { detail = "Invalid username or password" } end
+    if not auth_result then
+      -- Login analytics: the attempted username (never the password) so a
+      -- brute-force/credential-stuffing pattern against one account is
+      -- visible -- generic HTTP telemetry alone (see httpd.lua) only shows
+      -- "POST /api/session/login -> 401", with no way to tell one repeatedly
+      -- failing username apart from many different ones failing once each.
+      pcall(telemetry.record, "auth", "login_failed", { username = username, client_ip = req.client_ip })
+      return 401, { detail = "Invalid username or password" }
+    end
+    pcall(telemetry.record, "auth", "login_success", {
+      username = auth_result.username, guild_id = auth_result.guild_id, client_ip = req.client_ip,
+      metadata = { role = auth_result.role, site_owner = auth_result.site_owner },
+    })
 
     local token = auth.issue_api_token(settings.session_secret, auth_result.username, {
       role = auth_result.role, guild_id = auth_result.guild_id, admin_mode = auth_result.admin_mode,
@@ -1136,6 +1156,17 @@ function M.register(cfg)
                       payload = { type = "snapshot", key = key, data = data, generated_at = iso_now() }
                     else
                       payload = { type = "snapshot_error", key = key, error = tostring(data), generated_at = iso_now() }
+                      -- In-depth telemetry (per operator request): a
+                      -- snapshot builder failing is invisible outside this
+                      -- print() otherwise -- the client just silently gets
+                      -- a snapshot_error frame. Best-effort/pcall'd like
+                      -- every other telemetry call site; this already runs
+                      -- inside the outer pcall below too, so a throw here
+                      -- can't take the broadcast loop down either way.
+                      pcall(telemetry.record, "websocket", "snapshot_error", {
+                        username = entry.auth and entry.auth.username, text_value = tostring(data),
+                        metadata = { key = key },
+                      })
                     end
                     serialized = cjson.encode(payload)
                     build_cache[cache_key] = serialized
@@ -1151,6 +1182,10 @@ function M.register(cfg)
                 end)
                 if not pok then
                   print("[swarmpanel-lua] broadcast loop: key '" .. tostring(key) .. "' failed: " .. tostring(perr))
+                  pcall(telemetry.record, "websocket", "broadcast_error", {
+                    username = entry.auth and entry.auth.username, text_value = tostring(perr),
+                    metadata = { key = key },
+                  })
                 end
               end
             end
@@ -1713,6 +1748,13 @@ function M.register(cfg)
     if not ok then return 400, { detail = tostring(updates_or_err):gsub("^.-:%d+:%s*", "") } end
     local profile = accounts.update_account_profile(username, scoped_gid, updates_or_err)
     if not profile then return 404, { detail = "Account profile not found" } end
+    -- Profile-customization analytics (per operator request) -- distinct
+    -- from panel_preferences above (that's dashboard/UI-wide theme; this is
+    -- the user's own profile card look: card style/shape/hover effect,
+    -- accent, bio, links). updates_or_err already IS just the changed
+    -- fields (clean_profile_updates only returns what the request
+    -- supplied), so no separate before/after diff is needed here.
+    pcall(telemetry.record, "customization", "profile_update", { username = username, guild_id = scoped_gid, metadata = updates_or_err })
     local summaries = dashboard.get_music_activity_summary_for_guilds(music_bots, { scoped_gid })
     profile.activity = summaries[scoped_gid] or dashboard.empty_music_activity_summary()
     return 200, { ok = true, profile = with_derived_accent(profile, "theme_accent") }
@@ -1753,6 +1795,16 @@ function M.register(cfg)
     if not ok2 then return 400, { detail = tostring(prefs):gsub("^.-:%d+:%s*", "") } end
     local profile = accounts.update_account_panel_preferences(username, scoped_gid, prefs)
     if not profile then return 404, { detail = "Account profile not found" } end
+    -- Customization/appearance analytics (per operator request): a diff of
+    -- what actually changed (theme, accent, density, card style, hover
+    -- effect, ...), not the full preferences blob every time -- reuses
+    -- audit.lua's diff_details() (same before/after JSON shape it already
+    -- produces for the admin audit log) rather than reimplementing table
+    -- diffing here.
+    local diff = audit.diff_details(base_prefs, prefs)
+    if diff ~= "" then
+      pcall(telemetry.record, "customization", "panel_preferences_update", { username = username, guild_id = scoped_gid, text_value = diff })
+    end
     return 200, { ok = true, preferences = with_derived_accent((type(profile.panel_preferences) == "table" and profile.panel_preferences) or prefs) }
   end)
 

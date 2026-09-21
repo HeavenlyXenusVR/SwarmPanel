@@ -4,6 +4,7 @@
 -- target_type, target_id, details, created_at).
 local db = require("db")
 local cjson = require("cjson.safe")
+local telemetry = require("telemetry")
 
 local M = {}
 local SCHEMA = "accountlogins"
@@ -60,6 +61,14 @@ function M.record_audit_log(actor, action, opts)
     (opts.target_id ~= nil and opts.target_id ~= "") and tostring(opts.target_id):sub(1, 80) or nil,
     opts.details and tostring(opts.details):sub(1, 4000) or nil
   )
+  -- Fans every admin action out into the structured telemetry table too
+  -- (category "admin") -- see telemetry.lua's own header. This one call
+  -- site covers every one of the ~30 record_audit_log callers across
+  -- routes.lua automatically.
+  pcall(telemetry.record, "admin", tostring(action or ""), {
+    username = actor,
+    metadata = { target_type = opts.target_type, target_id = opts.target_id, details = opts.details },
+  })
 end
 
 function M.list_audit_log(limit, offset, action_filter)

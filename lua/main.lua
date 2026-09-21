@@ -12,9 +12,12 @@ local pages_admin = require("pages_admin")
 local static = require("static")
 local copas = require("copas")
 local metrics = require("metrics")
+local telemetry = require("telemetry")
+local socket = require("socket")
 
 local settings = config.load()
 db.init(settings)
+telemetry.init()
 
 httpd.cors.allowed_origins = settings.cors_allowed_origins
 -- Settings ship a Python `re` pattern for preview-tunnel origins, e.g.
