@@ -53,6 +53,7 @@ struct RootTabView: View {
 
             SocialView()
                 .tabItem { Label("Community", systemImage: selectedTab == .community ? "person.2.fill" : "person.2") }
+                .badge(notificationsViewModel.communityBadge)
                 .tag(SwarmTab.community)
 
             ProfileView()

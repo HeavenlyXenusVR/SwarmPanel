@@ -34,12 +34,46 @@ function M.register(cfg)
           html.esc(item.to), item.glyph, html.esc(item.label), html.esc(item.blurb or ""))
       end
     end
+    -- Stat tiles are filled from GET /api/admin/overview; a tile whose
+    -- stat isn't returned (e.g. open reports for a moderator) is removed.
+    local tiles = {
+      { key = "bots", label = "Bots online" },
+      { key = "alert_rules_enabled", label = "Alert rules on" },
+      { key = "audit_entries_recent", label = "Audit entries (24h)" },
+      { key = "open_reports", label = "Open gallery reports" },
+    }
+    local tile_html = {}
+    for _, t in ipairs(tiles) do
+      tile_html[#tile_html + 1] = ('<div class="metric" data-stat="%s"><span class="metric-value">&mdash;</span><span class="metric-label">%s</span></div>'):format(
+        html.esc(t.key), html.esc(t.label))
+    end
     local body = html.page({
       title = "Overview", eyebrow = "Admin", lede = "Every admin and moderation tool you can use, in one place.",
-      body = #cards > 0 and ('<div class="hub-grid">' .. table.concat(cards, "") .. "</div>")
-        or html.empty_state("No admin tools are available to this account."),
+      body = '<div class="metric-grid" id="admin-stats">' .. table.concat(tile_html, "") .. "</div>"
+        .. (#cards > 0 and ('<div class="hub-grid">' .. table.concat(cards, "") .. "</div>")
+        or html.empty_state("No admin tools are available to this account.")),
     })
-    return page_shell(req, a, "/admin", "Admin", body)
+    local script = [[
+      async function loadAdminStats() {
+        const res = await swarmFetch("/api/admin/overview");
+        const values = {
+          bots: res.bots_total != null ? `${res.bots_online} / ${res.bots_total}` : null,
+          alert_rules_enabled: res.alert_rules_enabled,
+          audit_entries_recent: res.audit_entries_recent,
+          open_reports: res.open_reports,
+        };
+        document.querySelectorAll("#admin-stats [data-stat]").forEach((tile) => {
+          const v = values[tile.getAttribute("data-stat")];
+          if (v == null) { tile.remove(); return; }
+          tile.querySelector(".metric-value").textContent = String(v);
+          const warn = tile.getAttribute("data-stat") === "open_reports" ? Number(v) > 0
+            : tile.getAttribute("data-stat") === "bots" ? res.bots_online < res.bots_total : false;
+          tile.classList.toggle("metric-warn", warn);
+        });
+      }
+      swarmLiveRefresh(loadAdminStats, 30000);
+    ]]
+    return page_shell(req, a, "/admin", "Admin", body, script)
   end)
 
   -- -----------------------------------------------------------------
@@ -404,6 +438,24 @@ function M.register(cfg)
             </div>
             <div id="gallery-data">]] .. html.skeleton_grid(4) .. [[</div>
           </div>
+          <dialog id="gallery-user-dialog" class="panel manage-dialog">
+            <form method="dialog" id="gallery-user-form">
+              <div class="section-head"><h2 id="gallery-user-title">Manage user</h2><button type="submit" value="cancel" class="icon-button" aria-label="Close">&times;</button></div>
+              <label class="field">Username<input name="username" autocomplete="off"></label>
+              <label class="field">Display name<input name="display_name" autocomplete="off"></label>
+              <label class="field">Email<input name="email" type="email" autocomplete="off"></label>
+              <label class="check-field"><input type="checkbox" name="public_profile"> Public profile</label>
+              <div class="actions-row"><button type="button" class="button-link primary" data-gu="save">Save details</button></div>
+              <div class="manage-dialog-status" id="gallery-user-status"></div>
+              <div class="actions-row">
+                <button type="button" data-gu="email-verified"></button>
+                <button type="button" data-gu="age-verified"></button>
+                <button type="button" data-gu="resend">Resend verification email</button>
+              </div>
+              <label class="field">New password<input name="new_password" type="password" autocomplete="new-password" minlength="8"></label>
+              <div class="actions-row"><button type="button" class="danger" data-gu="reset-password">Reset password</button></div>
+            </form>
+          </dialog>
           <div class="loading-section-overlay">
             <div class="loading-tip">Fetching Image Gallery admin data...</div>
           </div>
@@ -423,6 +475,77 @@ function M.register(cfg)
         media_comments: { idKey: "comment_id", single: "/api/image-gallery/comments/delete", bulk: "/api/image-gallery/admin/comments/bulk-delete" },
       };
       const GALLERY_STATUSES = ["open", "reviewed", "dismissed"];
+      let galleryRows = [];
+
+      // Per-user management (users table): edit details, flip email/age
+      // verification, resend the verification email, reset the password --
+      // the same /api/image-gallery/users/* endpoints the iOS app's
+      // Gallery moderation screen uses.
+      const userDialog = document.getElementById("gallery-user-dialog");
+      const userForm = document.getElementById("gallery-user-form");
+      let managedUser = null;
+      function renderManagedUser() {
+        const u = managedUser;
+        document.getElementById("gallery-user-title").textContent = `Manage ${u.username || "user " + u.id}`;
+        userForm.username.value = u.username || "";
+        userForm.display_name.value = u.display_name || "";
+        userForm.email.value = u.email || "";
+        userForm.public_profile.checked = u.public_profile === true || u.public_profile === 1 || u.public_profile === "t";
+        userForm.new_password.value = "";
+        const emailOk = !!u.email_verified_at, ageOk = !!u.age_verified_at;
+        document.getElementById("gallery-user-status").innerHTML =
+          `<span class="data-pill ${emailOk ? "data-pill-live" : "data-pill-off"}">Email ${emailOk ? "verified" : "unverified"}</span>
+           <span class="data-pill ${ageOk ? "data-pill-live" : "data-pill-off"}">Age ${ageOk ? "verified" : "unverified"}</span>`;
+        userForm.querySelector('[data-gu="email-verified"]').textContent = emailOk ? "Mark email unverified" : "Mark email verified";
+        userForm.querySelector('[data-gu="age-verified"]').textContent = ageOk ? "Mark age unverified" : "Mark age verified";
+        userForm.querySelector('[data-gu="resend"]').disabled = emailOk || !u.email;
+      }
+      function openManagedUser(id) {
+        managedUser = galleryRows.find((r) => String(r.id) === String(id));
+        if (!managedUser || !userDialog) return;
+        renderManagedUser();
+        userDialog.showModal();
+      }
+      if (userForm) {
+        userForm.addEventListener("click", async (e) => {
+          const btn = e.target.closest("[data-gu]");
+          if (!btn || !managedUser) return;
+          const op = btn.getAttribute("data-gu");
+          const id = managedUser.id;
+          btn.disabled = true;
+          try {
+            let res;
+            if (op === "save") {
+              res = await swarmFetch("/api/image-gallery/users/update", { method: "POST", body: JSON.stringify({
+                user_id: id, username: userForm.username.value.trim(), display_name: userForm.display_name.value.trim(),
+                email: userForm.email.value.trim(), public_profile: userForm.public_profile.checked,
+              }) });
+              swarmToast("User updated.", "success");
+            } else if (op === "email-verified" || op === "age-verified") {
+              const field = op === "email-verified" ? "email_verified_at" : "age_verified_at";
+              res = await swarmFetch(`/api/image-gallery/users/${op}`, { method: "POST", body: JSON.stringify({ user_id: id, verified: !managedUser[field] }) });
+              swarmToast("Verification updated.", "success");
+            } else if (op === "resend") {
+              res = await swarmFetch("/api/image-gallery/users/resend-verification", { method: "POST", body: JSON.stringify({ user_id: id }) });
+              swarmToast(res.already_verified ? "Already verified." : res.email_verification_sent ? "Verification email sent." : "Email could not be sent.", res.email_verification_sent || res.already_verified ? "success" : "error");
+              res = null;
+            } else if (op === "reset-password") {
+              const pw = userForm.new_password.value;
+              if (pw.length < 8) { swarmToast("New password must be at least 8 characters.", "error"); return; }
+              if (!confirm(`Reset the password for ${managedUser.username}?`)) return;
+              await swarmFetch("/api/image-gallery/users/reset-password", { method: "POST", body: JSON.stringify({ user_id: id, new_password: pw }) });
+              swarmToast("Password reset.", "success");
+            }
+            if (res && res.user) { managedUser = Object.assign({}, managedUser, res.user); renderManagedUser(); }
+            loadGalleryTable();
+          } catch (err) {
+            swarmToast(err.message, "error");
+          } finally {
+            btn.disabled = false;
+            if (managedUser) renderManagedUser();
+          }
+        });
+      }
       async function loadGallery() {
         try {
           const summary = await swarmFetch("/api/image-gallery/admin");
@@ -454,17 +577,20 @@ function M.register(cfg)
           const tbody = rows.map((r) => "<tr>"
             + (deletable ? `<td class="table-cell-select"><input type="checkbox" data-select-row value="${r.id}"></td>` : "")
             + cols.map((c) => swarmTableCell(c, r[c])).join("")
-            + (deletable ? `<td><button type="button" data-gallery-delete-row="${r.id}">Delete</button></td>` : "")
+            + (deletable ? `<td class="table-actions">${table === "users" ? `<button type="button" data-gallery-manage="${swarmEsc(r.id)}">Manage</button>` : ""}<button type="button" data-gallery-delete-row="${swarmEsc(r.id)}">Delete</button></td>` : "")
             + (isReports ? `<td class="table-actions">
                 <select data-report-status="${r.id}">${GALLERY_STATUSES.map((s) => `<option value="${s}" ${s === r.status ? "selected" : ""}>${s}</option>`).join("")}</select>
                 <button type="button" data-report-save="${r.id}">Save</button>
               </td>` : "")
             + "</tr>").join("");
+          galleryRows = rows;
           document.getElementById("gallery-data").innerHTML = `<table class="data-table" id="gallery-table-el"><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>`;
         } catch (err) { swarmToast("Failed to load table.", "error"); }
       }
       document.getElementById("gallery-table").addEventListener("change", loadGalleryTable);
       document.getElementById("gallery-data").addEventListener("click", async (e) => {
+        const manageId = e.target.getAttribute("data-gallery-manage");
+        if (manageId) { openManagedUser(manageId); return; }
         const deleteId = e.target.getAttribute("data-gallery-delete-row");
         const saveId = e.target.getAttribute("data-report-save");
         if (saveId) {
@@ -749,15 +875,7 @@ function M.register(cfg)
         // borders) but the events feed was rendered as a bare 3-column
         // table with no description column at all -- description (the
         // actually useful part of each event) was silently dropped.
-        const cards = (events.events || []).map((e) => {
-          const level = (e.level || "info").toLowerCase();
-          const cls = level === "error" ? "event-error" : level === "warning" ? "event-warning" : "";
-          return `<div class="event ${cls}">
-            <div><strong>${(e.title || e.type || "Event").replace(/</g, "&lt;")}</strong><span>${e.timestamp || ""}</span></div>
-            <p>${(e.description || "").replace(/</g, "&lt;")}</p>
-            <div><small>${(e.source || "").replace(/</g, "&lt;")}</small><small>${level}</small></div>
-          </div>`;
-        }).join("");
+        const cards = (events.events || []).map(swarmEventCard).join("");
         document.getElementById("intel-events").innerHTML = cards || '<div class="empty-state">No events.</div>';
       }
       window.swarmLive.watch("metrics_snapshot", (msg) => {

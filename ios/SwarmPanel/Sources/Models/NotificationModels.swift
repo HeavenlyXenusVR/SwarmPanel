@@ -8,6 +8,12 @@ struct UnreadCountResponse: Decodable {
     let unreadCount: Int?
 }
 
+/// GET /api/community/counts and the "community_counts" live key.
+struct CommunityCounts: Decodable {
+    let unreadMessages: Int?
+    let pendingFriendRequests: Int?
+}
+
 /// Shape of the "notifications" live-push snapshot (routes.lua's
 /// SNAPSHOT_BUILDERS.notifications) -- unread count and the recent list
 /// bundled together since the web bell renders both from one push.

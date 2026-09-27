@@ -17,12 +17,19 @@ struct UsersDirectoryView: View {
                 .background(SwarmTheme.panel2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .padding(.horizontal)
 
+                Toggle(isOn: $viewModel.onlineOnly) {
+                    Label("Online now", systemImage: "circle.fill")
+                        .foregroundStyle(viewModel.onlineOnly ? SwarmTheme.ok : SwarmTheme.textMuted)
+                }
+                .tint(SwarmTheme.ok)
+                .padding(.horizontal)
+
                 if let error = viewModel.errorMessage {
                     ErrorBanner(message: error).padding(.horizontal)
                 }
 
                 if viewModel.users.isEmpty && !viewModel.isLoading {
-                    PanelCard { EmptyStateView(icon: "person.3", title: "No users found.") }
+                    PanelCard { EmptyStateView(icon: "person.3", title: viewModel.onlineOnly ? "Nobody matching is online right now." : "No users found.") }
                         .padding(.horizontal)
                 } else {
                     ForEach(viewModel.users) { user in
@@ -36,8 +43,12 @@ struct UsersDirectoryView: View {
             .padding(.vertical)
         }
         .background(SwarmTheme.background)
-        .navigationTitle("Swarm Directory")
+        .navigationTitle("Directory")
         .task { await viewModel.load() }
+        // Single-parameter onChange: iOS 16 deployment target (see ControlsView).
+        .onChange(of: viewModel.onlineOnly) { _ in
+            Task { await viewModel.load() }
+        }
         .refreshable {
             Haptics.light()
             await viewModel.load()

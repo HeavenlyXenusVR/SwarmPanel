@@ -3,6 +3,9 @@ import Foundation
 @MainActor
 final class UsersDirectoryViewModel: ObservableObject {
     @Published var query = ""
+    /// Only operators seen in the last 3 minutes (?online=1), matching the
+    /// web Directory's "Online now" toggle.
+    @Published var onlineOnly = false
     @Published var users: [AccountSummary] = []
     @Published var isLoading = true
     @Published var errorMessage: String?
@@ -13,7 +16,10 @@ final class UsersDirectoryViewModel: ObservableObject {
         isLoading = true
         defer { isLoading = false }
         do {
-            let response: UserSearchResponse = try await api.get("/api/users/directory", query: ["q": query])
+            let response: UserSearchResponse = try await api.get(
+                "/api/users/directory",
+                query: ["q": query, "online": onlineOnly ? "1" : nil]
+            )
             users = response.users ?? []
             errorMessage = nil
         } catch {

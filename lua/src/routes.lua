@@ -864,6 +864,22 @@ function M.register(cfg)
         }
       end,
     },
+    -- Community badge counts (sidebar/mobile nav/section tabs on every
+    -- page, and the iOS Community tab). Same per-account scope as threads.
+    community_counts = {
+      interval = 10,
+      scope_key = function(a)
+        local actor_id = select(1, account_id_for_auth(a))
+        return "account:" .. tostring(actor_id or "none")
+      end,
+      build = function(a)
+        local actor_id, aerr = account_id_for_auth(a)
+        if not actor_id then return false, aerr end
+        local ok, counts = pcall(social.community_counts, actor_id)
+        if not ok then return false, tostring(counts) end
+        return true, counts
+      end,
+    },
     threads = {
       interval = 5,
       scope_key = function(a)
@@ -1790,8 +1806,10 @@ function M.register(cfg)
     local viewer_id = select(1, account_id_for_auth(a))
     -- Cross-server roster: not guild-scoped, gated only by public_profile=1
     -- in search_account_profiles (mirrors users.py's directory route note).
-    local users = accounts.search_account_profiles(q, limit, viewer_id, nil)
-    return 200, { ok = true, query = q, users = users, limit = limit }
+    -- ?online=1 limits to operators seen in the last 3 minutes.
+    local online_only = req.query.online == "1" or req.query.online == "true"
+    local users = accounts.search_account_profiles(q, limit, viewer_id, nil, online_only)
+    return 200, { ok = true, query = q, users = users, limit = limit, online_only = online_only }
   end)
 
   local function social_permissions(profile)
@@ -2011,6 +2029,56 @@ function M.register(cfg)
     local actor_id, aerr = account_id_for_auth(a)
     if not actor_id then return 403, { detail = aerr } end
     return 200, { ok = true, unread_count = social.unread_notification_count(actor_id) }
+  end)
+
+  -- Admin overview stats (web /admin, iOS Admin hub). Staff-only; each
+  -- stat is computed independently and left out (nil) if its source is
+  -- unavailable or the caller's tier can't see it -- open gallery reports
+  -- are admin-only, matching who can open the Gallery tools.
+  httpd.route("GET", "/api/admin/overview", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local admin = is_admin_auth(a)
+    if not (admin or is_moderator_auth(a)) then return 403, { detail = "Admin or moderator access required" } end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
+    local out = { ok = true, generated_at = os.date("!%Y-%m-%dT%H:%M:%SZ") }
+    local ok_dash, data = pcall(dashboard.get_dashboard_data, music_bots)
+    if ok_dash and data then
+      local total, online = 0, 0
+      for _, bot in ipairs(data.bots or {}) do
+        if bot.kind == nil or bot.kind == "music" then
+          total = total + 1
+          -- Same offline rule as the Dashboard's bot cards.
+          local age = tonumber(bot.heartbeat_age_seconds)
+          if tostring(bot.status or ""):lower() ~= "offline" and not (age and age > 120) then online = online + 1 end
+        end
+      end
+      out.bots_total, out.bots_online = total, online
+    end
+    local ok_rules, rules = pcall(alerts.list_enabled_alert_rules)
+    if ok_rules and type(rules) == "table" then out.alert_rules_enabled = #rules end
+    local ok_audit, audit_count = pcall(audit.count_recent, 24)
+    if ok_audit then out.audit_entries_recent = audit_count end
+    if admin then
+      local ok_reports, reports = pcall(gallery.count_open_reports)
+      if ok_reports then out.open_reports = reports end
+    end
+    return 200, out
+  end)
+
+  -- REST twin of the community_counts live key (iOS fallback / first paint).
+  httpd.route("GET", "/api/community/counts", function(req)
+    local a, status, err_body = require_auth(req)
+    if not a then return status, err_body end
+    local rl_status, rl_body = ratelimit.check(("api-read:%s"):format(tostring(a.username or "unknown"):lower()), 60, 60)
+    if rl_status then return rl_status, rl_body end
+    local actor_id, aerr = account_id_for_auth(a)
+    if not actor_id then return 403, { detail = aerr } end
+    local ok, counts = pcall(social.community_counts, actor_id)
+    if not ok then return 503, { detail = "Community counts unavailable: " .. tostring(counts) } end
+    counts.ok = true
+    return 200, counts
   end)
 
   httpd.route("POST", "/api/notifications/:notification_id/read", function(req)

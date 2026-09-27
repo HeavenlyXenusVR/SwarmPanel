@@ -87,6 +87,13 @@ function M.list_audit_log(limit, offset, action_filter)
   return { entries = rows, total = db.toint(total_row and total_row.count, 0) }
 end
 
+-- Entries recorded in the last `hours` hours (Admin overview stat).
+function M.count_recent(hours)
+  local h = math.max(1, math.min(tonumber(hours) or 24, 24 * 30))
+  local row = db.fetchone(SCHEMA, "SELECT COUNT(*) AS count FROM " .. TABLE .. " WHERE created_at >= NOW() - (%s || ' hours')::interval", tostring(h))
+  return db.toint(row and row.count, 0)
+end
+
 function M.get_audit_log_entry(entry_id)
   return db.fetchone(SCHEMA, "SELECT id, actor_username, actor_user_id, action, target_type, target_id, details, created_at FROM " .. TABLE .. " WHERE id = %s LIMIT 1", tostring(entry_id))
 end
