@@ -8,11 +8,33 @@ import SwiftUI
 /// as the web panel (admin / moderator / gallery owner).
 struct AdminHubView: View {
     @EnvironmentObject private var appState: AppState
+    @State private var stats: AdminOverviewStats?
 
     private var canModerate: Bool { appState.isAdmin || appState.isModerator }
 
     var body: some View {
         List {
+            // Same stats as the web /admin overview.
+            if let stats {
+                Section {
+                    if let online = stats.botsOnline, let total = stats.botsTotal {
+                        AdminStatRow(label: "Bots online", value: "\(online) / \(total)", attention: online < total)
+                    }
+                    if let rules = stats.alertRulesEnabled {
+                        AdminStatRow(label: "Alert rules on", value: "\(rules)", attention: false)
+                    }
+                    if let audit = stats.auditEntriesRecent {
+                        AdminStatRow(label: "Audit entries (24h)", value: "\(audit)", attention: false)
+                    }
+                    if let reports = stats.openReports {
+                        AdminStatRow(label: "Open gallery reports", value: "\(reports)", attention: reports > 0)
+                    }
+                } header: {
+                    SectionLabel(title: "At a Glance")
+                }
+                .listRowBackground(SwarmTheme.panel)
+            }
+
             if appState.isAdmin {
                 Section {
                     NavigationLink { DiagnosticsView() } label: {
@@ -82,6 +104,27 @@ struct AdminHubView: View {
         .scrollContentBackground(.hidden)
         .background(SwarmTheme.background)
         .navigationTitle("Admin")
+        .task { await loadStats() }
+        .refreshable { await loadStats() }
+    }
+
+    private func loadStats() async {
+        // Silent on failure: the tool list below still works without stats.
+        stats = try? await APIClient.shared.get("/api/admin/overview")
+    }
+}
+
+private struct AdminStatRow: View {
+    let label: String
+    let value: String
+    let attention: Bool
+
+    var body: some View {
+        LabeledContent(label) {
+            Text(value)
+                .font(.body.monospacedDigit().bold())
+                .foregroundStyle(attention ? SwarmTheme.warn : SwarmTheme.textPrimary)
+        }
     }
 }
 

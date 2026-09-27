@@ -336,7 +336,9 @@ function M.update_account_panel_preferences(username, guild_id, preferences)
   return M.get_account_profile(uname, guild_id)
 end
 
-function M.search_account_profiles(query, limit, viewer_account_id, guild_id)
+-- online_only: restrict to accounts seen in the last 180s (the same
+-- window is_recently_seen() uses for the "Online" pill), most recent first.
+function M.search_account_profiles(query, limit, viewer_account_id, guild_id, online_only)
   local q = tostring(query or ""):match("^%s*(.-)%s*$")
   local safe_limit = math.max(1, math.min(50, tonumber(limit) or 24))
   local like = "%" .. q .. "%"
@@ -347,6 +349,8 @@ function M.search_account_profiles(query, limit, viewer_account_id, guild_id)
     guild_clause = "AND guild_id = %s"
     params[#params + 1] = tostring(guild_id)
   end
+  local online_clause = online_only and "AND last_seen_at >= NOW() - INTERVAL '180 seconds'" or ""
+  local order_clause = online_only and "last_seen_at DESC, username ASC" or "COALESCE(updated_at, created_at) DESC, username ASC"
   local base_params = { q, like, like, like, like, safe_limit }
   for _, p in ipairs(base_params) do params[#params + 1] = p end
   local sql = string.format(
@@ -366,6 +370,7 @@ function M.search_account_profiles(query, limit, viewer_account_id, guild_id)
       FROM %s u
       WHERE public_profile = TRUE
         %s
+        %s
         AND (
           %%s = ''
           OR username ILIKE %%s
@@ -373,9 +378,9 @@ function M.search_account_profiles(query, limit, viewer_account_id, guild_id)
           OR COALESCE(server_name, '') ILIKE %%s
           OR COALESCE(favorite_bot, '') ILIKE %%s
         )
-      ORDER BY COALESCE(updated_at, created_at) DESC, username ASC
+      ORDER BY %s
       LIMIT %%s]],
-    TABLE, guild_clause
+    TABLE, guild_clause, online_clause, order_clause
   )
   local rows = db.fetchall(SCHEMA, sql, unpack(params))
   local profiles = {}

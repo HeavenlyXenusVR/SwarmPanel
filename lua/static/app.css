@@ -5138,3 +5138,204 @@ tbody tr.is-selected td {
     padding: 0 10px;
   }
 }
+
+/* ---------------------------------------------------------------------
+   Dashboard: pinned bots. Pinned cards sort first via CSS order, so the
+   live patcher never has to move DOM nodes.
+   --------------------------------------------------------------------- */
+#bot-cards .bot-card-pinned {
+  order: -1;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent), var(--shadow);
+}
+
+.bot-pin {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 3;
+  width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.bot-card-pinned .bot-pin {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 50%, var(--line));
+}
+
+/* Community badges (unread messages / pending friend requests). */
+.nav-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: auto;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+/* !important: the mobile bar's `.nav-mobile .nav-item span` rule is more
+   specific and would otherwise un-hide an empty badge. */
+.nav-badge[hidden] {
+  display: none !important;
+}
+
+.section-tab .nav-badge {
+  margin-left: 4px;
+}
+
+/* Icon rail / mobile bar: pin the badge to the icon's corner. */
+.nav-mobile .nav-item,
+.panel-nav-compact .sidebar-link {
+  position: relative;
+}
+
+.nav-mobile .nav-badge,
+.panel-nav-compact .sidebar-link .nav-badge {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  margin: 0;
+}
+
+@media (max-width: 1180px) {
+  .sidebar-link {
+    position: relative;
+  }
+
+  .sidebar-link .nav-badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    margin: 0;
+  }
+
+  .sidebar .nav-group-label .nav-badge {
+    display: none;
+  }
+}
+
+.panel-nav-compact .sidebar .nav-group-label .nav-badge {
+  display: none;
+}
+
+/* Directory "Online now" filter. */
+.toggle-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-2) 80%, transparent);
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.toggle-chip:has(input:checked) {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--ok) 55%, var(--line));
+}
+
+.toggle-chip input {
+  accent-color: var(--ok);
+}
+
+/* Gallery admin "Manage user" dialog. */
+.manage-dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  padding: 18px;
+  overflow-y: auto;
+  color: var(--text);
+  background: var(--panel);
+}
+
+.manage-dialog::backdrop {
+  background: rgba(6, 10, 14, 0.6);
+  backdrop-filter: blur(4px);
+}
+
+.manage-dialog form {
+  display: grid;
+  gap: 12px;
+}
+
+.manage-dialog-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.check-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.check-field input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+/* Admin overview: stat tile that needs attention. */
+.metric.metric-warn {
+  border-color: color-mix(in srgb, var(--warn) 55%, var(--line));
+}
+
+.metric.metric-warn .metric-value {
+  color: var(--warn);
+}
+
+#admin-stats {
+  margin-bottom: 4px;
+}
+
+/* Controls: Guild Overview table. */
+.guild-overview .data-pill {
+  white-space: nowrap;
+}
+
+/* .panel is a grid and .data-table has a 760px min-width, which together
+   pushed this table past Controls' side column. */
+.guild-overview {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.guild-overview .data-table {
+  min-width: 0;
+}
+
+.guild-overview .table-wrap {
+  overflow-x: auto;
+}
+
+/* Stacked so the column stays narrow inside Controls' side column. */
+.guild-overview .table-actions {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.guild-overview .table-actions button {
+  min-height: 32px;
+  padding: 4px 10px;
+}

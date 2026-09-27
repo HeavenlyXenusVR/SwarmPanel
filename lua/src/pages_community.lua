@@ -27,6 +27,7 @@ function M.register(cfg)
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.6"/><path d="M11 11L14.5 14.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
             <input type="search" placeholder="Search users..." data-debounced-search id="user-search">
           </div>
+          <label class="toggle-chip"><input type="checkbox" id="user-online-only"> Online now</label>
           <div class="directory-summary" id="user-summary"></div>
         </div>
         <div id="user-results" class="user-grid">]] .. html.skeleton_grid(6) .. [[</div>
@@ -47,7 +48,8 @@ function M.register(cfg)
       // in the directory.
       async function renderUsers(q) {
         try {
-          const res = await swarmFetch("/api/users/directory?q=" + encodeURIComponent(q || ""));
+          const onlineOnly = document.getElementById("user-online-only").checked;
+          const res = await swarmFetch("/api/users/directory?q=" + encodeURIComponent(q || "") + (onlineOnly ? "&online=1" : ""));
           const cards = (res.users || []).map((u) => {
             const imageUrl = u.avatar_url || u.server_icon_url || "";
             const displayName = u.display_name || u.username || "Unknown operator";
@@ -88,7 +90,7 @@ function M.register(cfg)
               </div>
             </article>`;
           }).join("");
-          document.getElementById("user-results").innerHTML = cards || "<p>No users found.</p>";
+          document.getElementById("user-results").innerHTML = cards || (onlineOnly ? "<p>Nobody matching is online right now.</p>" : "<p>No users found.</p>");
           const users = res.users || [];
           const onlineCount = users.filter((u) => u.is_online).length;
           document.getElementById("user-summary").innerHTML = users.length
@@ -97,6 +99,7 @@ function M.register(cfg)
         } catch (err) { swarmToast("Search failed.", "error"); }
       }
       document.getElementById("user-search").addEventListener("swarm:search", (e) => renderUsers(e.detail.query));
+      document.getElementById("user-online-only").addEventListener("change", () => renderUsers(document.getElementById("user-search").value));
       renderUsers("");
       document.getElementById("user-results").addEventListener("click", async (e) => {
         const followId = e.target.getAttribute("data-follow");

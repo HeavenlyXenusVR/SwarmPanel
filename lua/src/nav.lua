@@ -4,6 +4,10 @@
 -- Adding a screen means adding one entry here -- nothing else needs to
 -- know the list.
 --
+-- `badge` names a live count (app.js fills [data-badge] elements from the
+-- community_counts socket key): "messages", "friends", or "community" for
+-- their sum on the section heading.
+--
 -- `when` gates visibility on the session_view() shape (page_kit.lua):
 --   nil       -> any signed-in session
 --   "admin"   -> admin mode on
@@ -32,12 +36,12 @@ M.SECTIONS = {
     },
   },
   {
-    key = "community", label = "Community", glyph = "👥",
+    key = "community", label = "Community", glyph = "👥", badge = "community",
     blurb = "Other operators, friends, and direct messages.",
     items = {
       { to = "/users", label = "Directory", glyph = "👥", blurb = "Find other operators." },
-      { to = "/friends", label = "Friends", glyph = "🙂", blurb = "Requests and confirmed friends." },
-      { to = "/messages", label = "Messages", glyph = "✉", blurb = "Direct messages." },
+      { to = "/friends", label = "Friends", glyph = "🙂", badge = "friends", blurb = "Requests and confirmed friends." },
+      { to = "/messages", label = "Messages", glyph = "✉", badge = "messages", blurb = "Direct messages." },
     },
   },
   {
@@ -93,7 +97,7 @@ function M.visible_sections(session)
       if M.can_see(session, item) then items[#items + 1] = item end
     end
     if #items > 0 then
-      out[#out + 1] = { key = section.key, label = section.label, glyph = section.glyph, blurb = section.blurb, items = items }
+      out[#out + 1] = { key = section.key, label = section.label, glyph = section.glyph, badge = section.badge, blurb = section.blurb, items = items }
     end
   end
   return out

@@ -432,12 +432,21 @@ function M.register(cfg)
             <tbody>%s</tbody>
           </table>
         </div>
+        %s
       ]]):format(
         spotlight,
         html.section_head("Audio Nodes"), html.join(node_pills),
         html.section_head("Bots"), html.join(bot_cards),
         html.section_head("Live Sessions"),
-        #session_rows > 0 and html.join(session_rows) or ('<tr><td colspan="5">' .. html.esc("Nothing playing right now.") .. "</td></tr>")),
+        #session_rows > 0 and html.join(session_rows) or ('<tr><td colspan="5">' .. html.esc("Nothing playing right now.") .. "</td></tr>"),
+        -- Incident feed (admin only -- the "events" live key and
+        -- /api/events are both admin-gated): the newest bot errors and
+        -- Aria Medic events, so trouble shows up on the Dashboard without
+        -- a trip to Intel.
+        a.admin_mode and ([[
+          <div class="section-head"><div><h2>Incidents</h2><p>Latest bot errors and Aria Medic events.</p></div><a class="button-link" href="/intel">Open Intel</a></div>
+          <div class="event-list" id="dash-events">%s</div>
+        ]]):format(html.empty_state("Waiting for the live feed...")) or ""),
     })
 
     body = boot_screen .. body .. [[
@@ -592,13 +601,72 @@ function M.register(cfg)
             ? rows.map(renderSessionRow).join("")
             : `<tr><td colspan="5">${escHtml("Nothing playing right now.")}</td></tr>`;
         }
+        // Pinned bots: a star on each card floats that bot to the front of
+        // the grid (CSS order, so live patching never has to reshuffle the
+        // DOM). Stored per browser; the iOS app keeps its own pins.
+        const PINNED_BOTS_KEY = "swarmpanel.pinnedBots";
+        let pinnedBots = new Set();
+        try { pinnedBots = new Set(JSON.parse(localStorage.getItem(PINNED_BOTS_KEY) || "[]")); } catch { /* storage unavailable */ }
+        function savePinnedBots() {
+          try { localStorage.setItem(PINNED_BOTS_KEY, JSON.stringify(Array.from(pinnedBots))); } catch { /* storage unavailable */ }
+        }
+        // patchBotCards() rewrites each card's innerHTML, so the button is
+        // re-attached after every patch rather than baked into the markup.
+        function decoratePinnedBots() {
+          document.querySelectorAll("#bot-cards [data-bot-key]").forEach((card) => {
+            const pinned = pinnedBots.has(card.getAttribute("data-bot-key"));
+            card.classList.toggle("bot-card-pinned", pinned);
+            let btn = card.querySelector("[data-pin-toggle]");
+            if (!btn) {
+              btn = document.createElement("button");
+              btn.type = "button";
+              btn.className = "bot-pin";
+              btn.setAttribute("data-pin-toggle", "");
+              card.appendChild(btn);
+            }
+            btn.textContent = pinned ? "\u2605" : "\u2606";
+            btn.title = pinned ? "Unpin" : "Pin to top";
+            btn.setAttribute("aria-label", btn.title);
+            btn.setAttribute("aria-pressed", pinned ? "true" : "false");
+          });
+        }
+        const botCardsEl = document.getElementById("bot-cards");
+        if (botCardsEl) {
+          botCardsEl.addEventListener("click", (e) => {
+            const btn = e.target.closest("[data-pin-toggle]");
+            if (!btn) return;
+            const key = btn.closest("[data-bot-key]").getAttribute("data-bot-key");
+            if (pinnedBots.has(key)) pinnedBots.delete(key); else pinnedBots.add(key);
+            savePinnedBots();
+            decoratePinnedBots();
+          });
+        }
+        decoratePinnedBots();
+
         window.swarmLive.watch("dashboard", (msg) => {
           if (msg.type === "snapshot") {
             patchDashboardMetrics(msg.data);
             patchBotCards(msg.data);
+            decoratePinnedBots();
             patchSessionsTable(msg.data);
           }
         });
+
+        const dashEvents = document.getElementById("dash-events");
+        if (dashEvents) {
+          window.swarmLive.watch("events", (msg) => {
+            if (msg.type === "snapshot_error") {
+              dashEvents.innerHTML = '<div class="empty-state">Incident feed unavailable.</div>';
+              return;
+            }
+            if (msg.type !== "snapshot") return;
+            // The feed arrives oldest-first; show the newest 8.
+            const latest = ((msg.data && msg.data.events) || []).slice(-8).reverse();
+            dashEvents.innerHTML = latest.length
+              ? latest.map(swarmEventCard).join("")
+              : '<div class="empty-state">No incidents. The fleet is quiet.</div>';
+          });
+        }
       </script>
     ]]
 
@@ -694,13 +762,21 @@ function M.register(cfg)
         %s
         <div id="control-state" class="control-state"></div>
         %s
+        <div class="panel guild-overview">
+          <div class="actions-row">
+            <p>Every bot's state in the selected guild at a glance, with quick transport controls.</p>
+            <button type="button" id="guild-overview-btn" class="button-link">Load overview</button>
+          </div>
+          <div id="guild-overview"></div>
+        </div>
+        %s
         <div id="saved-queues"></div>
         %s
         %s
         </div>
         </div>
       ]]):format(html.join(bot_options), guild_field, html.join(action_options),
-        html.section_head("Control State"), html.section_head("Saved Queues"),
+        html.section_head("Control State"), html.section_head("Guild Overview"), html.section_head("Saved Queues"),
         a.admin_mode and ([[
           %s
           <div class="panel">
@@ -1204,6 +1280,75 @@ function M.register(cfg)
       const convertToVoiceBtn = document.getElementById("convert-to-voice-btn");
       if (convertToStageBtn) convertToStageBtn.addEventListener("click", () => convertChannels("stage", convertToStageBtn));
       if (convertToVoiceBtn) convertToVoiceBtn.addEventListener("click", () => convertChannels("voice", convertToVoiceBtn));
+
+      // Guild overview: one row per music bot for the selected guild, from
+      // GET /api/guilds/:guild_id/control-matrix. Loaded on demand rather
+      // than live -- each load resolves channel names through Discord for
+      // every bot, which is too heavy to repeat on a broadcast tick.
+      const overviewBox = document.getElementById("guild-overview");
+      const overviewBtn = document.getElementById("guild-overview-btn");
+      let overviewGuild = null;
+      function overviewRow(bot) {
+        const s = bot.session || {};
+        const key = bot.key || bot.bot_key || s.bot_key || "";
+        const name = bot.display_name || bot.bot_display || s.bot_display || key;
+        if (bot.error) {
+          return `<tr><td><strong>${swarmEsc(name)}</strong></td><td><span class="data-pill data-pill-danger">Unavailable</span></td><td colspan="2">${swarmEsc(bot.error)}</td></tr>`;
+        }
+        const playing = s.is_playing === true, paused = s.is_paused === true;
+        const channel = s.channel_name ? `#${s.channel_name}` : (s.channel_id ? `Channel ${s.channel_id}` : "Not connected");
+        const tone = playing ? "live" : paused ? "soft" : "off";
+        const actions = (playing || paused) ? `
+          <button type="button" data-overview-action="${paused ? "RESUME" : "PAUSE"}" data-bot="${swarmEsc(key)}">${paused ? "Resume" : "Pause"}</button>
+          <button type="button" data-overview-action="SKIP" data-bot="${swarmEsc(key)}">Skip</button>` : "";
+        return `<tr>
+          <td><strong>${swarmEsc(name)}</strong><br><small>${swarmEsc(channel)}</small></td>
+          <td><span class="data-pill data-pill-${tone}">${swarmEsc(s.session_state_label || (playing ? "Playing" : "Idle"))}</span></td>
+          <td>${swarmEsc(s.title || "—")}<br><small>${Number(s.queue_count || 0)} queued</small></td>
+          <td><div class="table-actions">${actions}</div></td>
+        </tr>`;
+      }
+      async function loadGuildOverview() {
+        const guildId = form.guild_id.value;
+        if (!guildId) { swarmToast("Choose a guild first.", "error"); return; }
+        overviewGuild = guildId;
+        overviewBtn.disabled = true;
+        overviewBox.innerHTML = '<div class="empty-state">Loading every bot in this guild...</div>';
+        try {
+          const res = await swarmFetch(`/api/guilds/${encodeURIComponent(guildId)}/control-matrix`);
+          const bots = res.bots || [];
+          const active = bots.filter((b) => b.session && (b.session.is_playing || b.session.is_paused)).length;
+          overviewBox.innerHTML = bots.length ? `
+            <p class="muted">${active} of ${bots.length} bots active in this guild. Loaded ${swarmEsc(new Date().toLocaleTimeString())}.</p>
+            <div class="table-wrap"><table class="data-table">
+              <thead><tr><th>Bot</th><th>State</th><th>Now playing</th><th></th></tr></thead>
+              <tbody>${bots.map(overviewRow).join("")}</tbody>
+            </table></div>` : '<div class="empty-state">No music bots found.</div>';
+        } catch (err) {
+          overviewBox.innerHTML = '<div class="notice notice-error">' + swarmEsc(err.message) + "</div>";
+        } finally {
+          overviewBtn.disabled = false;
+        }
+      }
+      if (overviewBtn) overviewBtn.addEventListener("click", loadGuildOverview);
+      if (overviewBox) {
+        overviewBox.addEventListener("click", async (e) => {
+          const btn = e.target.closest("[data-overview-action]");
+          if (!btn || !overviewGuild) return;
+          btn.disabled = true;
+          try {
+            await swarmFetch("/api/bots/control", {
+              method: "POST",
+              body: JSON.stringify({ bot_key: btn.getAttribute("data-bot"), guild_id: overviewGuild, action: btn.getAttribute("data-overview-action"), payload: {} }),
+            });
+            swarmToast("Order sent.", "success");
+            loadGuildOverview();
+          } catch (err) {
+            swarmToast(err.message, "error");
+            btn.disabled = false;
+          }
+        });
+      }
     ]]
 
     return page_shell(req, a, "/controls", "Controls", body, script)

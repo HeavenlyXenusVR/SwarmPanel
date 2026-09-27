@@ -71,14 +71,22 @@ local nav = require("nav")
 -- a multi-row block that eats half the viewport.
 local MOBILE_PRIMARY = { "/", "/controls", "/users", "/messages", "/profile" }
 
-local function nav_link(item, pathname, class_name)
+-- Empty count bubble app.js fills from the community_counts live key.
+-- Only rendered for guild-bound accounts (the key needs an account id --
+-- same rule as the notifications bell in layout()).
+local function badge_slot(name, session)
+  if not name or not (session and session.guild_id) then return "" end
+  return ('<span class="nav-badge" data-badge="%s" hidden></span>'):format(M.esc(name))
+end
+
+local function nav_link(item, pathname, class_name, session)
   -- title= gives the icon-only rail (compact sidebar / tablet widths) a
   -- hover label.
-  return ('<a class="%s" href="%s" title="%s"%s><span class="nav-glyph">%s</span><span class="nav-label">%s</span></a>'):format(
+  return ('<a class="%s" href="%s" title="%s"%s><span class="nav-glyph">%s</span><span class="nav-label">%s</span>%s</a>'):format(
     M.cls({ class_name, nav.is_active(pathname, item.to) and "active" or "" }),
     M.esc(item.to), M.esc(item.label),
     nav.is_active(pathname, item.to) and ' aria-current="page"' or "",
-    item.glyph, M.esc(item.label))
+    item.glyph, M.esc(item.label), badge_slot(item.badge, session))
 end
 
 -- Grouped section list, shared by the desktop sidebar and the drawer.
@@ -86,11 +94,11 @@ local function render_sections(session, pathname, link_class)
   local out = {}
   for _, section in ipairs(nav.visible_sections(session)) do
     local links = {}
-    for _, item in ipairs(section.items) do links[#links + 1] = nav_link(item, pathname, link_class) end
+    for _, item in ipairs(section.items) do links[#links + 1] = nav_link(item, pathname, link_class, session) end
     local current = nav.locate(pathname)
-    out[#out + 1] = ([[<div class="%s"><p class="nav-group-label"><span class="nav-glyph">%s</span><span class="nav-label">%s</span></p>%s</div>]]):format(
+    out[#out + 1] = ([[<div class="%s"><p class="nav-group-label"><span class="nav-glyph">%s</span><span class="nav-label">%s</span>%s</p>%s</div>]]):format(
       M.cls({ "nav-group", (current and current.key == section.key) and "current" or "" }),
-      section.glyph, M.esc(section.label), table.concat(links, ""))
+      section.glyph, M.esc(section.label), badge_slot(section.badge, session), table.concat(links, ""))
   end
   return table.concat(out, "")
 end
@@ -99,7 +107,7 @@ local function render_mobile_primary(session, pathname)
   local out = {}
   for _, to in ipairs(MOBILE_PRIMARY) do
     local _, item = nav.locate(to)
-    if item and nav.can_see(session, item) then out[#out + 1] = nav_link(item, pathname, "nav-item mobile-primary") end
+    if item and nav.can_see(session, item) then out[#out + 1] = nav_link(item, pathname, "nav-item mobile-primary", session) end
   end
   return table.concat(out, "")
 end
@@ -134,7 +142,7 @@ local function render_section_tabs(session, pathname)
   local visible = nav.visible_section(session, section.key)
   if not visible or #visible.items < 2 then return "" end
   local links = {}
-  for _, item in ipairs(visible.items) do links[#links + 1] = nav_link(item, pathname, "nav-item section-tab") end
+  for _, item in ipairs(visible.items) do links[#links + 1] = nav_link(item, pathname, "nav-item section-tab", session) end
   return ('<nav class="section-tabs" aria-label="%s screens">%s</nav>'):format(M.esc(visible.label), table.concat(links, ""))
 end
 
