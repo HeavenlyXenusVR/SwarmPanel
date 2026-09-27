@@ -290,18 +290,23 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Mobile nav sheet (mirrors Shell.jsx's mobileNavOpen state)
   (function initMobileNav() {
-    const toggle = document.querySelector("[data-mobile-nav-toggle]");
+    // Two toggles open the same drawer: the mobile bottom bar's "More"
+    // and the topbar menu button shown when the sidebar is hidden.
+    const toggles = document.querySelectorAll("[data-mobile-nav-toggle]");
     const sheet = document.querySelector("[data-mobile-nav-sheet]");
     const backdrop = document.querySelector("[data-mobile-nav-backdrop]");
     const closeBtn = document.querySelector("[data-mobile-nav-close]");
-    if (!toggle || !sheet || !backdrop) return;
+    if (!toggles.length || !sheet || !backdrop) return;
     function setOpen(open) {
       sheet.classList.toggle("open", open);
       backdrop.classList.toggle("open", open);
-      toggle.classList.toggle("active", open);
+      toggles.forEach((t) => {
+        t.classList.toggle("active", open);
+        t.setAttribute("aria-expanded", open ? "true" : "false");
+      });
       document.body.style.overflow = open ? "hidden" : "";
     }
-    toggle.addEventListener("click", (e) => { e.preventDefault(); setOpen(!sheet.classList.contains("open")); });
+    toggles.forEach((t) => t.addEventListener("click", (e) => { e.preventDefault(); setOpen(!sheet.classList.contains("open")); }));
     backdrop.addEventListener("click", () => setOpen(false));
     if (closeBtn) closeBtn.addEventListener("click", () => setOpen(false));
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") setOpen(false); });

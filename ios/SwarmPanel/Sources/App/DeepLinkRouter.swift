@@ -9,12 +9,14 @@ final class DeepLinkRouter: ObservableObject {
 
     /// Quick action identifiers are `"com.swarmpanel.ios.open-<tab>"`
     /// (see project.yml's UIApplicationShortcutItems); URL hosts are the
-    /// bare tab name, e.g. `swarmpanel://controls`.
+    /// bare tab name, e.g. `swarmpanel://controls`. Pre-restructure names
+    /// (dashboard, leaderboard, social, profile) still resolve — see
+    /// SwarmTab.init(linkName:).
     func resolve(identifier: String) -> SwarmTab? {
         let name = identifier
             .replacingOccurrences(of: "com.swarmpanel.ios.open-", with: "")
             .lowercased()
-        return SwarmTab(rawValue: name)
+        return SwarmTab(linkName: name)
     }
 
     func handleShortcut(identifier: String) {
@@ -24,7 +26,7 @@ final class DeepLinkRouter: ObservableObject {
 
     func handleURL(_ url: URL) {
         guard url.scheme == "swarmpanel", let host = url.host else { return }
-        guard let tab = SwarmTab(rawValue: host.lowercased()) else { return }
+        guard let tab = SwarmTab(linkName: host) else { return }
         pendingTab = tab
     }
 }

@@ -120,7 +120,7 @@ function M.register(cfg)
     return a
   end
 
-  -- Exposed so pages.lua (server-rendered HTML routes, registered separately
+  -- Exposed so the pages_*.lua modules (server-rendered HTML routes, registered separately
   -- from main.lua) can share the exact same auth/cookie logic rather than
   -- reimplementing it -- both modules authenticate against the one
   -- SESSION_COOKIE convention defined above.
