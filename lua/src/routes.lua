@@ -821,6 +821,39 @@ function M.register(cfg)
   local function admin_or_mod_scope(a)
     return (is_admin_auth(a) or is_moderator_auth(a)) and "admin_or_mod" or "denied"
   end
+  -- Defined here, ahead of SNAPSHOT_BUILDERS, because the thread_messages
+  -- live key below needs it. It used to be declared further down with the
+  -- profile routes, so from inside the builder the name resolved to an
+  -- undefined global and every live thread_messages push failed (clients
+  -- silently fell back to REST).
+  local function social_permissions(profile)
+    local status = tostring((profile and profile.friend_status) or "none"):lower()
+    local mode = tostring((profile and profile.profile_social_mode) or "open"):lower()
+    if mode ~= "open" and mode ~= "friends" and mode ~= "quiet" then mode = "open" end
+    local public_profile = profile and profile.public_profile or false
+    local is_friend = status == "friends"
+
+    local function can_access(action)
+      if status == "self" then return true end
+      if not public_profile then return is_friend and (action == "message" or action == "view_friends") end
+      if mode == "quiet" then return false end
+      if mode == "friends" then
+        if action == "friend_request" then
+          return not (status == "friends" or status == "pending_out" or status == "pending_in" or status == "self")
+        end
+        return is_friend
+      end
+      return true
+    end
+
+    return {
+      can_follow = can_access("follow") and status ~= "self" and status ~= "pending_out",
+      can_friend = can_access("friend_request"),
+      can_message = can_access("message") and status ~= "self",
+      can_view_friends = can_access("view_friends"),
+    }
+  end
+
   -- ---------------------------------------------------------------------
   local SNAPSHOT_BUILDERS = {
     dashboard = {
@@ -1811,34 +1844,6 @@ function M.register(cfg)
     local users = accounts.search_account_profiles(q, limit, viewer_id, nil, online_only)
     return 200, { ok = true, query = q, users = users, limit = limit, online_only = online_only }
   end)
-
-  local function social_permissions(profile)
-    local status = tostring((profile and profile.friend_status) or "none"):lower()
-    local mode = tostring((profile and profile.profile_social_mode) or "open"):lower()
-    if mode ~= "open" and mode ~= "friends" and mode ~= "quiet" then mode = "open" end
-    local public_profile = profile and profile.public_profile or false
-    local is_friend = status == "friends"
-
-    local function can_access(action)
-      if status == "self" then return true end
-      if not public_profile then return is_friend and (action == "message" or action == "view_friends") end
-      if mode == "quiet" then return false end
-      if mode == "friends" then
-        if action == "friend_request" then
-          return not (status == "friends" or status == "pending_out" or status == "pending_in" or status == "self")
-        end
-        return is_friend
-      end
-      return true
-    end
-
-    return {
-      can_follow = can_access("follow") and status ~= "self" and status ~= "pending_out",
-      can_friend = can_access("friend_request"),
-      can_message = can_access("message") and status ~= "self",
-      can_view_friends = can_access("view_friends"),
-    }
-  end
 
   httpd.route("GET", "/api/users/:account_id/profile", function(req)
     local a, status, err_body = require_auth(req)
