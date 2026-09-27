@@ -1,12 +1,39 @@
--- Server-rendered pages: Controls, Invites, Leaderboard, Users, Friends.
--- Pattern: render the page shell + static structure server-side via
--- html.lua, then populate live/interactive data with inline JS calling the
--- SAME JSON API the old React app used (swarmFetch, from static/app.js).
+-- Fleet section: Dashboard, Controls, Invites -- live bot status and direct
+-- playback control. Pattern shared by every page module: the shell and
+-- static structure render server-side via html.lua, live/interactive data
+-- is populated by inline JS calling the same JSON API (swarmFetch /
+-- swarmLive, from static/app.js).
 local httpd = require("httpd")
 local html = require("html")
 local accounts = require("accounts")
+local kit = require("page_kit")
+local dashboard = require("dashboard")
+local config = require("config")
 
 local M = {}
+
+-- BUGFIX 2026-08-22: the "Audio Nodes: Healthy/Checking" summary badges
+-- (boot screen + dashboard spotlight, below) used to check ONLY the
+-- "lavalink" (primary) node's status -- accurate back when that was the
+-- only real node, but since the 2026-08-17 3-node pool + per-bot
+-- node_affinity rotation (see Music/lua-shared/swarmlua/bot.lua/
+-- nodepool.lua), many bots' actual preferred node is lavalink2 or
+-- lavalink3, not "lavalink". A primary that happens to be down while both
+-- pool nodes are fine (the fleet keeps working fine via failover) used to
+-- show "Checking" here forever; the reverse -- lavalink2/lavalink3 both
+-- down while the primary happens to be fine -- used to show "Healthy" with
+-- 2 of 3 real nodes silently degraded. Healthy here now means "the fleet
+-- still has at least one working real Lavalink node" -- NodeLink is a
+-- last-resort fallback, deliberately not counted toward this summary the
+-- same way it isn't counted as one of the "real" nodes in bot.lua's own
+-- node_affinity rotation.
+local function any_lavalink_node_healthy(node_health)
+  node_health = node_health or {}
+  for _, name in ipairs({ "lavalink", "lavalink2", "lavalink3" }) do
+    if (node_health[name] or {}).status == "healthy" then return true end
+  end
+  return false
+end
 
 local CONTROL_ACTIONS = {
   "PLAY", "SMART_RECOMMEND", "PAUSE", "RESUME", "SKIP", "STOP", "CLEAR",
@@ -14,28 +41,574 @@ local CONTROL_ACTIONS = {
 }
 
 function M.register(cfg)
-  local dashboard = require("dashboard")
+  local settings = cfg.settings
   local music_bots = cfg.music_bots
+  local session_view, page_shell, denied = kit.session_view, kit.page_shell, kit.denied
 
-  local function session_view(a)
-    if not a then return { authenticated = false } end
-    return {
-      authenticated = true, username = a.username, site_owner = a.site_owner == true,
-      admin_mode = a.admin_mode == true, moderator = a.moderator == true,
-      image_gallery_owner = (a.admin_mode == true) and (a.site_owner == true),
-      guild_id = a.guild_id,
+  -- ---------------------------------------------------------------------
+  -- Dashboard -- mirrors pages/DashboardPage.jsx
+  -- ---------------------------------------------------------------------
+  local function render_dashboard(req, path)
+    local a, redirect_status, redirect_headers = cfg.require_auth_page(req)
+    if not a then return redirect_status, "", redirect_headers end
+
+    local data = dashboard.get_dashboard_data(music_bots)
+
+    -- Mirrors swarm.jsx's bestSession()/playbackBadge(): the featured
+    -- session for a card is whichever guild is actually playing, falling
+    -- back to the first known session, then the badge reflects that
+    -- session's state (or the bot's own heartbeat health when nothing is
+    -- playing at all).
+    local function best_session(bot)
+      for _, s in ipairs(bot.sessions or {}) do
+        if s.is_playing then return s end
+      end
+      return bot.sessions and bot.sessions[1] or nil
+    end
+    -- Was checking session.is_playing BEFORE offline/stale status, so a bot
+    -- that went offline mid-track (its last DB-persisted session row still
+    -- has is_playing=true from before it dropped) still showed a "Live"
+    -- badge and a playback counter that could never advance again -- which
+    -- is what actually produced several of the "duration stuck" bot cards:
+    -- not a display bug, a genuinely dead bot whose last-known state was
+    -- being trusted as current. Offline/stale is checked first now.
+    local function bot_is_offline(bot)
+      local status_lower = tostring(bot.status or ""):lower()
+      if status_lower == "offline" then return true end
+      local age = tonumber(bot.heartbeat_age_seconds)
+      if age and age > 120 then return true end
+      return false
+    end
+    local function playback_badge(session, bot)
+      if bot_is_offline(bot) then return "danger", "Offline" end
+      if session and session.is_playing then return "live", "Live" end
+      if session and session.is_paused then return "soft", "Paused" end
+      local status_lower = tostring(bot.heartbeat_status or bot.status or ""):lower()
+      if status_lower:find("stale") then return "danger", "Stale" end
+      return "off", "Idle"
+    end
+
+    local bot_cards = {}
+    local all_sessions = {}
+    for _, bot in ipairs(data.bots) do
+      local session = best_session(bot)
+      local tone, label = playback_badge(session, bot)
+      local accent = config.bot_accents[bot.key] or "#89b4fa"
+
+      local thumb
+      if session and session.thumbnail and session.thumbnail ~= "" then
+        thumb = ('<img class="bot-thumb" src="%s" alt="" loading="lazy">'):format(html.esc(session.thumbnail))
+      else
+        thumb = '<div class="bot-thumb bot-thumb-empty">&#9835;</div>'
+      end
+
+      local now_title = (session and session.title and session.title ~= "") and session.title
+        or bot.error or bot.schema or "Waiting for live playback."
+      local now_sub = (session and (session.media_source_label or session.session_state_label))
+        or "Live state will fill in automatically."
+
+      local playback_block = ""
+      if session then
+        local duration = math.floor(session.duration_seconds or 0)
+        local pct = (duration > 0) and math.min(100, math.floor(100 * (session.position_seconds or 0) / duration)) or 0
+        -- data-playback-bar must live INSIDE the data-playback-counter
+        -- element -- app.js's tickPlaybackCounters() finds the bar via
+        -- el.querySelector() scoped to the counter element, so a sibling
+        -- bar (as this used to be) is never found and its width just
+        -- freezes at whatever the server rendered on page load.
+        -- bot-seek-thumb/-times had CSS (a drag handle riding the fill, plus
+        -- a split current/duration time row) but the seek bar only ever
+        -- rendered the bare track/fill -- no handle, and the single inline
+        -- data-playback-label wasn't split the way .bot-seek-times expects.
+        playback_block = ([[
+          <div class="bot-playback-wrap" data-playback-counter data-position="%s" data-observed-at="%s" data-duration="%s" data-playing="%s">
+            <div class="bot-seek-bar" data-seek-bar data-bot-key="%s" data-guild-id="%s" data-duration="%d">
+              <div class="bot-seek-track">
+                <div class="bot-seek-fill" data-playback-bar style="width:%d%%"></div>
+                <div class="bot-seek-thumb" data-seek-thumb style="left:%d%%"></div>
+              </div>
+            </div>
+            <div class="bot-seek-times"><span data-seek-current></span><span data-seek-duration></span></div>
+          </div>
+        ]]):format(
+          tostring(session.position_seconds or 0), tostring(session.position_observed_at or 0),
+          tostring(session.duration_seconds or 0), tostring(session.is_playing == true),
+          html.esc(bot.key), html.esc(session.guild_id), duration, pct, pct)
+      end
+
+      local offline_overlay = bot_is_offline(bot)
+        and '<div class="bot-card-offline-overlay"><span class="bot-card-offline-label">Offline</span></div>' or ""
+
+      bot_cards[#bot_cards + 1] = ([[
+        <article class="bot-card%s" data-bot-key="%s" style="--card-accent: %s">
+          %s
+          <div class="bot-head">
+            <span class="bot-dot"></span>
+            <div class="bot-head-copy">
+              <h3>%s</h3>
+              <small>%s</small>
+            </div>
+            <span class="data-pill data-pill-%s">%s</span>
+          </div>
+          <div class="bot-now">
+            %s
+            <div class="bot-now-copy">
+              <strong>%s</strong>
+              <small>%s</small>
+            </div>
+          </div>
+          %s
+          <div class="chip-row">
+            <span>%d live</span>
+            <span>%d guilds</span>
+            <span data-queue-pressure>%d queued</span>
+            <span data-queue-pressure>%d backup</span>
+            %s
+          </div>
+        </article>
+      ]]):format(offline_overlay ~= "" and " bot-card-offline" or "", html.esc(bot.key), html.esc(accent),
+        offline_overlay,
+        html.esc(bot.display_name), html.esc(bot.heartbeat_status or bot.status or "telemetry ready"),
+        tone, label,
+        thumb,
+        html.esc(now_title), html.esc(now_sub),
+        playback_block,
+        bot.active_playing_count or 0, bot.known_guild_count or 0,
+        bot.queue_depth or 0, bot.backup_queue_depth or 0,
+        -- show_bot_uptime ("Show bot uptime" on /appearance): saved but
+        -- never had any stat to toggle. heartbeat_age_seconds is real,
+        -- live data already flowing through /api/dashboard (used for
+        -- offline detection above) -- surfaced here as "last heartbeat"
+        -- rather than inventing a fabricated process-uptime number, since
+        -- no bot actually persists a process start time anywhere.
+        (tonumber(bot.heartbeat_age_seconds) ~= nil)
+          and ('<span data-bot-uptime>heartbeat %ds ago</span>'):format(math.floor(bot.heartbeat_age_seconds))
+          or "")
+
+      for _, s in ipairs(bot.sessions or {}) do
+        s.bot_key = bot.key
+        s.bot_display = bot.display_name
+        all_sessions[#all_sessions + 1] = s
+      end
+    end
+
+    local session_rows = {}
+    for _, s in ipairs(all_sessions) do
+      if s.is_playing or s.is_paused or (s.title and s.title ~= "") then
+        -- Read-only compact counter here, not the draggable bot-seek-bar
+        -- (that belongs on the bot cards above, matching the original
+        -- BotCard/SessionTable split) -- the seek bar has no width of its
+        -- own (100% of its container), so dropped into a wide table column
+        -- it stretched across nearly the full row. The bare 160px cap here
+        -- matches PlaybackCounter's compact rendering in ControlState.
+        session_rows[#session_rows + 1] = ([[
+          <tr>
+            <td>%s</td>
+            <td>%s</td>
+            <td>%s</td>
+            <td style="max-width:160px">
+              <div class="bot-playback compact" data-playback-counter data-position="%s" data-observed-at="%s" data-duration="%s" data-playing="%s">
+                <div class="bot-playback-bar" aria-hidden="true"><span data-playback-bar style="width:%d%%"></span></div>
+                <span data-playback-label></span>
+              </div>
+            </td>
+            <td>%d queued</td>
+          </tr>
+        ]]):format(
+          html.esc(s.bot_display), html.esc(s.title or "—"), html.esc(s.session_state_label or ""),
+          tostring(s.position_seconds or 0), tostring(s.position_observed_at or 0), tostring(s.duration_seconds or 0),
+          tostring(s.is_playing == true),
+          (s.duration_seconds and s.duration_seconds > 0) and math.min(100, math.floor(100 * (s.position_seconds or 0) / s.duration_seconds)) or 0,
+          s.queue_count or 0)
+      end
+    end
+
+    -- Cross-bot Lavalink/NodeLink health (see dashboard.lua's
+    -- get_node_health() -- reads the shared Redis scoreboard every bot's
+    -- own Lavalink client writes to on every success/failure, so this is
+    -- one shared status, not per-bot). "degraded"/"stale" reuse the same
+    -- data-pill-danger/data-pill-off tones the bot cards above already use
+    -- for offline/idle, so a red pill here reads the same way it does
+    -- everywhere else on this page.
+    local NODE_HEALTH_TONE = { healthy = "live", degraded = "danger", stale = "off", unknown = "off" }
+    local NODE_HEALTH_LABEL = { healthy = "Healthy", degraded = "Degraded", stale = "Stale", unknown = "No data yet" }
+    -- BUGFIX 2026-08-22: matches dashboard.lua's get_node_health() fix --
+    -- this hardcoded 2-node list independently had the exact same gap
+    -- (missing lavalink2/lavalink3, the 2 extra real Lavalink instances
+    -- added 2026-08-17 to spread the fleet's voice-session load), so even
+    -- with that fix, THIS page still wouldn't have rendered them: a
+    -- degraded/down node on 2 of the 3 real Lavalink instances could sit
+    -- invisible here indefinitely, same failure mode.
+    local NODE_DISPLAY_NAME = {
+      lavalink = "Lavalink (primary)", lavalink2 = "Lavalink 2", lavalink3 = "Lavalink 3",
+      nodelink = "NodeLink (backup)",
     }
+    local node_pills = {}
+    for _, node_name in ipairs({ "lavalink", "lavalink2", "lavalink3", "nodelink" }) do
+      local h = (data.node_health or {})[node_name] or { status = "unknown" }
+      local tone = NODE_HEALTH_TONE[h.status] or "off"
+      local label = NODE_HEALTH_LABEL[h.status] or "Unknown"
+      local detail
+      if h.status == "healthy" and h.last_success_age_seconds then
+        detail = ("last success %ds ago"):format(h.last_success_age_seconds)
+      elseif h.consecutive_failures and h.consecutive_failures > 0 then
+        detail = ("%d consecutive failures"):format(h.consecutive_failures)
+      else
+        detail = "no recent activity"
+      end
+      node_pills[#node_pills + 1] = ([[
+        <div class="bot-card" style="--card-accent: #89b4fa">
+          <div class="bot-head">
+            <span class="bot-dot"></span>
+            <div class="bot-head-copy">
+              <h3>%s</h3>
+              <small>%s</small>
+            </div>
+            <span class="data-pill data-pill-%s">%s</span>
+          </div>
+        </div>
+      ]]):format(html.esc(NODE_DISPLAY_NAME[node_name] or node_name), html.esc(detail), tone, label)
+    end
+
+    -- Boot screen (swarm-loading-*) uses real numbers already computed
+    -- above, not placeholders -- an operator landing on the dashboard sees
+    -- an accurate snapshot for the ~1s the panel is visible, not a fake
+    -- progress bar. Fades itself out client-side (fully rendered content is
+    -- already behind it since this is a server-rendered page, not an
+    -- actual loading gate).
+    local online_bots, live_count = 0, 0
+    for _, bot in ipairs(data.bots) do
+      if not bot_is_offline(bot) then online_bots = online_bots + 1 end
+    end
+    for _, s in ipairs(all_sessions) do
+      if s.is_playing then live_count = live_count + 1 end
+    end
+    local boot_screen = ([[
+      <div class="swarm-loading-screen" id="boot-screen">
+        <div class="swarm-loading-backdrop"></div>
+        <div class="swarm-loading-panel">
+          <div class="swarm-loading-hero">
+            <div class="swarm-loading-radar">
+              <div class="swarm-loading-ring ring-a"></div>
+              <div class="swarm-loading-ring ring-b"></div>
+              <div class="swarm-loading-ring ring-c"></div>
+              <div class="swarm-loading-sweep"></div>
+              <div class="swarm-loading-core"></div>
+            </div>
+            <div class="swarm-loading-copy">
+              <span class="swarm-loading-kicker">Fleet Command</span>
+              <strong>SwarmPanel</strong>
+              <p>Syncing with the swarm...</p>
+            </div>
+          </div>
+          <div class="swarm-loading-status-grid">
+            <article><span>Bots Online</span><strong>%d / %d</strong><small>heartbeat within 120s</small></article>
+            <article><span>Live Sessions</span><strong>%d</strong><small>currently playing</small></article>
+            <article><span>Audio Nodes</span><strong>%s</strong><small>Lavalink / NodeLink</small></article>
+          </div>
+          <div class="swarm-loading-progress"><span></span></div>
+        </div>
+      </div>
+      <script>
+        (function () {
+          var el = document.getElementById("boot-screen");
+          if (!el) return;
+          setTimeout(function () {
+            el.classList.add("is-leaving");
+            setTimeout(function () { el.remove(); }, 420);
+          }, 650);
+        })();
+      </script>
+    ]]):format(
+      online_bots, #data.bots, live_count,
+      any_lavalink_node_healthy(data.node_health) and "Healthy" or "Checking"
+    )
+
+    -- Fleet Overview spotlight: dashboard-spotlight/-metrics/-mini-metrics/
+    -- -queue-leaders/-queue-card all had full CSS with no HTML ever built
+    -- for them. Real aggregates from the same data.bots the cards below
+    -- already render from, not fabricated numbers.
+    local total_queue, total_backup, total_guilds = 0, 0, 0
+    local busiest_bot = nil
+    for _, bot in ipairs(data.bots) do
+      total_queue = total_queue + (bot.queue_depth or 0)
+      total_backup = total_backup + (bot.backup_queue_depth or 0)
+      total_guilds = total_guilds + (bot.known_guild_count or 0)
+      if bot.kind == "music" and (not busiest_bot or (bot.queue_depth or 0) > (busiest_bot.queue_depth or 0)) then
+        busiest_bot = bot
+      end
+    end
+    -- Real Now Playing widget for the spotlight card (bot-playback-head/
+    -- dashboard-playback CSS existed with no consumer) -- the first session
+    -- actually playing right now, not just the deepest queue.
+    local spotlight_session = nil
+    for _, s in ipairs(all_sessions) do
+      if s.is_playing then spotlight_session = s; break end
+    end
+    local spotlight_playback = ""
+    if spotlight_session then
+      local duration = math.floor(spotlight_session.duration_seconds or 0)
+      local pct = (duration > 0) and math.min(100, math.floor(100 * (spotlight_session.position_seconds or 0) / duration)) or 0
+      spotlight_playback = ([[
+        <div class="bot-playback dashboard-playback" data-playback-counter data-position="%s" data-observed-at="%s" data-duration="%s" data-playing="true">
+          <div class="bot-playback-head"><strong>%s</strong><small>%s</small></div>
+          <div class="bot-playback-bar"><span data-playback-bar style="width:%d%%"></span></div>
+          <small data-playback-label></small>
+        </div>
+      ]]):format(
+        tostring(spotlight_session.position_seconds or 0), tostring(spotlight_session.position_observed_at or 0), tostring(spotlight_session.duration_seconds or 0),
+        html.esc(spotlight_session.title or "Now Playing"), html.esc(spotlight_session.bot_display or ""), pct
+      )
+    end
+
+    local queue_leaders_bots = {}
+    for _, bot in ipairs(data.bots) do
+      if bot.kind == "music" and (bot.queue_depth or 0) > 0 then queue_leaders_bots[#queue_leaders_bots + 1] = bot end
+    end
+    table.sort(queue_leaders_bots, function(x, y) return (x.queue_depth or 0) > (y.queue_depth or 0) end)
+    local queue_leader_cards = {}
+    for i = 1, math.min(4, #queue_leaders_bots) do
+      local bot = queue_leaders_bots[i]
+      queue_leader_cards[#queue_leader_cards + 1] = ([[
+        <div class="dashboard-queue-card bot-card">
+          <div class="bot-head"><span class="bot-dot"></span><div class="bot-head-copy"><h3>%s</h3></div><span class="data-pill data-pill-off">%d queued</span></div>
+        </div>
+      ]]):format(html.esc(bot.display_name), bot.queue_depth or 0)
+    end
+
+    local spotlight = ([[
+      <div class="dashboard-brief-panel">
+        <div class="dashboard-spotlight liquid-glass">
+          <div class="dashboard-spotlight-head">
+            <span class="dashboard-eyebrow">Fleet Overview</span>
+            <span class="dashboard-state-badge%s">%s</span>
+          </div>
+          <strong>%s</strong>
+          <p>%s</p>
+          %s
+          <div class="dashboard-spotlight-metrics">
+            <article><span>Bots Online</span><strong id="metric-bots-online">%d / %d</strong><small>heartbeat within 120s</small></article>
+            <article><span>Live Sessions</span><strong id="metric-live-sessions">%d</strong><small>currently playing</small></article>
+            <article><span>Queue Depth</span><strong id="metric-queue-depth">%d</strong><small><span id="metric-queue-backup">%d</span> in backup</small></article>
+            <article><span>Guilds Served</span><strong id="metric-guilds-served">%d</strong><small>across the fleet</small></article>
+          </div>
+        </div>
+      </div>
+      <div class="dashboard-mini-metrics">
+        <article><span>Audio Nodes</span><strong>%s</strong></article>
+        <article><span>Aria Orchestrator</span><strong>%s</strong></article>
+      </div>
+      %s
+      <div class="dashboard-queue-leaders">%s</div>
+    ]]):format(
+      live_count > 0 and " live" or " idle", live_count > 0 and "Active" or "Idle",
+      busiest_bot and (busiest_bot.display_name .. (live_count > 0 and " is carrying live playback" or " has the deepest queue")) or "Fleet is quiet right now",
+      busiest_bot and ("%d queued, %d live guild(s)"):format(busiest_bot.queue_depth or 0, busiest_bot.active_playing_count or 0) or "No active bot to highlight.",
+      spotlight_playback,
+      online_bots, #data.bots, live_count, total_queue, total_backup, total_guilds,
+      any_lavalink_node_healthy(data.node_health) and "Healthy" or "Checking",
+      (function()
+        for _, bot in ipairs(data.bots) do if bot.key == "aria" then return bot.status or "Unknown" end end
+        return "Unknown"
+      end)(),
+      #queue_leader_cards > 0 and html.section_head("Queue Leaders") or "",
+      html.join(queue_leader_cards)
+    )
+
+    local body = html.page({
+      title = "Dashboard",
+      eyebrow = "Fleet",
+      lede = "Live status across the swarm.",
+      body = ([[
+        %s
+        %s
+        <div class="bot-grid">%s</div>
+        %s
+        <div class="bot-grid" id="bot-cards">%s</div>
+        %s
+        <div class="table-wrap">
+          <table class="data-table" id="sessions-table">
+            <thead><tr><th>Bot</th><th>Track</th><th>State</th><th>Position</th><th>Queue</th></tr></thead>
+            <tbody>%s</tbody>
+          </table>
+        </div>
+      ]]):format(
+        spotlight,
+        html.section_head("Audio Nodes"), html.join(node_pills),
+        html.section_head("Bots"), html.join(bot_cards),
+        html.section_head("Live Sessions"),
+        #session_rows > 0 and html.join(session_rows) or ('<tr><td colspan="5">' .. html.esc("Nothing playing right now.") .. "</td></tr>")),
+    })
+
+    body = boot_screen .. body .. [[
+      <script>
+        // BUGFIX: this handler used to do nothing at all -- confirmed live
+        // via Playwright, the page never updated without a manual refresh
+        // despite its own lede claiming "Live status across the swarm."
+        // A first attempt at fixing this reloaded the whole page on every
+        // message, but the snapshot's per-session position_seconds/
+        // position_observed_at tick essentially every broadcast (~2s,
+        // ensure_broadcast_loop in routes.lua), so the server's digest
+        // basically always differs while anything anywhere is playing --
+        // that caused a reload storm (confirmed: 8 reloads in 15s even
+        // throttled), which is worse than the original do-nothing bug, not
+        // better. Patching just the 4 spotlight numbers directly from the
+        // payload avoided re-deriving the rest of the page, but left every
+        // bot card and the session table on whatever position/duration/
+        // title/badge the page happened to render at load -- once a track's
+        // tickPlaybackCounters() (app.js) clamped its counter to the
+        // track's own duration, that card was frozen at "5:36 / 5:36"
+        // forever (or stuck showing a track that had already ended and a
+        // new one started) until a manual reload. Fixed the same way this
+        // page already fixes the spotlight numbers -- patch the DOM directly
+        // from the payload instead of reloading -- just extended to the bot
+        // cards and session rows below. Mirrors pages_fleet.lua's own
+        // bot_is_offline/best_session/playback_badge functions (Lua) so a
+        // card looks identical whether it was server-rendered on load or
+        // live-patched afterward; keep the two in sync if that logic ever
+        // changes.
+        function patchDashboardMetrics(data) {
+          const bots = (data && data.bots) || [];
+          let online = 0, live = 0, queue = 0, backup = 0, guilds = 0;
+          for (const bot of bots) {
+            const age = Number(bot.heartbeat_age_seconds);
+            const offline = String(bot.status || "").toLowerCase() === "offline" || (Number.isFinite(age) && age > 120);
+            if (!offline) online++;
+            queue += bot.queue_depth || 0;
+            backup += bot.backup_queue_depth || 0;
+            guilds += bot.known_guild_count || 0;
+            for (const s of bot.sessions || []) { if (s.is_playing) live++; }
+          }
+          const setText = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+          setText("metric-bots-online", online + " / " + bots.length);
+          setText("metric-live-sessions", String(live));
+          setText("metric-queue-depth", String(queue));
+          setText("metric-queue-backup", String(backup));
+          setText("metric-guilds-served", String(guilds));
+        }
+        function escHtml(s) { return String(s == null ? "" : s).replace(/</g, "&lt;"); }
+        function botIsOffline(bot) {
+          const statusLower = String(bot.status || "").toLowerCase();
+          if (statusLower === "offline") return true;
+          const age = Number(bot.heartbeat_age_seconds);
+          return Number.isFinite(age) && age > 120;
+        }
+        function bestSession(bot) {
+          for (const s of bot.sessions || []) { if (s.is_playing) return s; }
+          return (bot.sessions && bot.sessions[0]) || null;
+        }
+        function playbackBadge(session, bot) {
+          if (botIsOffline(bot)) return ["danger", "Offline"];
+          if (session && session.is_playing) return ["live", "Live"];
+          if (session && session.is_paused) return ["soft", "Paused"];
+          const statusLower = String(bot.heartbeat_status || bot.status || "").toLowerCase();
+          if (statusLower.indexOf("stale") !== -1) return ["danger", "Stale"];
+          return ["off", "Idle"];
+        }
+        function renderPlaybackWrap(session, botKey) {
+          if (!session) return "";
+          const duration = Math.floor(session.duration_seconds || 0);
+          const pos = session.position_seconds || 0;
+          const pct = duration > 0 ? Math.min(100, Math.floor((100 * pos) / duration)) : 0;
+          return `
+            <div class="bot-playback-wrap" data-playback-counter data-position="${escHtml(pos)}" data-observed-at="${escHtml(session.position_observed_at || 0)}" data-duration="${escHtml(session.duration_seconds || 0)}" data-playing="${session.is_playing === true}">
+              <div class="bot-seek-bar" data-seek-bar data-bot-key="${escHtml(botKey)}" data-guild-id="${escHtml(session.guild_id)}" data-duration="${duration}">
+                <div class="bot-seek-track">
+                  <div class="bot-seek-fill" data-playback-bar style="width:${pct}%"></div>
+                  <div class="bot-seek-thumb" data-seek-thumb style="left:${pct}%"></div>
+                </div>
+              </div>
+              <div class="bot-seek-times"><span data-seek-current></span><span data-seek-duration></span></div>
+            </div>`;
+        }
+        function renderBotCardInner(bot) {
+          const session = bestSession(bot);
+          const [tone, label] = playbackBadge(session, bot);
+          const thumb = (session && session.thumbnail)
+            ? `<img class="bot-thumb" src="${escHtml(session.thumbnail)}" alt="" loading="lazy">`
+            : '<div class="bot-thumb bot-thumb-empty">&#9835;</div>';
+          const nowTitle = (session && session.title) || bot.error || bot.schema || "Waiting for live playback.";
+          const nowSub = (session && (session.media_source_label || session.session_state_label)) || "Live state will fill in automatically.";
+          const offline = botIsOffline(bot);
+          const offlineOverlay = offline ? '<div class="bot-card-offline-overlay"><span class="bot-card-offline-label">Offline</span></div>' : "";
+          const age = Number(bot.heartbeat_age_seconds);
+          const uptimeSpan = Number.isFinite(age) ? `<span data-bot-uptime>heartbeat ${Math.floor(age)}s ago</span>` : "";
+          return `
+            ${offlineOverlay}
+            <div class="bot-head">
+              <span class="bot-dot"></span>
+              <div class="bot-head-copy">
+                <h3>${escHtml(bot.display_name)}</h3>
+                <small>${escHtml(bot.heartbeat_status || bot.status || "telemetry ready")}</small>
+              </div>
+              <span class="data-pill data-pill-${tone}">${escHtml(label)}</span>
+            </div>
+            <div class="bot-now">
+              ${thumb}
+              <div class="bot-now-copy">
+                <strong>${escHtml(nowTitle)}</strong>
+                <small>${escHtml(nowSub)}</small>
+              </div>
+            </div>
+            ${renderPlaybackWrap(session, bot.key)}
+            <div class="chip-row">
+              <span>${bot.active_playing_count || 0} live</span>
+              <span>${bot.known_guild_count || 0} guilds</span>
+              <span data-queue-pressure>${bot.queue_depth || 0} queued</span>
+              <span data-queue-pressure>${bot.backup_queue_depth || 0} backup</span>
+              ${uptimeSpan}
+            </div>`;
+        }
+        function patchBotCards(data) {
+          for (const bot of (data && data.bots) || []) {
+            const card = document.querySelector(`[data-bot-key="${window.CSS && CSS.escape ? CSS.escape(bot.key) : bot.key}"]`);
+            if (!card) continue;
+            card.classList.toggle("bot-card-offline", botIsOffline(bot));
+            card.innerHTML = renderBotCardInner(bot);
+          }
+        }
+        function renderSessionRow(s) {
+          const duration = s.duration_seconds || 0;
+          const pct = duration > 0 ? Math.min(100, Math.floor((100 * (s.position_seconds || 0)) / duration)) : 0;
+          return `
+            <tr>
+              <td>${escHtml(s.bot_display || s.bot_name)}</td>
+              <td>${escHtml(s.title || "—")}</td>
+              <td>${escHtml(s.session_state_label || "")}</td>
+              <td style="max-width:160px">
+                <div class="bot-playback compact" data-playback-counter data-position="${escHtml(s.position_seconds || 0)}" data-observed-at="${escHtml(s.position_observed_at || 0)}" data-duration="${escHtml(s.duration_seconds || 0)}" data-playing="${s.is_playing === true}">
+                  <div class="bot-playback-bar" aria-hidden="true"><span data-playback-bar style="width:${pct}%"></span></div>
+                  <span data-playback-label></span>
+                </div>
+              </td>
+              <td>${s.queue_count || 0} queued</td>
+            </tr>`;
+        }
+        function patchSessionsTable(data) {
+          const tbody = document.querySelector("#sessions-table tbody");
+          if (!tbody) return;
+          const rows = ((data && data.sessions) || []).filter((s) => s.is_playing || s.is_paused || (s.title && s.title !== ""));
+          tbody.innerHTML = rows.length
+            ? rows.map(renderSessionRow).join("")
+            : `<tr><td colspan="5">${escHtml("Nothing playing right now.")}</td></tr>`;
+        }
+        window.swarmLive.watch("dashboard", (msg) => {
+          if (msg.type === "snapshot") {
+            patchDashboardMetrics(msg.data);
+            patchBotCards(msg.data);
+            patchSessionsTable(msg.data);
+          }
+        });
+      </script>
+    ]]
+
+    local prefs = a and accounts.get_panel_preferences(a.username, a.guild_id) or nil
+    return 200, html.layout({ title = "Dashboard", path = path, session = session_view(a), token = req.cookies and req.cookies.swarm_session, body = body, preferences = prefs }),
+      { ["Content-Type"] = "text/html; charset=utf-8" }
   end
 
-  local function page_shell(req, a, path, title, body_html, extra_script)
-    local script = ([[<script>%s</script>]]):format(extra_script or "")
-    local prefs = a and accounts.get_panel_preferences(a.username, a.guild_id) or nil
-    return 200, html.layout({
-      title = title, path = path, session = session_view(a),
-      token = req.cookies and req.cookies.swarm_session, preferences = prefs,
-      body = body_html .. script,
-    }), { ["Content-Type"] = "text/html; charset=utf-8" }
-  end
+  httpd.route("GET", "/", function(req) return render_dashboard(req, "/") end)
+  httpd.route("GET", "/dashboard", function(req) return render_dashboard(req, "/dashboard") end)
 
   -- -----------------------------------------------------------------
   -- Controls
@@ -81,7 +654,7 @@ function M.register(cfg)
       or ('<label class="field field-inline">Guild<select name="guild_id" id="control-guild-id" required><option value="%s">%s</option></select><button type="button" class="field-inline-action" data-copy-target="#control-guild-id">Copy ID</button></label>'):format(html.esc(default_guild_id or ""), default_guild_id and ("Guild " .. html.esc(default_guild_id)) or "Choose a guild")
 
     local body = html.page({
-      title = "Controls", eyebrow = "Direct Control", lede = "Send a direct order to any bot in any guild.",
+      title = "Controls", eyebrow = "Fleet", lede = "Send a direct order to any bot in any guild.",
       body = ([[
         <div class="control-layout">
         <form id="control-form" class="panel form-panel">
@@ -676,331 +1249,6 @@ function M.register(cfg)
       });
     ]]
     return page_shell(req, a, "/invites", "Invites", body, script)
-  end)
-
-  -- -----------------------------------------------------------------
-  -- Leaderboard
-  -- -----------------------------------------------------------------
-  httpd.route("GET", "/leaderboard", function(req)
-    local a, status, headers = cfg.require_auth_page(req)
-    if not a then return status, "", headers end
-    local data = dashboard.get_dashboard_data(music_bots)
-    local bot_options = {}
-    for _, bot in ipairs(data.bots) do
-      bot_options[#bot_options + 1] = ("<option value=\"%s\">%s</option>"):format(html.esc(bot.key), html.esc(bot.display_name))
-    end
-
-    -- Same default as Controls: a guild-scoped account's own registered
-    -- guild, read-only; admins get the first live session's guild as a
-    -- convenience default but can still edit it.
-    local own_guild_id = (not a.admin_mode) and a.guild_id or nil
-    local default_guild_id = own_guild_id
-    if not default_guild_id then
-      for _, bot in ipairs(data.bots) do
-        local first = bot.sessions and bot.sessions[1]
-        if first and first.guild_id then default_guild_id = first.guild_id; break end
-      end
-    end
-    local guild_field = own_guild_id
-      and ('<label class="field">Guild ID<input type="text" name="guild_id" value="%s" readonly></label>'):format(html.esc(own_guild_id))
-      or ('<label class="field">Guild ID<input type="text" name="guild_id" required value="%s"></label>'):format(html.esc(default_guild_id or ""))
-
-    local body = html.page({
-      title = "Leaderboard", eyebrow = "Music Intelligence", lede = "Top tracks and listeners.",
-      body = ([[
-        <form id="lb-form" class="panel form-panel">
-          <label class="field">Bot<select name="bot_key">%s</select></label>
-          %s
-          <button type="submit" class="button-link primary">Load</button>
-        </form>
-        %s
-        <div id="lb-results">%s</div>
-        %s
-        <div id="lb-swarm">%s</div>
-      ]]):format(html.join(bot_options), guild_field, html.section_head("Guild Leaderboard"),
-        html.section_loading("Loading leaderboard", "Fetching top tracks and listeners for this guild.", 3),
-        a.admin_mode and html.section_head("Swarm-wide (admin)") or "",
-        a.admin_mode and html.section_loading("Loading swarm-wide leaderboard", "Aggregating top tracks across every bot's database.", 3) or ""),
-    })
-    local script = ([[
-      const lbForm = document.getElementById("lb-form");
-      lbForm.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const fd = new FormData(lbForm);
-        try {
-          const res = await swarmFetch(`/api/guilds/${fd.get("guild_id")}/leaderboard?bot_key=${fd.get("bot_key")}`);
-          const rows = (res.top_tracks || res.tracks || []).map((t, i) =>
-            `<tr><td>${i + 1}</td><td>${(t.title || "Unknown").replace(/</g, "&lt;")}</td><td>${t.plays || 0}</td></tr>`).join("");
-          document.getElementById("lb-results").innerHTML =
-            '<table class="data-table"><thead><tr><th>#</th><th>Track</th><th>Plays</th></tr></thead><tbody>' + (rows || "<tr><td colspan=3>No data.</td></tr>") + "</tbody></table>";
-        } catch (err) { swarmToast(err.message, "error"); }
-      });
-      %s
-    ]]):format(a.admin_mode and [[
-      (async () => {
-        try {
-          const res = await swarmFetch("/api/swarm-leaderboard?days=7&limit=20");
-          const rows = (res.top_tracks || res.tracks || []).map((t, i) =>
-            `<tr><td>${i + 1}</td><td>${(t.title || "Unknown").replace(/</g, "&lt;")}</td><td>${t.plays || 0}</td></tr>`).join("");
-          document.getElementById("lb-swarm").innerHTML =
-            '<table class="data-table"><thead><tr><th>#</th><th>Track</th><th>Plays</th></tr></thead><tbody>' + (rows || "<tr><td colspan=3>No data.</td></tr>") + "</tbody></table>";
-        } catch { /* admin-only, ignore if it fails */ }
-      })();
-    ]] or "")
-    return page_shell(req, a, "/leaderboard", "Leaderboard", body, script)
-  end)
-
-  -- -----------------------------------------------------------------
-  -- Learning (GET /api/music-intelligence) -- a fully-built backend
-  -- (dashboard.get_music_intelligence_summary: learned-track counts,
-  -- plays/finishes/skips/likes/dislikes totals, smart-recommendation
-  -- counts, and per-bot top-tracks-by-smart-score) with no page anywhere
-  -- that ever called it.
-  -- -----------------------------------------------------------------
-  httpd.route("GET", "/learning", function(req)
-    local a, status, headers = cfg.require_auth_page(req)
-    if not a then return status, "", headers end
-    local data = dashboard.get_dashboard_data(music_bots)
-    local bot_options = { '<option value="">All bots</option>' }
-    for _, bot in ipairs(data.bots) do
-      if bot.kind == "music" then
-        bot_options[#bot_options + 1] = ("<option value=\"%s\">%s</option>"):format(html.esc(bot.key), html.esc(bot.display_name))
-      end
-    end
-    local own_guild_id = (not a.admin_mode) and a.guild_id or nil
-    local guild_field = own_guild_id
-      and ('<label class="field">Guild ID<input type="text" name="guild_id" value="%s" readonly></label>'):format(html.esc(own_guild_id))
-      or '<label class="field">Guild ID (optional -- fleet-wide if blank)<input type="text" name="guild_id"></label>'
-
-    local body = html.page({
-      title = "Learning", eyebrow = "Music Intelligence", lede = "What the swarm's smart-recommendation engine has learned.",
-      body = ([[
-        <form id="learn-form" class="panel form-panel">
-          <label class="field">Bot<select name="bot_key">%s</select></label>
-          %s
-          <button type="submit" class="button-link primary">Load</button>
-        </form>
-        <div class="metric-grid" id="learn-totals"></div>
-        %s
-        <div id="learn-bots">%s</div>
-      ]]):format(html.join(bot_options), guild_field, html.section_head("By Bot"),
-        html.section_loading("Loading music intelligence", "Aggregating learned-track stats across the fleet.", 3)),
-    })
-    local script = [[
-      const learnForm = document.getElementById("learn-form");
-      async function loadIntelligence() {
-        const fd = new FormData(learnForm);
-        const params = new URLSearchParams();
-        if (fd.get("bot_key")) params.set("bot_key", fd.get("bot_key"));
-        if (fd.get("guild_id")) params.set("guild_id", fd.get("guild_id"));
-        try {
-          const res = await swarmFetch(`/api/music-intelligence?${params.toString()}`);
-          const t = (res.data && res.data.totals) || {};
-          document.getElementById("learn-totals").innerHTML = [
-            ["Learned Tracks", t.learned_tracks], ["Plays", t.plays], ["Finishes", t.finishes],
-            ["Skips", t.skips], ["Likes", t.likes], ["Dislikes", t.dislikes], ["Smart Recs", t.recommendations],
-          ].map(([label, value]) => `<div class="metric"><span class="metric-value">${value || 0}</span><span class="metric-label">${label}</span></div>`).join("");
-          const bots = (res.data && res.data.bots) || [];
-          document.getElementById("learn-bots").innerHTML = bots.length ? bots.map((bot) => `
-            <div class="panel wide">
-              <div class="section-head"><h2>${(bot.bot_display || bot.bot_key).replace(/</g, "&lt;")}</h2><p>${bot.learned_tracks || 0} learned tracks, ${bot.recommendations || 0} smart recommendations</p></div>
-              <div class="table-wrap">
-                <table class="data-table">
-                  <thead><tr><th>Track</th><th>Plays</th><th>Finishes</th><th>Skips</th><th>Likes</th><th>Smart Score</th></tr></thead>
-                  <tbody>${(bot.top_tracks || []).map((tr) => `
-                    <tr><td>${(tr.title || "Unknown").replace(/</g, "&lt;")}</td><td>${tr.play_count || 0}</td><td>${tr.finish_count || 0}</td><td>${tr.skip_count || 0}</td><td>${tr.like_count || 0}</td><td>${tr.smart_score || 0}</td></tr>
-                  `).join("") || '<tr><td colspan="6">No learned tracks yet.</td></tr>'}</tbody>
-                </table>
-              </div>
-            </div>
-          `).join("") : '<div class="empty-state">No music intelligence data yet.</div>';
-        } catch (err) { swarmToast(err.message, "error"); }
-      }
-      learnForm.addEventListener("submit", (e) => { e.preventDefault(); loadIntelligence(); });
-      loadIntelligence();
-    ]]
-    return page_shell(req, a, "/learning", "Learning", body, script)
-  end)
-
-  -- -----------------------------------------------------------------
-  -- Users
-  -- -----------------------------------------------------------------
-  httpd.route("GET", "/users", function(req)
-    local a, status, headers = cfg.require_auth_page(req)
-    if not a then return status, "", headers end
-    local body = html.page({
-      title = "Users", eyebrow = "Directory", lede = "Find other operators in the swarm.",
-      body = [[
-        <div class="directory-toolbar">
-          <div class="search-box search-box-wide">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.6"/><path d="M11 11L14.5 14.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-            <input type="search" placeholder="Search users..." data-debounced-search id="user-search">
-          </div>
-          <div class="directory-summary" id="user-summary"></div>
-        </div>
-        <div id="user-results" class="user-grid">]] .. html.skeleton_grid(6) .. [[</div>
-      ]],
-    })
-    local script = [[
-      function escUser(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
-      function userInitials(label) {
-        const parts = String(label || "").trim().split(/\s+/).filter(Boolean);
-        if (!parts.length) return "SP";
-        return (parts[0][0] + (parts[1] ? parts[1][0] : "")).toUpperCase();
-      }
-      function titleCaseUser(s) { return String(s || "").replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()); }
-      // Full port of UserCard from components/swarm.jsx -- the first pass
-      // only rendered the display name and three bare buttons, so avatars,
-      // handles, guild/favorite-bot chips, and follower/friend counts (all
-      // already returned by /api/users/directory) never showed up anywhere
-      // in the directory.
-      async function renderUsers(q) {
-        try {
-          const res = await swarmFetch("/api/users/directory?q=" + encodeURIComponent(q || ""));
-          const cards = (res.users || []).map((u) => {
-            const imageUrl = u.avatar_url || u.server_icon_url || "";
-            const displayName = u.display_name || u.username || "Unknown operator";
-            const guildLabel = u.server_name || u.profile_headline || (u.guild_id ? `Guild ${u.guild_id}` : "Swarm directory");
-            const favoriteBot = u.favorite_bot ? titleCaseUser(u.favorite_bot) : "No favorite";
-            const avatarImg = imageUrl ? `<img class="avatar-image" src="${escUser(imageUrl)}" alt="">` : `<span class="avatar-fallback">${escUser(userInitials(displayName))}</span>`;
-            const friendLocked = ["friends", "pending_out", "self"].includes(u.friend_status);
-            const friendLabel = u.friend_status === "friends" ? "Friends" : u.friend_status === "pending_out" ? "Pending" : "Friend";
-            return `
-            <article class="user-card">
-              <div class="user-card-main">
-                <a class="avatar-link" href="/users/${u.id}">
-                  <div class="avatar avatar-lg avatar-presence">${avatarImg}<span class="presence-dot avatar-dot ${u.is_online ? "online" : "inactive"}" aria-hidden="true"></span></div>
-                </a>
-                <div class="user-card-copy">
-                  <div class="user-card-head">
-                    <a href="/users/${u.id}"><h3>${escUser(displayName)}</h3></a>
-                    <span class="presence-pill compact ${u.is_online ? "online" : "inactive"}"><span class="presence-dot" aria-hidden="true"></span>${u.is_online ? "Online" : "Inactive"}</span>
-                  </div>
-                  <p class="user-card-handle">@${escUser(u.username || "operator")}</p>
-                  <p class="user-card-guild">${escUser(guildLabel)}</p>
-                  <div class="chip-row user-card-tags">
-                    <span>${escUser(favoriteBot)}</span>
-                    ${u.server_name ? `<span>${escUser(u.server_name)}</span>` : ""}
-                  </div>
-                </div>
-              </div>
-              <div class="user-card-stats">
-                <article><strong>${u.follower_count || 0}</strong><span>Followers</span></article>
-                <article><strong>${u.friend_count || 0}</strong><span>Friends</span></article>
-                <article><strong>${escUser(favoriteBot)}</strong><span>Favorite Bot</span></article>
-              </div>
-              <div class="inline-controls user-card-actions">
-                <a class="button-link" href="/users/${u.id}">Open</a>
-                <button type="button" data-follow="${u.id}" data-following="${u.followed_by_me ? "1" : ""}">${u.followed_by_me ? "Unfollow" : "Follow"}</button>
-                <button type="button" data-friend="${u.id}" ${friendLocked ? "disabled" : ""}>${escUser(friendLabel)}</button>
-                <a class="button-link" href="/messages">Message</a>
-              </div>
-            </article>`;
-          }).join("");
-          document.getElementById("user-results").innerHTML = cards || "<p>No users found.</p>";
-          const users = res.users || [];
-          const onlineCount = users.filter((u) => u.is_online).length;
-          document.getElementById("user-summary").innerHTML = users.length
-            ? `<span>${users.length} shown</span><span>${onlineCount} online</span>`
-            : "";
-        } catch (err) { swarmToast("Search failed.", "error"); }
-      }
-      document.getElementById("user-search").addEventListener("swarm:search", (e) => renderUsers(e.detail.query));
-      renderUsers("");
-      document.getElementById("user-results").addEventListener("click", async (e) => {
-        const followId = e.target.getAttribute("data-follow");
-        const friendId = e.target.getAttribute("data-friend");
-        try {
-          if (followId) {
-            const wasFollowing = e.target.getAttribute("data-following") === "1";
-            await swarmFetch(`/api/users/${followId}/follow`, { method: "POST", body: JSON.stringify({ following: !wasFollowing }) });
-            renderUsers(document.getElementById("user-search").value);
-          }
-          if (friendId) await swarmFetch(`/api/users/${friendId}/friend-request`, { method: "POST" });
-          if (followId || friendId) swarmToast("Done.", "success");
-        } catch (err) { swarmToast(err.message, "error"); }
-      });
-    ]]
-    return page_shell(req, a, "/users", "Users", body, script)
-  end)
-
-  -- -----------------------------------------------------------------
-  -- Friends
-  -- -----------------------------------------------------------------
-  httpd.route("GET", "/friends", function(req)
-    local a, status, headers = cfg.require_auth_page(req)
-    if not a then return status, "", headers end
-    -- BUGFIX: the bare env-configured admin login (settings.admin_username/
-    -- admin_password -- see /api/login's `auth_result = { ... guild_id =
-    -- nil, site_owner = true, admin_mode = true ... }`) has no `users` table
-    -- row at all, so account_id_for_auth() in routes.lua can NEVER resolve
-    -- an account_id for it -- every /api/friends/* and /api/me/friends call
-    -- 403s with "Guild account access required", every single time,
-    -- forever, for this account type. The page used to render the full
-    -- interactive friends UI regardless and let the client-side fetch fail,
-    -- surfacing as a generic "Failed to load friends." toast -- repeating
-    -- every 5s via swarmLiveRefresh, since nothing ever stopped retrying.
-    -- Friends/social features are inherently per-guild-account (see
-    -- social.lua/accounts.lua's users-table-keyed model); the site-admin
-    -- login genuinely has no social identity to attach them to. Detect that
-    -- up front and show a clear explanation instead of a page that's
-    -- guaranteed to error forever.
-    if not a.guild_id then
-      local body = html.page({
-        title = "Friends", eyebrow = "Social", lede = "Requests and confirmed friends.",
-        body = [[
-          <div class="empty-state">
-            <p>Friends and social features are tied to a guild account, not the site admin login.</p>
-            <p>Log in with a guild account (one registered to a specific bot/guild) to use Friends.</p>
-          </div>
-        ]],
-      })
-      return page_shell(req, a, "/friends", "Friends", body, "")
-    end
-    local body = html.page({
-      title = "Friends", eyebrow = "Social", lede = "Requests and confirmed friends.",
-      body = [[
-        <div class="friends-columns">
-          <div><h3>Incoming</h3><div id="friends-incoming"></div></div>
-          <div><h3>Outgoing</h3><div id="friends-outgoing"></div></div>
-          <div><h3>Friends</h3><div id="friends-list"></div></div>
-        </div>
-      ]],
-    })
-    local script = [[
-      // BUGFIX (live-push migration): was swarmFetch (2 calls) on a 5s
-      // swarmLiveRefresh poll. applyFriends() renders from the "friends"
-      // live-push (routes.lua's SNAPSHOT_BUILDERS.friends bundles
-      // friends+incoming+outgoing in one push, matching what this page
-      // always fetched together anyway) -- accepting/declining/canceling a
-      // request still does a direct fetch first for instant feedback on the
-      // user's OWN action, same pattern as Controls' queues.
-      function applyFriends(data) {
-        const incoming = ((data && data.incoming) || []).map((r) =>
-          `<div class="friend-row">${(r.username||"").replace(/</g,"&lt;")} <button data-accept="${r.id}">Accept</button> <button data-decline="${r.id}">Decline</button></div>`).join("");
-        const outgoing = ((data && data.outgoing) || []).map((r) =>
-          `<div class="friend-row">${(r.username||"").replace(/</g,"&lt;")} <button data-cancel="${r.id}">Cancel</button></div>`).join("");
-        document.getElementById("friends-incoming").innerHTML = incoming || "<p>None.</p>";
-        document.getElementById("friends-outgoing").innerHTML = outgoing || "<p>None.</p>";
-        document.getElementById("friends-list").innerHTML =
-          ((data && data.friends) || []).map((f) => `<div class="friend-row">${(f.username||"").replace(/</g,"&lt;")}</div>`).join("") || "<p>No friends yet.</p>";
-      }
-      window.swarmLive.watch("friends", (msg) => {
-        if (msg.type === "snapshot") applyFriends(msg.data);
-        else swarmToast("Failed to load friends.", "error");
-      });
-      document.body.addEventListener("click", async (e) => {
-        const id = e.target.getAttribute("data-accept") || e.target.getAttribute("data-decline") || e.target.getAttribute("data-cancel");
-        if (!id) return;
-        const action = e.target.hasAttribute("data-accept") ? "accept" : e.target.hasAttribute("data-decline") ? "decline" : "cancel";
-        try {
-          await swarmFetch(`/api/friends/requests/${id}`, { method: "POST", body: JSON.stringify({ action }) });
-          const [reqs, friends] = await Promise.all([swarmFetch("/api/friends/requests"), swarmFetch("/api/me/friends")]);
-          applyFriends({ incoming: reqs.incoming, outgoing: reqs.outgoing, friends: friends.friends });
-        } catch (err) { swarmToast(err.message, "error"); }
-      });
-    ]]
-    return page_shell(req, a, "/friends", "Friends", body, script)
   end)
 end
 

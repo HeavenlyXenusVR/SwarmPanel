@@ -45,10 +45,9 @@ struct ProfileView: View {
                 }
                 .listRowBackground(SwarmTheme.panel)
 
-                // Moved up from below Discover — for an admin/moderator, this
-                // is the reason they're in this app; burying it at the
-                // bottom of a long Form scroll under Account/Appearance/
-                // Discover made it easy to miss it was even there.
+                // Kept at the top — for an admin/moderator, this is the
+                // reason they're in this app; burying it at the bottom of a
+                // long Form scroll made it easy to miss it was even there.
                 if appState.isOwner {
                     Section {
                         Toggle(isOn: Binding(
@@ -63,22 +62,13 @@ struct ProfileView: View {
                     .listRowBackground(SwarmTheme.panel)
                 }
 
+                // Admin tools live on their own hub screen (AdminHubView),
+                // mirroring the web panel's Admin section — one entry here
+                // instead of a nine-row list in the middle of the form.
                 if appState.isAdmin || appState.isModerator || appState.canGallery {
                     Section {
-                        if appState.isAdmin || appState.isModerator {
-                            NavigationLink { AuditLogView() } label: { IconRow(icon: "list.bullet.clipboard", tint: .indigo, title: "Audit Log") }
-                            NavigationLink { AlertRulesView() } label: { IconRow(icon: "bell.badge", tint: .red, title: "Alert Rules") }
-                            NavigationLink { LumisoundAdminView() } label: { IconRow(icon: "waveform", tint: .pink, title: "Lumisound Moderation") }
-                        }
-                        if appState.canGallery {
-                            NavigationLink { GalleryModerationView() } label: { IconRow(icon: "photo.on.rectangle", tint: .teal, title: "Gallery Moderation") }
-                        }
-                        if appState.isAdmin {
-                            NavigationLink { AccountsAdminView() } label: { IconRow(icon: "person.2.badge.gearshape", tint: .blue, title: "Accounts") }
-                            NavigationLink { DiagnosticsView() } label: { IconRow(icon: "heart.text.square", tint: .green, title: "Fleet Health") }
-                            NavigationLink { FleetTopologyView() } label: { IconRow(icon: "point.3.filled.connected.trianglepath.dotted", tint: .cyan, title: "Fleet Topology") }
-                            NavigationLink { ExportsView() } label: { IconRow(icon: "square.and.arrow.down", tint: .orange, title: "Scheduled Exports") }
-                            NavigationLink { DatabasesView() } label: { IconRow(icon: "cylinder.split.1x2", tint: .brown, title: "Database Viewer") }
+                        NavigationLink { AdminHubView() } label: {
+                            IconRow(icon: "wrench.and.screwdriver", tint: SwarmTheme.accent, title: "Admin Tools", subtitle: "Monitoring, moderation, and data")
                         }
                     } header: {
                         HStack(spacing: 6) {
@@ -186,15 +176,6 @@ struct ProfileView: View {
                 .listRowBackground(SwarmTheme.panel)
 
                 Section {
-                    NavigationLink { InvitesView() } label: { IconRow(icon: "envelope.badge.person.crop", tint: .blue, title: "Invite Bots") }
-                    NavigationLink { UsersDirectoryView() } label: { IconRow(icon: "person.3", tint: .purple, title: "Swarm Directory") }
-                    NavigationLink { OtherProjectsView() } label: { IconRow(icon: "square.grid.2x2", tint: .pink, title: "My Other Projects") }
-                } header: {
-                    SectionLabel(title: "Discover")
-                }
-                .listRowBackground(SwarmTheme.panel)
-
-                Section {
                     HStack {
                         IconChip(systemName: "faceid", tint: .green)
                         Toggle("Require \(biometricLock.biometryLabel)", isOn: $biometricLock.isEnabled)
@@ -216,6 +197,7 @@ struct ProfileView: View {
 
                 Section {
                     NavigationLink { WhatsNewView() } label: { IconRow(icon: "sparkles", tint: .yellow, title: "What's New") }
+                    NavigationLink { OtherProjectsView() } label: { IconRow(icon: "square.grid.2x2", tint: .pink, title: "Other Projects") }
                     LabeledContent("Version", value: appVersionString)
                 } header: {
                     SectionLabel(title: "About")
@@ -229,7 +211,7 @@ struct ProfileView: View {
             }
             .scrollContentBackground(.hidden)
             .background(SwarmTheme.background)
-            .navigationTitle("Profile")
+            .navigationTitle("Account")
             .task { await viewModel.load() }
             .refreshable {
                 Haptics.light()
@@ -257,22 +239,6 @@ private struct ChecklistRow: View {
             Image(systemName: done ? "checkmark.circle.fill" : "circle")
                 .foregroundStyle(done ? SwarmTheme.ok : SwarmTheme.textMuted)
             Text(label).foregroundStyle(SwarmTheme.textPrimary)
-        }
-    }
-}
-
-/// Icon-chip + title row, matching iOS Settings' colored-icon navigation
-/// rows — used for every NavigationLink destination on this screen so the
-/// list reads as a scannable menu instead of a plain text list.
-private struct IconRow: View {
-    let icon: String
-    let tint: Color
-    let title: String
-
-    var body: some View {
-        HStack(spacing: 12) {
-            IconChip(systemName: icon, tint: tint)
-            Text(title).foregroundStyle(SwarmTheme.textPrimary)
         }
     }
 }

@@ -58,72 +58,87 @@ function M.cls(parts)
 end
 
 -- ---------------------------------------------------------------------------
--- Nav model (mirrors frontend/src/components/Shell.jsx's navItems list)
+-- Navigation rendering. The section/page model itself lives in nav.lua;
+-- everything here only turns it into markup for the four places it shows
+-- up: the desktop sidebar, the mobile bottom bar, the mobile/collapsed
+-- drawer, and the per-section tab strip above each screen.
 -- ---------------------------------------------------------------------------
 
-local NAV_ITEMS = {
-  { to = "/", label = "Dashboard", glyph = "◧" },
-  { to = "/controls", label = "Controls", glyph = "▶" },
-  { to = "/leaderboard", label = "Leaderboard", glyph = "🏆" },
-  { to = "/learning", label = "Learning", glyph = "🧠" },
-  { to = "/invites", label = "Invites", glyph = "🔗" },
-  { to = "/users", label = "Users", glyph = "👥" },
-  { to = "/friends", label = "Friends", glyph = "🙂" },
-  { to = "/messages", label = "Messages", glyph = "✉" },
-  { to = "/profile", label = "Profile", glyph = "◑" },
-  { to = "/appearance", label = "Look", glyph = "◈" },
-  { to = "/other-projects", label = "My Other Projects", glyph = "🚀" },
-}
-local NAV_ADMIN_ITEMS = {
-  { to = "/diagnostics", label = "Diagnostics", glyph = "♥", when = "admin" },
-  { to = "/accounts", label = "Accounts", glyph = "☺", when = "admin" },
-  { to = "/databases", label = "Data", glyph = "▤", when = "admin" },
-  { to = "/gallery-admin", label = "Gallery", glyph = "▦", when = "gallery" },
-  { to = "/lumisound-admin", label = "Lumisound", glyph = "♪", when = "mod" },
-  { to = "/intel", label = "Intel", glyph = "⚠", when = "admin" },
-  { to = "/audit-log", label = "Audit Log", glyph = "☰", when = "mod" },
-}
+local nav = require("nav")
 
-local function nav_items_for(session)
-  local items = {}
-  for _, item in ipairs(NAV_ITEMS) do items[#items + 1] = item end
-  for _, item in ipairs(NAV_ADMIN_ITEMS) do
-    local show = (item.when == "admin" and session.admin_mode)
-      or (item.when == "gallery" and session.image_gallery_owner)
-      or (item.when == "mod" and (session.admin_mode or session.moderator))
-    if show then items[#items + 1] = item end
-  end
-  return items
+-- The mobile bottom bar only has room for ~5 icons + a "More" launcher --
+-- rendering every screen there breaks the CSS's fixed 6-column layout into
+-- a multi-row block that eats half the viewport.
+local MOBILE_PRIMARY = { "/", "/controls", "/users", "/messages", "/profile" }
+
+local function nav_link(item, pathname, class_name)
+  -- title= gives the icon-only rail (compact sidebar / tablet widths) a
+  -- hover label.
+  return ('<a class="%s" href="%s" title="%s"%s><span class="nav-glyph">%s</span><span class="nav-label">%s</span></a>'):format(
+    M.cls({ class_name, nav.is_active(pathname, item.to) and "active" or "" }),
+    M.esc(item.to), M.esc(item.label),
+    nav.is_active(pathname, item.to) and ' aria-current="page"' or "",
+    item.glyph, M.esc(item.label))
 end
 
-local function is_active(pathname, to)
-  if to == "/" then return pathname == "/" end
-  return pathname == to or pathname:sub(1, #to + 1) == to .. "/"
-end
-
--- Mirrors Shell.jsx's mobilePrimaryItems/mobileSecondaryItems split: the
--- mobile bottom bar only has room for ~5 icons + a "More" launcher, not
--- all 9-16 nav items -- rendering the full list there (as this used to)
--- breaks the CSS's fixed 6-column bottom-bar layout into a multi-row block
--- that eats half the viewport.
-local MOBILE_PRIMARY_PATHS = { ["/"] = true, ["/controls"] = true, ["/users"] = true, ["/messages"] = true, ["/profile"] = true }
-
--- filter: nil = all items (desktop nav), "primary" = the 5 mobile-primary
--- items, "secondary" = everything else (the mobile "More" sheet).
-local function render_nav(session, pathname, variant, filter)
+-- Grouped section list, shared by the desktop sidebar and the drawer.
+local function render_sections(session, pathname, link_class)
   local out = {}
-  for _, item in ipairs(nav_items_for(session)) do
-    local include = true
-    if filter == "primary" then include = MOBILE_PRIMARY_PATHS[item.to] == true
-    elseif filter == "secondary" then include = MOBILE_PRIMARY_PATHS[item.to] ~= true end
-    if include then
-      out[#out + 1] = ('<a class="%s" href="%s"><span class="nav-glyph">%s</span><span>%s</span></a>'):format(
-        M.cls({ "nav-item", variant, is_active(pathname, item.to) and "active" or nil }),
-        M.esc(item.to), item.glyph, M.esc(item.label))
-    end
+  for _, section in ipairs(nav.visible_sections(session)) do
+    local links = {}
+    for _, item in ipairs(section.items) do links[#links + 1] = nav_link(item, pathname, link_class) end
+    local current = nav.locate(pathname)
+    out[#out + 1] = ([[<div class="%s"><p class="nav-group-label"><span class="nav-glyph">%s</span><span class="nav-label">%s</span></p>%s</div>]]):format(
+      M.cls({ "nav-group", (current and current.key == section.key) and "current" or "" }),
+      section.glyph, M.esc(section.label), table.concat(links, ""))
   end
   return table.concat(out, "")
 end
+
+local function render_mobile_primary(session, pathname)
+  local out = {}
+  for _, to in ipairs(MOBILE_PRIMARY) do
+    local _, item = nav.locate(to)
+    if item and nav.can_see(session, item) then out[#out + 1] = nav_link(item, pathname, "nav-item mobile-primary") end
+  end
+  return table.concat(out, "")
+end
+
+-- "Fleet > Controls" -- the section links to its first visible screen. A
+-- path deeper than the matched screen (/users/42) gets the page title as a
+-- third crumb.
+local function render_breadcrumb(session, pathname, title)
+  local section, item = nav.locate(pathname)
+  if not section or not item or not session.authenticated then return '<div class="crumbs"></div>' end
+  local visible = nav.visible_section(session, section.key)
+  local section_href = (visible and visible.items[1].to) or item.to
+  local crumbs = {
+    ('<a href="%s">%s</a>'):format(M.esc(section_href), M.esc(section.label)),
+  }
+  local canonical = pathname == item.to or (item.to == "/" and pathname == "/dashboard")
+  if canonical then
+    crumbs[#crumbs + 1] = ('<strong aria-current="page">%s</strong>'):format(M.esc(item.label))
+  else
+    crumbs[#crumbs + 1] = ('<a href="%s">%s</a>'):format(M.esc(item.to), M.esc(item.label))
+    crumbs[#crumbs + 1] = ('<strong aria-current="page">%s</strong>'):format(M.esc(title or ""))
+  end
+  return '<nav class="crumbs" aria-label="Breadcrumb">' .. table.concat(crumbs, '<span class="crumb-sep" aria-hidden="true">/</span>') .. "</nav>"
+end
+
+-- Sibling screens of the current section, shown above the page so related
+-- screens (Directory / Friends / Messages) read as one area of the panel.
+-- Skipped for single-screen sections.
+local function render_section_tabs(session, pathname)
+  local section = nav.locate(pathname)
+  if not section or not session.authenticated then return "" end
+  local visible = nav.visible_section(session, section.key)
+  if not visible or #visible.items < 2 then return "" end
+  local links = {}
+  for _, item in ipairs(visible.items) do links[#links + 1] = nav_link(item, pathname, "nav-item section-tab") end
+  return ('<nav class="section-tabs" aria-label="%s screens">%s</nav>'):format(M.esc(visible.label), table.concat(links, ""))
+end
+
+M.render_section_tabs = render_section_tabs
 
 -- ---------------------------------------------------------------------------
 -- Appearance / theming (mirrors frontend/src/config.js DEFAULT_PREFERENCES
@@ -331,25 +346,37 @@ function M.layout(opts)
     session_bar = ""
   end
 
-  local nav_desktop = authed and ('<nav class="nav nav-desktop" aria-label="Main">' .. render_nav(session, opts.path, "") .. "</nav>") or "<div></div>"
+  -- Shell structure:
+  --   topbar   brand | breadcrumb | session controls
+  --   body     sidebar (grouped by section) | stage (section tabs + page)
+  --   mobile   bottom bar (5 primary screens + More) and a drawer holding
+  --            the full grouped menu -- the same drawer doubles as the
+  --            desktop menu when sidebar_style is "hidden".
+  local sidebar = ""
+  local drawer_button = ""
   local mobile_nav = ""
+  local section_tabs = ""
   if authed then
+    sidebar = ('<aside class="sidebar" aria-label="Main"><nav class="sidebar-nav">%s</nav></aside>'):format(
+      render_sections(session, opts.path, "sidebar-link"))
+    drawer_button = '<button class="icon-button nav-drawer-button" type="button" title="Menu" aria-label="Open menu" data-mobile-nav-toggle>&#9776;</button>'
+    section_tabs = render_section_tabs(session, opts.path)
     mobile_nav = ([[
       <nav class="nav nav-mobile" aria-label="Mobile Main">%s
-        <a class="nav-item mobile-nav-launcher" href="#" data-mobile-nav-toggle><span class="nav-glyph">&#9776;</span><span>More</span></a>
+        <a class="nav-item mobile-nav-launcher" href="#" data-mobile-nav-toggle><span class="nav-glyph">&#9776;</span><span class="nav-label">More</span></a>
       </nav>
       <div class="mobile-nav-backdrop" data-mobile-nav-backdrop></div>
-      <aside class="mobile-nav-sheet" data-mobile-nav-sheet>
+      <aside class="mobile-nav-sheet" data-mobile-nav-sheet aria-label="Menu">
         <div class="mobile-nav-sheet-head">
-          <div><strong>Command Access</strong><p>Jump to the rest of the panel.</p></div>
+          <div><strong>SwarmPanel</strong><p>Every screen, by section.</p></div>
           <button type="button" data-mobile-nav-close>Close</button>
         </div>
         <div class="mobile-session-chip"><span class="mode-pill%s">%s</span><span>%s</span></div>
-        <nav class="mobile-nav-list" aria-label="More Navigation">%s</nav>
+        <nav class="mobile-nav-list" aria-label="All screens">%s</nav>
       </aside>
-    ]]):format(render_nav(session, opts.path, "mobile-primary", "primary"),
+    ]]):format(render_mobile_primary(session, opts.path),
       session.admin_mode and " admin" or "", session.admin_mode and "Admin" or "User", M.esc(username),
-      render_nav(session, opts.path, "", "secondary"))
+      render_sections(session, opts.path, "nav-item"))
   end
 
   local prefs = opts.preferences or M.DEFAULT_PREFERENCES
@@ -379,13 +406,17 @@ function M.layout(opts)
   </filter>
 </svg>
 <div class="%s" style="%s">
+<a class="skip-link" href="#main">Skip to content</a>
 <header class="topbar liquid-glass">
-  <a class="brand" href="/"><span class="brand-mark">&#10022;</span><span class="brand-copy"><strong>SwarmPanel</strong><small>Fleet Command</small></span></a>
+  <div class="topbar-lead">%s<a class="brand" href="/"><span class="brand-mark">&#10022;</span><span class="brand-copy"><strong>SwarmPanel</strong><small>Fleet Command</small></span></a></div>
   %s
   <div class="session-bar">%s</div>
 </header>
+<div class="%s">
 %s
-<main class="stage">%s</main>
+<main class="stage" id="main">%s%s</main>
+</div>
+%s
 <footer class="site-footer">
   <span>SwarmPanel // HeavenlyXenusVR</span>
   <a href="https://discord.com/users/1304564041863266347" target="_blank" rel="noreferrer">Discord</a>
@@ -399,7 +430,11 @@ function M.layout(opts)
     (authed and "true" or "false"),
     opts.head_extra or "",
     M.esc(M.panel_class(prefs)), M.esc(M.panel_style(prefs)),
-    nav_desktop, session_bar, mobile_nav, opts.body or "")
+    drawer_button,
+    render_breadcrumb(session, opts.path or "", opts.title),
+    session_bar,
+    authed and "shell-body" or "shell-body shell-body-public",
+    sidebar, section_tabs, opts.body or "", mobile_nav)
 end
 
 -- ---------------------------------------------------------------------------

@@ -1,129 +1,15 @@
--- Server-rendered pages: Messages, Profile, Appearance, Diagnostics.
--- Same pattern as pages_ops.lua: shell server-side, data via swarmFetch
--- against the existing JSON API.
+-- Account section: Profile (plus the public /users/:id view of it),
+-- Appearance, Other Projects.
 local httpd = require("httpd")
 local html = require("html")
 local accounts = require("accounts")
+local kit = require("page_kit")
+local config = require("config")
 
 local M = {}
 
 function M.register(cfg)
-  local function session_view(a)
-    if not a then return { authenticated = false } end
-    return {
-      authenticated = true, username = a.username, site_owner = a.site_owner == true,
-      admin_mode = a.admin_mode == true, moderator = a.moderator == true,
-      image_gallery_owner = (a.admin_mode == true) and (a.site_owner == true),
-      guild_id = a.guild_id,
-    }
-  end
-
-  local function page_shell(req, a, path, title, body_html, extra_script, prefs)
-    local script = ([[<script>%s</script>]]):format(extra_script or "")
-    prefs = prefs or (a and accounts.get_panel_preferences(a.username, a.guild_id)) or nil
-    return 200, html.layout({
-      title = title, path = path, session = session_view(a),
-      token = req.cookies and req.cookies.swarm_session, preferences = prefs,
-      body = body_html .. script,
-    }), { ["Content-Type"] = "text/html; charset=utf-8" }
-  end
-
-  -- -----------------------------------------------------------------
-  -- Messages
-  -- -----------------------------------------------------------------
-  httpd.route("GET", "/messages", function(req)
-    local a, status, headers = cfg.require_auth_page(req)
-    if not a then return status, "", headers end
-    -- BUGFIX: same class of bug as /friends (see that route's comment) --
-    -- messages are guild-account-scoped (account_id_for_auth in routes.lua
-    -- requires a.guild_id), so the bare env-configured admin login can
-    -- never load a thread list/search here either. Same fix: a clear
-    -- explanation instead of a page that's guaranteed to error forever.
-    if not a.guild_id then
-      local body = html.page({
-        title = "Messages", eyebrow = "Inbox", lede = "Direct messages with other operators.",
-        body = [[
-          <div class="empty-state">
-            <p>Messages are tied to a guild account, not the site admin login.</p>
-            <p>Log in with a guild account (one registered to a specific bot/guild) to use Messages.</p>
-          </div>
-        ]],
-      })
-      return page_shell(req, a, "/messages", "Messages", body, "")
-    end
-    local body = html.page({
-      title = "Messages", eyebrow = "Inbox", lede = "Direct messages with other operators.",
-      body = [[
-        <div class="messages-layout">
-          <div class="messages-threads">
-            <input type="search" placeholder="Find someone..." data-debounced-search id="msg-search">
-            <div id="msg-search-results"></div>
-            <div id="msg-threads"></div>
-          </div>
-          <div class="messages-conversation" id="msg-conversation">
-            <p class="empty-state">Select a conversation.</p>
-          </div>
-        </div>
-      ]],
-    })
-    local script = [[
-      // BUGFIX (live-push migration): was swarmFetch on 5s/4s
-      // swarmLiveRefresh polls. Threads list watches "threads" (fixed, no
-      // params, matches Social's Messages tab). The active conversation is
-      // per-CONNECTION state (routes.lua's "thread_messages" builder takes
-      // account_id as a watch param) -- resubscribed every time a different
-      // thread is opened, same pattern as Controls' bot_key/guild_id.
-      let activeThread = null;
-      function applyThreads(data) {
-        document.getElementById("msg-threads").innerHTML = ((data && data.threads) || []).map((t) =>
-          `<button type="button" class="thread-item" data-thread="${t.account_id}">${(t.username||"Unknown").replace(/</g,"&lt;")}</button>`
-        ).join("") || "<p>No conversations yet.</p>";
-      }
-      window.swarmLive.watch("threads", (msg) => { if (msg.type === "snapshot") applyThreads(msg.data); });
-
-      function applyMessages(data) {
-        document.getElementById("msg-list").innerHTML = ((data && data.messages) || []).map((m) =>
-          `<div class="msg-bubble ${m.mine ? "mine" : ""}">${(m.body||"").replace(/</g,"&lt;")}</div>`).join("");
-      }
-      window.swarmLive.watch("thread_messages", (msg) => { if (msg.type === "snapshot") applyMessages(msg.data); });
-
-      async function openThread(id) {
-        activeThread = id;
-        const box = document.getElementById("msg-conversation");
-        box.innerHTML = '<div id="msg-list"></div><form id="msg-form"><input name="body" placeholder="Message..." required><button type="submit">Send</button></form>';
-        window.swarmLive.resubscribe("thread_messages", { account_id: id });
-        try { applyMessages(await swarmFetch(`/api/messages/${id}`)); } catch { /* ignore -- the live watch will catch up */ }
-        document.getElementById("msg-form").addEventListener("submit", async (e) => {
-          e.preventDefault();
-          const input = e.target.body;
-          if (!input.value.trim()) return;
-          try {
-            await swarmFetch(`/api/messages/${activeThread}`, { method: "POST", body: JSON.stringify({ body: input.value }) });
-            input.value = "";
-            applyMessages(await swarmFetch(`/api/messages/${activeThread}`));
-          } catch (err) { swarmToast(err.message, "error"); }
-        });
-      }
-      document.getElementById("msg-threads").addEventListener("click", (e) => {
-        const id = e.target.getAttribute("data-thread");
-        if (id) openThread(id);
-      });
-      document.getElementById("msg-search").addEventListener("swarm:search", async (e) => {
-        const q = e.detail.query;
-        if (!q) { document.getElementById("msg-search-results").innerHTML = ""; return; }
-        try {
-          const res = await swarmFetch("/api/users/directory?q=" + encodeURIComponent(q));
-          document.getElementById("msg-search-results").innerHTML = (res.users || []).map((u) =>
-            `<button type="button" class="thread-item" data-thread="${u.id}">${(u.display_name||u.username).replace(/</g,"&lt;")}</button>`).join("");
-        } catch { /* ignore */ }
-      });
-      document.getElementById("msg-search-results").addEventListener("click", (e) => {
-        const id = e.target.getAttribute("data-thread");
-        if (id) openThread(id);
-      });
-    ]]
-    return page_shell(req, a, "/messages", "Messages", body, script)
-  end)
+  local session_view, page_shell, denied = kit.session_view, kit.page_shell, kit.denied
 
   -- -----------------------------------------------------------------
   -- Profile (own /profile, public /users/:id)
@@ -142,7 +28,7 @@ function M.register(cfg)
       -- escaping, not HTML escaping, and getting that wrong is a real JS-
       -- injection hole (a crafted /users/<id> URL could break out of the
       -- quoted string literal).
-      body = html.page({ title = "Profile", body = ('<div id="profile-view" data-profile-id="%s">%s</div>'):format(
+      body = html.page({ title = "Profile", eyebrow = "Community", body = ('<div id="profile-view" data-profile-id="%s">%s</div>'):format(
         html.esc(target_id), html.empty_state("Loading...")) })
       -- Full public-card port of ProfilePage.jsx's publicMode branch -- the
       -- first pass only rendered display_name/bio and Follow/Friend/Message
@@ -672,7 +558,7 @@ function M.register(cfg)
     ]]):format(a.admin_mode and "checked" or "") or ""
 
     local body = html.page({
-      title = "Appearance", eyebrow = "Look", lede = "Customize theme, layout, and motion.",
+      title = "Appearance", eyebrow = "Account", lede = "Customize theme, layout, and motion.",
       body = ([[
         <div class="appearance-header-row">
           <div class="appearance-status-row">
@@ -1091,7 +977,7 @@ function M.register(cfg)
     if not a then return status, "", headers end
 
     local body = html.page({
-      eyebrow = "Elsewhere", title = "My Other Projects", lede = "A couple of other things I've built.",
+      eyebrow = "Account", title = "Other Projects", lede = "A couple of other things I've built.",
       body = [[
         <div class="project-card-grid">
           <a class="project-card liquid-glass" href="https://gallery.xenusanimations.studio" target="_blank" rel="noopener noreferrer">
@@ -1146,110 +1032,7 @@ function M.register(cfg)
         });
       }
     ]]
-    return page_shell(req, a, "/other-projects", "My Other Projects", body, script)
-  end)
-
-  -- -----------------------------------------------------------------
-  -- Diagnostics (admin)
-  -- -----------------------------------------------------------------
-  httpd.route("GET", "/diagnostics", function(req)
-    local a, status, headers = cfg.require_auth_page(req)
-    if not a then return status, "", headers end
-    if not a.admin_mode then
-      return 200, html.layout({ title = "Diagnostics", path = "/diagnostics", session = session_view(a),
-        body = html.page({ title = "Diagnostics", body = html.notice("error", "Admin access required.") }) }),
-        { ["Content-Type"] = "text/html; charset=utf-8" }
-    end
-    local body = html.page({
-      title = "Diagnostics", eyebrow = "System", lede = "Stability, metrics, alert rules, and exports.",
-      actions = '<button type="button" id="diag-refresh" class="button-link">Refresh Now</button>',
-      body = [[
-        <div id="diag-stability"></div>
-        <div id="diag-metrics"></div>
-        <h3>Alert Rules</h3>
-        <form id="alert-rule-form" class="panel form-panel">
-          <label class="field">Rule type<select name="rule_type" required>
-            <option value="bot_offline">Bot offline</option>
-            <option value="queue_stuck">Queue stuck</option>
-            <option value="stale_metrics">Stale metrics</option>
-            <option value="recovery_pending">Recovery pending</option>
-          </select></label>
-          <label class="field">Threshold (minutes)<input type="number" name="threshold_minutes" min="1" max="1440" value="5" required></label>
-          <label class="field">Escalation (minutes, optional)<input type="number" name="escalation_minutes" min="1" max="10080"></label>
-          <label class="switch"><input type="checkbox" name="enabled" checked> Enabled</label>
-          <label class="switch"><input type="checkbox" name="escalate_email"> Escalate via email</label>
-          <button type="submit" class="button-link primary">Add Rule</button>
-        </form>
-        <div id="diag-alerts"></div>
-        <h3>Exports</h3>
-        <div id="diag-exports"></div>
-      ]],
-    })
-    local script = [[
-      function applyStability(stability) {
-        document.getElementById("diag-stability").innerHTML = '<pre class="json-panel">' + JSON.stringify(stability, null, 2).replace(/</g, "&lt;") + "</pre>";
-      }
-      function applyDiagMetrics(metrics) {
-        document.getElementById("diag-metrics").innerHTML = '<pre class="json-panel">' + JSON.stringify(metrics, null, 2).replace(/</g, "&lt;") + "</pre>";
-      }
-      function applyAlerts(res) {
-        document.getElementById("diag-alerts").innerHTML = (res.rules || []).map((r) => `
-          <div class="alert-rule">
-            <span><strong>${r.rule_type}</strong> — ${r.threshold_minutes}m${r.escalation_minutes ? `, escalate after ${r.escalation_minutes}m` : ""}${r.escalate_email ? " (email)" : ""}</span>
-            <label class="switch"><input type="checkbox" data-toggle-rule="${r.id}" ${r.enabled ? "checked" : ""}> Enabled</label>
-            <button type="button" data-delete-rule="${r.id}">Delete</button>
-          </div>`).join("") || "<p>No alert rules.</p>";
-      }
-      function applyExports(res) {
-        const rows = (res.snapshots || []).flatMap((snap) => (snap.files || []).map((f) =>
-          `<div><a href="/api/exports/${snap.date}/${f.name}">${snap.date}/${f.name}</a> (${f.size_bytes}b)</div>`));
-        document.getElementById("diag-exports").innerHTML = rows.join("") || "<p>No exports.</p>";
-      }
-      window.swarmLive.watch("stability", (msg) => { if (msg.type === "snapshot") applyStability(msg.data); });
-      window.swarmLive.watch("metrics_snapshot", (msg) => { if (msg.type === "snapshot") applyDiagMetrics(msg.data); });
-      window.swarmLive.watch("alert_rules", (msg) => { if (msg.type === "snapshot") applyAlerts(msg.data); });
-      window.swarmLive.watch("exports", (msg) => { if (msg.type === "snapshot") applyExports(msg.data); });
-      function refreshAlerts() { swarmFetch("/api/alert-rules").then(applyAlerts).catch(() => {}); }
-      const alertForm = document.getElementById("alert-rule-form");
-      alertForm.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const fd = new FormData(alertForm);
-        try {
-          await swarmFetch("/api/alert-rules", {
-            method: "POST",
-            body: JSON.stringify({
-              rule_type: fd.get("rule_type"),
-              threshold_minutes: Number(fd.get("threshold_minutes")),
-              enabled: fd.get("enabled") === "on",
-              escalation_minutes: fd.get("escalation_minutes") ? Number(fd.get("escalation_minutes")) : null,
-              escalate_email: fd.get("escalate_email") === "on",
-            }),
-          });
-          swarmToast("Alert rule created.", "success");
-          alertForm.reset();
-          refreshAlerts();
-        } catch (err) { swarmToast(err.message, "error"); }
-      });
-      document.getElementById("diag-alerts").addEventListener("click", async (e) => {
-        const id = e.target.getAttribute("data-delete-rule");
-        if (id) { await swarmFetch(`/api/alert-rules/${id}/delete`, { method: "POST" }).catch(() => {}); refreshAlerts(); }
-      });
-      document.getElementById("diag-alerts").addEventListener("change", async (e) => {
-        const id = e.target.getAttribute("data-toggle-rule");
-        if (!id) return;
-        try {
-          await swarmFetch(`/api/alert-rules/${id}/update`, { method: "POST", body: JSON.stringify({ enabled: e.target.checked }) });
-        } catch (err) { swarmToast(err.message, "error"); e.target.checked = !e.target.checked; }
-      });
-      document.getElementById("diag-refresh").addEventListener("click", () => {
-        swarmFetch("/api/stability").then(applyStability).catch(() => {});
-        swarmFetch("/api/metrics").then(applyDiagMetrics).catch(() => {});
-        refreshAlerts();
-        swarmFetch("/api/exports").then(applyExports).catch(() => {});
-        swarmToast("Refreshed.", "success");
-      });
-    ]]
-    return page_shell(req, a, "/diagnostics", "Diagnostics", body, script)
+    return page_shell(req, a, "/other-projects", "Other Projects", body, script)
   end)
 end
 

@@ -196,7 +196,18 @@ struct SocialView: View {
             }
             .scrollContentBackground(.hidden)
             .background(SwarmTheme.background)
-            .navigationTitle("Social")
+            .navigationTitle("Community")
+            .toolbar {
+                // Full directory browse (web: /users) — moved here from the
+                // Account tab's old "Discover" list so every Community
+                // screen is reachable from the Community tab.
+                ToolbarItem(placement: .navigationBarLeading) {
+                    NavigationLink { UsersDirectoryView() } label: {
+                        Image(systemName: "person.3")
+                    }
+                    .accessibilityLabel("Directory")
+                }
+            }
             .task { await viewModel.loadAll() }
             .refreshable {
                 Haptics.light()

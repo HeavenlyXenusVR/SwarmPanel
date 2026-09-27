@@ -18,12 +18,15 @@ SwarmPanel is the React and FastAPI command center for Aria and the 12-node musi
 
 ## Main Surfaces
 
-- **Dashboard:** fleet status, health summaries, queue state, heartbeat checks, and active warnings.
-- **Bots:** per-node command controls, current playback, guild/channel inventory, and Lavalink-backed playback state.
-- **Medic:** Aria-reported drift, stale nodes, recovery candidates, and voice connection trouble.
-- **Database:** schema browser, guarded table reads, guarded truncation, and owner-only destructive controls.
-- **Users:** profile directory, social actions, presence, messaging, follows, and friend request flows.
-- **Appearance:** theme customization, density choices, accent controls, light and dark modes, and live panel previews.
+The panel is grouped into five sections. The sidebar, mobile menu, breadcrumbs, and the tabs above each screen all come from one definition in `lua/src/nav.lua`. The iOS app uses the same sections as its tabs.
+
+- **Fleet:** Dashboard (live fleet status, health summaries, sessions), Controls (per-bot playback and queue orders, channel conversion), Invites.
+- **Insights:** Leaderboard (top tracks and listeners) and Learning (what the recommendation engine has learned).
+- **Community:** Directory, Friends, and Messages, plus public profile pages.
+- **Account:** Profile, Appearance (theme, layout, sidebar style, live previews), Other Projects.
+- **Admin** (owner/moderator only): an Overview hub, Diagnostics, Intel, Audit Log, Accounts, Databases, Gallery, and Lumisound.
+
+Server-rendered screens live in one Lua module per section: `pages_fleet.lua`, `pages_insights.lua`, `pages_community.lua`, `pages_account.lua`, and `pages_admin.lua`, with sign-in in `pages_auth.lua`. Shared page plumbing lives in `page_kit.lua`.
 
 ## Servers And Data
 

@@ -99,8 +99,9 @@
     <key>LSRequiresIPhoneOS</key>
     <true/>
 
-    <!-- swarmpanel://dashboard | controls | leaderboard | social | profile
-         deep links, handled by DeepLinkRouter via .onOpenURL. -->
+    <!-- swarmpanel://fleet | controls | insights | community | account
+         deep links (legacy dashboard | leaderboard | social | profile still
+         resolve), handled by DeepLinkRouter via .onOpenURL. -->
     <key>CFBundleURLTypes</key>
     <array>
         <dict>

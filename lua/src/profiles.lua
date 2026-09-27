@@ -54,7 +54,7 @@ local PANEL_TAB_STYLE_MODES = { rail = true, underline = true, minimal = true }
 local PANEL_STREAM_CARD_MODES = { telemetry = true, compact = true, cinematic = true }
 local PANEL_DASHBOARD_DENSITY_MODES = { command = true, dense = true }
 -- BUGFIX: these three enums never matched what /appearance's <select>
--- actually offers (pages_identity.lua) or what app.css actually implements
+-- actually offers (pages_account.lua) or what app.css actually implements
 -- (.panel-nav-compact/-hidden, .panel-radius-sharp/-soft,
 -- .panel-fontfamily-serif) -- they were left at an older/aspirational set
 -- of values. normalize_choice() hard-errors (400) on anything not in the
