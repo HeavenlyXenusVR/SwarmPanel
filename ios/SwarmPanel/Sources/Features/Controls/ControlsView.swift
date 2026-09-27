@@ -9,6 +9,8 @@ struct ControlsView: View {
     @State private var deleteQueueTarget: SavedQueue?
     @State private var renameQueueTarget: SavedQueue?
     @State private var renameText = ""
+    /// nil = no confirmation showing; true/false = converting to stage/voice.
+    @State private var convertToStage: Bool?
 
     var body: some View {
         NavigationStack {
@@ -232,6 +234,58 @@ struct ControlsView: View {
                     SectionLabel(title: "Saved Queues", count: viewModel.savedQueues.count)
                 }
                 .listRowBackground(SwarmTheme.panel)
+
+                // Every bot in the selected guild at once -- mirrors the web
+                // Controls page's Guild Overview.
+                Section {
+                    Button {
+                        Task { await viewModel.loadGuildOverview() }
+                    } label: {
+                        HStack {
+                            Label(viewModel.guildOverview.isEmpty ? "Load Guild Overview" : "Refresh Overview", systemImage: "square.grid.3x3")
+                            Spacer()
+                            if viewModel.isLoadingOverview { ProgressView() }
+                        }
+                    }
+                    .disabled(viewModel.isLoadingOverview || viewModel.guildId.isEmpty)
+                    .tint(SwarmTheme.accent)
+
+                    ForEach(viewModel.guildOverview) { bot in
+                        GuildOverviewRow(bot: bot) { action in
+                            Task { await viewModel.sendOverviewAction(action, to: bot) }
+                        }
+                    }
+                } header: {
+                    SectionLabel(title: "Guild Overview", count: viewModel.guildOverview.isEmpty ? nil : viewModel.guildOverview.filter(\.isActive).count)
+                } footer: {
+                    if !viewModel.guildOverview.isEmpty {
+                        Text("Active bots in guild \(viewModel.guildOverviewGuildId ?? "") are counted in the header.")
+                    }
+                }
+                .listRowBackground(SwarmTheme.panel)
+
+                Section {
+                    Button {
+                        convertToStage = true
+                    } label: {
+                        Label("Convert to Stage Channels", systemImage: "person.wave.2")
+                    }
+                    Button {
+                        convertToStage = false
+                    } label: {
+                        Label("Convert to Voice Channels", systemImage: "speaker.wave.2")
+                    }
+                    if viewModel.isConverting {
+                        HStack { ProgressView(); Text("Converting…").foregroundStyle(SwarmTheme.textMuted) }
+                    }
+                } header: {
+                    SectionLabel(title: "Stage / Voice Channels")
+                } footer: {
+                    Text("Converts every bot's home channel in the selected guild. Names, category, position and permissions are kept.")
+                }
+                .disabled(viewModel.isConverting || viewModel.guildId.isEmpty)
+                .tint(SwarmTheme.accent)
+                .listRowBackground(SwarmTheme.panel)
             }
             .scrollContentBackground(.hidden)
             .background(SwarmTheme.background)
@@ -269,6 +323,21 @@ struct ControlsView: View {
                 }
                 Button("Cancel", role: .cancel) { deleteQueueTarget = nil }
             }
+            // Same warning as the web panel: Discord can't convert a channel
+            // in place, so this deletes and recreates each one.
+            .confirmationDialog(
+                convertToStage == true ? "Convert to stage channels?" : "Convert to voice channels?",
+                isPresented: Binding(get: { convertToStage != nil }, set: { if !$0 { convertToStage = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("Convert", role: .destructive) {
+                    if let toStage = convertToStage { Task { await viewModel.convertChannels(toStage: toStage) } }
+                    convertToStage = nil
+                }
+                Button("Cancel", role: .cancel) { convertToStage = nil }
+            } message: {
+                Text("Discord can't convert a channel in place, so each bot's home channel is deleted and recreated with the same name, category, position and permissions. Anyone connected is briefly disconnected and the channel's chat history is lost.")
+            }
             .alert(
                 "Rename Queue",
                 isPresented: Binding(get: { renameQueueTarget != nil }, set: { if !$0 { renameQueueTarget = nil } })
@@ -288,6 +357,64 @@ struct ControlsView: View {
             "\(index + 1). \(item.title?.isEmpty == false ? item.title! : item.videoUrl)"
         }
         return "🎵 \(queue.name) (\(queue.itemCount) tracks)\n" + lines.joined(separator: "\n")
+    }
+}
+
+/// One bot's row in the Guild Overview section.
+private struct GuildOverviewRow: View {
+    let bot: ControlMatrixBot
+    let onAction: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(bot.label).font(.headline).foregroundStyle(SwarmTheme.textPrimary)
+                Spacer()
+                Text(stateLabel)
+                    .font(.caption.bold())
+                    .foregroundStyle(stateColor)
+            }
+            if let error = bot.error {
+                Text(error).font(.caption).foregroundStyle(SwarmTheme.danger)
+            } else {
+                Text(channelLabel).font(.caption).foregroundStyle(SwarmTheme.textMuted)
+                if let title = bot.session?.title, !title.isEmpty {
+                    Text(title).font(.subheadline).lineLimit(1).foregroundStyle(SwarmTheme.textPrimary)
+                }
+                HStack {
+                    Text("\(bot.session?.queueCount ?? 0) queued").font(.caption).foregroundStyle(SwarmTheme.textMuted)
+                    Spacer()
+                    if bot.isActive {
+                        Button(bot.session?.isPaused == true ? "Resume" : "Pause") {
+                            onAction(bot.session?.isPaused == true ? "RESUME" : "PAUSE")
+                        }
+                        .buttonStyle(.bordered)
+                        Button("Skip") { onAction("SKIP") }
+                            .buttonStyle(.bordered)
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var stateLabel: String {
+        if bot.error != nil { return "Unavailable" }
+        if let label = bot.session?.sessionStateLabel, !label.isEmpty { return label }
+        return bot.session?.isPlaying == true ? "Playing" : "Idle"
+    }
+
+    private var stateColor: Color {
+        if bot.error != nil { return SwarmTheme.danger }
+        if bot.session?.isPlaying == true { return SwarmTheme.ok }
+        if bot.session?.isPaused == true { return SwarmTheme.warn }
+        return SwarmTheme.textMuted
+    }
+
+    private var channelLabel: String {
+        if let name = bot.session?.channelName, !name.isEmpty { return "#\(name)" }
+        if let id = bot.session?.channelId, !id.isEmpty { return "Channel \(id)" }
+        return "Not connected"
     }
 }
 

@@ -268,3 +268,16 @@ struct FeedEvent: Decodable, Identifiable {
 
     var id: String { "\(timestamp ?? "")-\(source ?? "")-\(title ?? "")" }
 }
+
+// MARK: - Admin overview stats (GET /api/admin/overview)
+
+/// Each stat is optional: the backend leaves out any it couldn't compute or
+/// that the caller's tier can't see (open reports are admin-only).
+struct AdminOverviewStats: Decodable {
+    let botsOnline: Int?
+    let botsTotal: Int?
+    let alertRulesEnabled: Int?
+    /// Audit log entries in the last 24 hours.
+    let auditEntriesRecent: Int?
+    let openReports: Int?
+}

@@ -15,6 +15,11 @@ final class ControlsViewModel: ObservableObject {
     @Published var loopMode: String = "queue"
     @Published var filterMode: String = "none"
 
+    @Published var guildOverview: [ControlMatrixBot] = []
+    @Published var guildOverviewGuildId: String?
+    @Published var isLoadingOverview = false
+    @Published var isConverting = false
+
     @Published var isLoadingBots = true
     @Published var isSending = false
     @Published var errorMessage: String?
@@ -297,6 +302,91 @@ final class ControlsViewModel: ObservableObject {
         } catch {
             guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to rename queue."
+        }
+    }
+    // MARK: - Guild overview
+
+    /// Every music bot's state in the selected guild, on demand -- mirrors
+    /// the web Controls page's Guild Overview. Not live-pushed: each load
+    /// resolves channel names through Discord for every bot.
+    func loadGuildOverview() async {
+        guard !guildId.isEmpty else {
+            errorMessage = "Choose a guild before loading the overview."
+            return
+        }
+        let target = guildId
+        isLoadingOverview = true
+        defer { isLoadingOverview = false }
+        do {
+            let response: ControlMatrixResponse = try await api.get("/api/guilds/\(target)/control-matrix")
+            guildOverview = response.bots ?? []
+            guildOverviewGuildId = target
+        } catch {
+            guard !error.isCancellation else { return }
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Failed to load the guild overview."
+        }
+    }
+
+    /// Quick transport action (PAUSE / RESUME / SKIP) on one overview row,
+    /// against the guild the overview was loaded for.
+    func sendOverviewAction(_ action: String, to bot: ControlMatrixBot) async {
+        guard let target = guildOverviewGuildId, !bot.resolvedKey.isEmpty else { return }
+        do {
+            let _: OKResponse = try await api.post(
+                "/api/bots/control",
+                body: BotControlRequest(botKey: bot.resolvedKey, guildId: target, action: action, payload: [:])
+            )
+            statusMessage = "\(action.capitalized) sent to \(bot.label)."
+            Haptics.success()
+            await loadGuildOverview()
+        } catch {
+            guard !error.isCancellation else { return }
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Control action failed."
+            Haptics.error()
+        }
+    }
+
+    // MARK: - Voice <-> stage conversion
+
+    /// Converts every bot's home channel in the selected guild to a stage
+    /// channel (toStage) or back to a voice channel -- same endpoint and
+    /// result reporting as the web Controls page.
+    func convertChannels(toStage: Bool) async {
+        guard !guildId.isEmpty else {
+            errorMessage = "Choose a guild before converting channels."
+            return
+        }
+        let label = toStage ? "stage" : "voice"
+        isConverting = true
+        statusMessage = nil
+        errorMessage = nil
+        defer { isConverting = false }
+        do {
+            let result: ChannelConvertResponse = try await api.post(
+                "/api/guilds/\(guildId)/convert-channels",
+                body: ChannelConvertRequest(direction: label)
+            )
+            let converted = result.converted ?? []
+            let warnings = converted.compactMap(\.warning)
+            let failures = (result.failed ?? []).compactMap(\.error)
+            var message = "Converted \(converted.count) channel(s) to \(label)"
+            if let skipped = result.skippedNoHomeChannel, skipped > 0 {
+                message += " (\(skipped) bot(s) had no home channel set)"
+            }
+            if !warnings.isEmpty { message += " — warnings: " + warnings.joined(separator: "; ") }
+            if !failures.isEmpty { message += " — \(failures.count) failed: " + failures.joined(separator: "; ") }
+            if warnings.isEmpty && failures.isEmpty {
+                statusMessage = message + "."
+                Haptics.success()
+            } else {
+                errorMessage = message + "."
+                Haptics.error()
+            }
+            await loadControlStateAndQueues()
+        } catch {
+            guard !error.isCancellation else { return }
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? "Channel conversion failed."
+            Haptics.error()
         }
     }
 }

@@ -46,6 +46,31 @@ async function swarmFetch(path, opts) {
 window.swarmFetch = swarmFetch;
 
 // ---------------------------------------------------------------------------
+// HTML escaping for page scripts that build markup from API data. Escapes
+// all five HTML-significant characters, so it is safe in text AND quoted
+// attribute contexts (unlike the `.replace(/</g, "&lt;")` pattern some older
+// inline scripts use, which only covers text).
+// ---------------------------------------------------------------------------
+const SWARM_ESC_MAP = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+function swarmEsc(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (c) => SWARM_ESC_MAP[c]);
+}
+window.swarmEsc = swarmEsc;
+
+// One incident/event card (bot error or Aria Medic event from the "events"
+// live key / GET /api/events). Shared by Intel and the Dashboard feed.
+function swarmEventCard(e) {
+  const level = String(e.level || "info").toLowerCase();
+  const cls = level === "error" ? "event-error" : level === "warning" ? "event-warning" : "";
+  return `<div class="event ${cls}">
+    <div><strong>${swarmEsc(e.title || e.type || "Event")}</strong><span>${swarmEsc(e.timestamp || "")}</span></div>
+    <p>${swarmEsc(e.description || "")}</p>
+    <div><small>${swarmEsc(e.source || "")}</small><small>${swarmEsc(level)}</small></div>
+  </div>`;
+}
+window.swarmEventCard = swarmEventCard;
+
+// ---------------------------------------------------------------------------
 // Rich table cell formatting for the generic schema-table browsers
 // (Databases, Gallery Admin) -- table-number/table-mono/table-cell-* had CSS
 // (tabular-nums for numbers, monospace + wrap-anywhere for id/hash-looking
@@ -290,21 +315,45 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Mobile nav sheet (mirrors Shell.jsx's mobileNavOpen state)
   (function initMobileNav() {
-    const toggle = document.querySelector("[data-mobile-nav-toggle]");
+    // Two toggles open the same drawer: the mobile bottom bar's "More"
+    // and the topbar menu button shown when the sidebar is hidden.
+    const toggles = document.querySelectorAll("[data-mobile-nav-toggle]");
     const sheet = document.querySelector("[data-mobile-nav-sheet]");
     const backdrop = document.querySelector("[data-mobile-nav-backdrop]");
     const closeBtn = document.querySelector("[data-mobile-nav-close]");
-    if (!toggle || !sheet || !backdrop) return;
+    if (!toggles.length || !sheet || !backdrop) return;
     function setOpen(open) {
       sheet.classList.toggle("open", open);
       backdrop.classList.toggle("open", open);
-      toggle.classList.toggle("active", open);
+      toggles.forEach((t) => {
+        t.classList.toggle("active", open);
+        t.setAttribute("aria-expanded", open ? "true" : "false");
+      });
       document.body.style.overflow = open ? "hidden" : "";
     }
-    toggle.addEventListener("click", (e) => { e.preventDefault(); setOpen(!sheet.classList.contains("open")); });
+    toggles.forEach((t) => t.addEventListener("click", (e) => { e.preventDefault(); setOpen(!sheet.classList.contains("open")); }));
     backdrop.addEventListener("click", () => setOpen(false));
     if (closeBtn) closeBtn.addEventListener("click", () => setOpen(false));
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") setOpen(false); });
+  })();
+
+  // Community badges: every [data-badge] slot in the sidebar, section tabs
+  // and mobile nav, filled from the community_counts live key. The slots
+  // are only rendered for guild-bound accounts (html.lua's badge_slot).
+  (function initCommunityBadges() {
+    const slots = document.querySelectorAll("[data-badge]");
+    if (!slots.length || !window.swarmLive) return;
+    window.swarmLive.watch("community_counts", (msg) => {
+      if (msg.type !== "snapshot" || !msg.data) return;
+      const messages = Number(msg.data.unread_messages || 0);
+      const friends = Number(msg.data.pending_friend_requests || 0);
+      const values = { messages, friends, community: messages + friends };
+      slots.forEach((el) => {
+        const n = values[el.getAttribute("data-badge")] || 0;
+        el.textContent = n > 99 ? "99+" : String(n);
+        el.hidden = n === 0;
+      });
+    });
   })();
 
   // Admin-mode toggle (mirrors ctx.switchAdminMode)

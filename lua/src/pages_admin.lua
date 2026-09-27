@@ -1,37 +1,179 @@
--- Server-rendered pages: Accounts, Databases, Gallery Admin, Lumisound
--- Admin, Intel, Audit Log. Same pattern as pages_ops.lua/pages_identity.lua.
+-- Admin section: Overview hub, Diagnostics, Intel, Audit Log, Accounts,
+-- Databases, Gallery Admin, Lumisound Admin. Access rules per screen match
+-- nav.lua's `when` gates; a screen the session can't use renders the
+-- shared access-denied page inside the normal shell.
 local httpd = require("httpd")
 local html = require("html")
 local accounts = require("accounts")
+local kit = require("page_kit")
+local nav = require("nav")
 
 local M = {}
 
 function M.register(cfg)
-  local function session_view(a)
-    if not a then return { authenticated = false } end
-    return {
-      authenticated = true, username = a.username, site_owner = a.site_owner == true,
-      admin_mode = a.admin_mode == true, moderator = a.moderator == true,
-      image_gallery_owner = (a.admin_mode == true) and (a.site_owner == true),
-      guild_id = a.guild_id,
+  local session_view, page_shell, denied = kit.session_view, kit.page_shell, kit.denied
+
+  -- -----------------------------------------------------------------
+  -- Admin overview: one landing screen listing every admin tool this
+  -- session can use, generated from nav.lua so it can't drift from the
+  -- sidebar.
+  -- -----------------------------------------------------------------
+  httpd.route("GET", "/admin", function(req)
+    local a, status, headers = cfg.require_auth_page(req)
+    if not a then return status, "", headers end
+    if not kit.allowed(a, "/admin") then
+      local message = a.site_owner and "Turn Admin On in the top bar to open the admin tools."
+        or "You don't have access to the admin tools."
+      return denied(req, a, "/admin", "Admin", message)
+    end
+    local section = nav.visible_section(session_view(a), "admin")
+    local cards = {}
+    for _, item in ipairs(section and section.items or {}) do
+      if item.to ~= "/admin" then
+        cards[#cards + 1] = ([[<a class="hub-card" href="%s"><span class="hub-card-glyph" aria-hidden="true">%s</span><span class="hub-card-copy"><strong>%s</strong><small>%s</small></span></a>]]):format(
+          html.esc(item.to), item.glyph, html.esc(item.label), html.esc(item.blurb or ""))
+      end
+    end
+    -- Stat tiles are filled from GET /api/admin/overview; a tile whose
+    -- stat isn't returned (e.g. open reports for a moderator) is removed.
+    local tiles = {
+      { key = "bots", label = "Bots online" },
+      { key = "alert_rules_enabled", label = "Alert rules on" },
+      { key = "audit_entries_recent", label = "Audit entries (24h)" },
+      { key = "open_reports", label = "Open gallery reports" },
     }
-  end
+    local tile_html = {}
+    for _, t in ipairs(tiles) do
+      tile_html[#tile_html + 1] = ('<div class="metric" data-stat="%s"><span class="metric-value">&mdash;</span><span class="metric-label">%s</span></div>'):format(
+        html.esc(t.key), html.esc(t.label))
+    end
+    local body = html.page({
+      title = "Overview", eyebrow = "Admin", lede = "Every admin and moderation tool you can use, in one place.",
+      body = '<div class="metric-grid" id="admin-stats">' .. table.concat(tile_html, "") .. "</div>"
+        .. (#cards > 0 and ('<div class="hub-grid">' .. table.concat(cards, "") .. "</div>")
+        or html.empty_state("No admin tools are available to this account.")),
+    })
+    local script = [[
+      async function loadAdminStats() {
+        const res = await swarmFetch("/api/admin/overview");
+        const values = {
+          bots: res.bots_total != null ? `${res.bots_online} / ${res.bots_total}` : null,
+          alert_rules_enabled: res.alert_rules_enabled,
+          audit_entries_recent: res.audit_entries_recent,
+          open_reports: res.open_reports,
+        };
+        document.querySelectorAll("#admin-stats [data-stat]").forEach((tile) => {
+          const v = values[tile.getAttribute("data-stat")];
+          if (v == null) { tile.remove(); return; }
+          tile.querySelector(".metric-value").textContent = String(v);
+          const warn = tile.getAttribute("data-stat") === "open_reports" ? Number(v) > 0
+            : tile.getAttribute("data-stat") === "bots" ? res.bots_online < res.bots_total : false;
+          tile.classList.toggle("metric-warn", warn);
+        });
+      }
+      swarmLiveRefresh(loadAdminStats, 30000);
+    ]]
+    return page_shell(req, a, "/admin", "Admin", body, script)
+  end)
 
-  local function page_shell(req, a, path, title, body_html, extra_script)
-    local script = ([[<script>%s</script>]]):format(extra_script or "")
-    local prefs = a and accounts.get_panel_preferences(a.username, a.guild_id) or nil
-    return 200, html.layout({
-      title = title, path = path, session = session_view(a),
-      token = req.cookies and req.cookies.swarm_session, preferences = prefs,
-      body = body_html .. script,
-    }), { ["Content-Type"] = "text/html; charset=utf-8" }
-  end
-
-  local function denied(req, a, path, title)
-    return 200, html.layout({ title = title, path = path, session = session_view(a),
-      body = html.page({ title = title, body = html.notice("error", "You don't have access to this page.") }) }),
-      { ["Content-Type"] = "text/html; charset=utf-8" }
-  end
+  -- -----------------------------------------------------------------
+  -- Diagnostics (admin)
+  -- -----------------------------------------------------------------
+  httpd.route("GET", "/diagnostics", function(req)
+    local a, status, headers = cfg.require_auth_page(req)
+    if not a then return status, "", headers end
+    if not kit.allowed(a, "/diagnostics") then return denied(req, a, "/diagnostics", "Diagnostics", "Admin access required.") end
+    local body = html.page({
+      title = "Diagnostics", eyebrow = "Admin", lede = "Stability, metrics, alert rules, and exports.",
+      actions = '<button type="button" id="diag-refresh" class="button-link">Refresh Now</button>',
+      body = [[
+        <div id="diag-stability"></div>
+        <div id="diag-metrics"></div>
+        <h3>Alert Rules</h3>
+        <form id="alert-rule-form" class="panel form-panel">
+          <label class="field">Rule type<select name="rule_type" required>
+            <option value="bot_offline">Bot offline</option>
+            <option value="queue_stuck">Queue stuck</option>
+            <option value="stale_metrics">Stale metrics</option>
+            <option value="recovery_pending">Recovery pending</option>
+          </select></label>
+          <label class="field">Threshold (minutes)<input type="number" name="threshold_minutes" min="1" max="1440" value="5" required></label>
+          <label class="field">Escalation (minutes, optional)<input type="number" name="escalation_minutes" min="1" max="10080"></label>
+          <label class="switch"><input type="checkbox" name="enabled" checked> Enabled</label>
+          <label class="switch"><input type="checkbox" name="escalate_email"> Escalate via email</label>
+          <button type="submit" class="button-link primary">Add Rule</button>
+        </form>
+        <div id="diag-alerts"></div>
+        <h3>Exports</h3>
+        <div id="diag-exports"></div>
+      ]],
+    })
+    local script = [[
+      function applyStability(stability) {
+        document.getElementById("diag-stability").innerHTML = '<pre class="json-panel">' + JSON.stringify(stability, null, 2).replace(/</g, "&lt;") + "</pre>";
+      }
+      function applyDiagMetrics(metrics) {
+        document.getElementById("diag-metrics").innerHTML = '<pre class="json-panel">' + JSON.stringify(metrics, null, 2).replace(/</g, "&lt;") + "</pre>";
+      }
+      function applyAlerts(res) {
+        document.getElementById("diag-alerts").innerHTML = (res.rules || []).map((r) => `
+          <div class="alert-rule">
+            <span><strong>${r.rule_type}</strong> — ${r.threshold_minutes}m${r.escalation_minutes ? `, escalate after ${r.escalation_minutes}m` : ""}${r.escalate_email ? " (email)" : ""}</span>
+            <label class="switch"><input type="checkbox" data-toggle-rule="${r.id}" ${r.enabled ? "checked" : ""}> Enabled</label>
+            <button type="button" data-delete-rule="${r.id}">Delete</button>
+          </div>`).join("") || "<p>No alert rules.</p>";
+      }
+      function applyExports(res) {
+        const rows = (res.snapshots || []).flatMap((snap) => (snap.files || []).map((f) =>
+          `<div><a href="/api/exports/${snap.date}/${f.name}">${snap.date}/${f.name}</a> (${f.size_bytes}b)</div>`));
+        document.getElementById("diag-exports").innerHTML = rows.join("") || "<p>No exports.</p>";
+      }
+      window.swarmLive.watch("stability", (msg) => { if (msg.type === "snapshot") applyStability(msg.data); });
+      window.swarmLive.watch("metrics_snapshot", (msg) => { if (msg.type === "snapshot") applyDiagMetrics(msg.data); });
+      window.swarmLive.watch("alert_rules", (msg) => { if (msg.type === "snapshot") applyAlerts(msg.data); });
+      window.swarmLive.watch("exports", (msg) => { if (msg.type === "snapshot") applyExports(msg.data); });
+      function refreshAlerts() { swarmFetch("/api/alert-rules").then(applyAlerts).catch(() => {}); }
+      const alertForm = document.getElementById("alert-rule-form");
+      alertForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const fd = new FormData(alertForm);
+        try {
+          await swarmFetch("/api/alert-rules", {
+            method: "POST",
+            body: JSON.stringify({
+              rule_type: fd.get("rule_type"),
+              threshold_minutes: Number(fd.get("threshold_minutes")),
+              enabled: fd.get("enabled") === "on",
+              escalation_minutes: fd.get("escalation_minutes") ? Number(fd.get("escalation_minutes")) : null,
+              escalate_email: fd.get("escalate_email") === "on",
+            }),
+          });
+          swarmToast("Alert rule created.", "success");
+          alertForm.reset();
+          refreshAlerts();
+        } catch (err) { swarmToast(err.message, "error"); }
+      });
+      document.getElementById("diag-alerts").addEventListener("click", async (e) => {
+        const id = e.target.getAttribute("data-delete-rule");
+        if (id) { await swarmFetch(`/api/alert-rules/${id}/delete`, { method: "POST" }).catch(() => {}); refreshAlerts(); }
+      });
+      document.getElementById("diag-alerts").addEventListener("change", async (e) => {
+        const id = e.target.getAttribute("data-toggle-rule");
+        if (!id) return;
+        try {
+          await swarmFetch(`/api/alert-rules/${id}/update`, { method: "POST", body: JSON.stringify({ enabled: e.target.checked }) });
+        } catch (err) { swarmToast(err.message, "error"); e.target.checked = !e.target.checked; }
+      });
+      document.getElementById("diag-refresh").addEventListener("click", () => {
+        swarmFetch("/api/stability").then(applyStability).catch(() => {});
+        swarmFetch("/api/metrics").then(applyDiagMetrics).catch(() => {});
+        refreshAlerts();
+        swarmFetch("/api/exports").then(applyExports).catch(() => {});
+        swarmToast("Refreshed.", "success");
+      });
+    ]]
+    return page_shell(req, a, "/diagnostics", "Diagnostics", body, script)
+  end)
 
   -- -----------------------------------------------------------------
   -- Accounts (admin)
@@ -39,7 +181,7 @@ function M.register(cfg)
   httpd.route("GET", "/accounts", function(req)
     local a, status, headers = cfg.require_auth_page(req)
     if not a then return status, "", headers end
-    if not a.admin_mode then return denied(req, a, "/accounts", "Accounts") end
+    if not kit.allowed(a, "/accounts") then return denied(req, a, "/accounts", "Accounts") end
     local body = html.page({
       title = "Accounts", eyebrow = "Admin", lede = "Recover and manage swarm accounts.",
       body = [[
@@ -169,7 +311,7 @@ function M.register(cfg)
   httpd.route("GET", "/databases", function(req)
     local a, status, headers = cfg.require_auth_page(req)
     if not a then return status, "", headers end
-    if not a.admin_mode then return denied(req, a, "/databases", "Databases") end
+    if not kit.allowed(a, "/databases") then return denied(req, a, "/databases", "Databases") end
     local body = html.page({
       title = "Databases", eyebrow = "Admin", lede = "Browse raw schema tables.",
       body = [[
@@ -277,9 +419,9 @@ function M.register(cfg)
   httpd.route("GET", "/gallery-admin", function(req)
     local a, status, headers = cfg.require_auth_page(req)
     if not a then return status, "", headers end
-    if not ((a.admin_mode == true) and (a.site_owner == true)) then return denied(req, a, "/gallery-admin", "Gallery Admin") end
+    if not kit.allowed(a, "/gallery-admin") then return denied(req, a, "/gallery-admin", "Gallery") end
     local body = html.page({
-      title = "Gallery Admin", eyebrow = "Image Gallery", lede = "Users, media, comments, and reports.",
+      title = "Gallery", eyebrow = "Admin", lede = "Image Gallery users, media, comments, and reports.",
       body = [[
         <div class="loading-section is-loading" id="gallery-loading-section">
           <div class="loading-section-content">
@@ -296,6 +438,24 @@ function M.register(cfg)
             </div>
             <div id="gallery-data">]] .. html.skeleton_grid(4) .. [[</div>
           </div>
+          <dialog id="gallery-user-dialog" class="panel manage-dialog">
+            <form method="dialog" id="gallery-user-form">
+              <div class="section-head"><h2 id="gallery-user-title">Manage user</h2><button type="submit" value="cancel" class="icon-button" aria-label="Close">&times;</button></div>
+              <label class="field">Username<input name="username" autocomplete="off"></label>
+              <label class="field">Display name<input name="display_name" autocomplete="off"></label>
+              <label class="field">Email<input name="email" type="email" autocomplete="off"></label>
+              <label class="check-field"><input type="checkbox" name="public_profile"> Public profile</label>
+              <div class="actions-row"><button type="button" class="button-link primary" data-gu="save">Save details</button></div>
+              <div class="manage-dialog-status" id="gallery-user-status"></div>
+              <div class="actions-row">
+                <button type="button" data-gu="email-verified"></button>
+                <button type="button" data-gu="age-verified"></button>
+                <button type="button" data-gu="resend">Resend verification email</button>
+              </div>
+              <label class="field">New password<input name="new_password" type="password" autocomplete="new-password" minlength="8"></label>
+              <div class="actions-row"><button type="button" class="danger" data-gu="reset-password">Reset password</button></div>
+            </form>
+          </dialog>
           <div class="loading-section-overlay">
             <div class="loading-tip">Fetching Image Gallery admin data...</div>
           </div>
@@ -315,6 +475,77 @@ function M.register(cfg)
         media_comments: { idKey: "comment_id", single: "/api/image-gallery/comments/delete", bulk: "/api/image-gallery/admin/comments/bulk-delete" },
       };
       const GALLERY_STATUSES = ["open", "reviewed", "dismissed"];
+      let galleryRows = [];
+
+      // Per-user management (users table): edit details, flip email/age
+      // verification, resend the verification email, reset the password --
+      // the same /api/image-gallery/users/* endpoints the iOS app's
+      // Gallery moderation screen uses.
+      const userDialog = document.getElementById("gallery-user-dialog");
+      const userForm = document.getElementById("gallery-user-form");
+      let managedUser = null;
+      function renderManagedUser() {
+        const u = managedUser;
+        document.getElementById("gallery-user-title").textContent = `Manage ${u.username || "user " + u.id}`;
+        userForm.username.value = u.username || "";
+        userForm.display_name.value = u.display_name || "";
+        userForm.email.value = u.email || "";
+        userForm.public_profile.checked = u.public_profile === true || u.public_profile === 1 || u.public_profile === "t";
+        userForm.new_password.value = "";
+        const emailOk = !!u.email_verified_at, ageOk = !!u.age_verified_at;
+        document.getElementById("gallery-user-status").innerHTML =
+          `<span class="data-pill ${emailOk ? "data-pill-live" : "data-pill-off"}">Email ${emailOk ? "verified" : "unverified"}</span>
+           <span class="data-pill ${ageOk ? "data-pill-live" : "data-pill-off"}">Age ${ageOk ? "verified" : "unverified"}</span>`;
+        userForm.querySelector('[data-gu="email-verified"]').textContent = emailOk ? "Mark email unverified" : "Mark email verified";
+        userForm.querySelector('[data-gu="age-verified"]').textContent = ageOk ? "Mark age unverified" : "Mark age verified";
+        userForm.querySelector('[data-gu="resend"]').disabled = emailOk || !u.email;
+      }
+      function openManagedUser(id) {
+        managedUser = galleryRows.find((r) => String(r.id) === String(id));
+        if (!managedUser || !userDialog) return;
+        renderManagedUser();
+        userDialog.showModal();
+      }
+      if (userForm) {
+        userForm.addEventListener("click", async (e) => {
+          const btn = e.target.closest("[data-gu]");
+          if (!btn || !managedUser) return;
+          const op = btn.getAttribute("data-gu");
+          const id = managedUser.id;
+          btn.disabled = true;
+          try {
+            let res;
+            if (op === "save") {
+              res = await swarmFetch("/api/image-gallery/users/update", { method: "POST", body: JSON.stringify({
+                user_id: id, username: userForm.username.value.trim(), display_name: userForm.display_name.value.trim(),
+                email: userForm.email.value.trim(), public_profile: userForm.public_profile.checked,
+              }) });
+              swarmToast("User updated.", "success");
+            } else if (op === "email-verified" || op === "age-verified") {
+              const field = op === "email-verified" ? "email_verified_at" : "age_verified_at";
+              res = await swarmFetch(`/api/image-gallery/users/${op}`, { method: "POST", body: JSON.stringify({ user_id: id, verified: !managedUser[field] }) });
+              swarmToast("Verification updated.", "success");
+            } else if (op === "resend") {
+              res = await swarmFetch("/api/image-gallery/users/resend-verification", { method: "POST", body: JSON.stringify({ user_id: id }) });
+              swarmToast(res.already_verified ? "Already verified." : res.email_verification_sent ? "Verification email sent." : "Email could not be sent.", res.email_verification_sent || res.already_verified ? "success" : "error");
+              res = null;
+            } else if (op === "reset-password") {
+              const pw = userForm.new_password.value;
+              if (pw.length < 8) { swarmToast("New password must be at least 8 characters.", "error"); return; }
+              if (!confirm(`Reset the password for ${managedUser.username}?`)) return;
+              await swarmFetch("/api/image-gallery/users/reset-password", { method: "POST", body: JSON.stringify({ user_id: id, new_password: pw }) });
+              swarmToast("Password reset.", "success");
+            }
+            if (res && res.user) { managedUser = Object.assign({}, managedUser, res.user); renderManagedUser(); }
+            loadGalleryTable();
+          } catch (err) {
+            swarmToast(err.message, "error");
+          } finally {
+            btn.disabled = false;
+            if (managedUser) renderManagedUser();
+          }
+        });
+      }
       async function loadGallery() {
         try {
           const summary = await swarmFetch("/api/image-gallery/admin");
@@ -346,17 +577,20 @@ function M.register(cfg)
           const tbody = rows.map((r) => "<tr>"
             + (deletable ? `<td class="table-cell-select"><input type="checkbox" data-select-row value="${r.id}"></td>` : "")
             + cols.map((c) => swarmTableCell(c, r[c])).join("")
-            + (deletable ? `<td><button type="button" data-gallery-delete-row="${r.id}">Delete</button></td>` : "")
+            + (deletable ? `<td class="table-actions">${table === "users" ? `<button type="button" data-gallery-manage="${swarmEsc(r.id)}">Manage</button>` : ""}<button type="button" data-gallery-delete-row="${swarmEsc(r.id)}">Delete</button></td>` : "")
             + (isReports ? `<td class="table-actions">
                 <select data-report-status="${r.id}">${GALLERY_STATUSES.map((s) => `<option value="${s}" ${s === r.status ? "selected" : ""}>${s}</option>`).join("")}</select>
                 <button type="button" data-report-save="${r.id}">Save</button>
               </td>` : "")
             + "</tr>").join("");
+          galleryRows = rows;
           document.getElementById("gallery-data").innerHTML = `<table class="data-table" id="gallery-table-el"><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>`;
         } catch (err) { swarmToast("Failed to load table.", "error"); }
       }
       document.getElementById("gallery-table").addEventListener("change", loadGalleryTable);
       document.getElementById("gallery-data").addEventListener("click", async (e) => {
+        const manageId = e.target.getAttribute("data-gallery-manage");
+        if (manageId) { openManagedUser(manageId); return; }
         const deleteId = e.target.getAttribute("data-gallery-delete-row");
         const saveId = e.target.getAttribute("data-report-save");
         if (saveId) {
@@ -389,7 +623,7 @@ function M.register(cfg)
       });
       loadGallery();
     ]]
-    return page_shell(req, a, "/gallery-admin", "Gallery Admin", body, script)
+    return page_shell(req, a, "/gallery-admin", "Gallery", body, script)
   end)
 
   -- -----------------------------------------------------------------
@@ -398,7 +632,7 @@ function M.register(cfg)
   httpd.route("GET", "/lumisound-admin", function(req)
     local a, status, headers = cfg.require_auth_page(req)
     if not a then return status, "", headers end
-    if not (a.admin_mode or a.moderator) then return denied(req, a, "/lumisound-admin", "Lumisound Admin") end
+    if not kit.allowed(a, "/lumisound-admin") then return denied(req, a, "/lumisound-admin", "Lumisound") end
     -- Full port of LumisoundAdminPage.jsx (150 lines: metric grid + 6 live
     -- data tables with real admin actions) -- the first Lua pass just
     -- JSON.stringify()'d the whole /api/lumisound/admin response into a
@@ -408,7 +642,7 @@ function M.register(cfg)
     -- /api/lumisound/uploads/delete, /api/lumisound/bug-reports/status --
     -- just with no UI left to call them from).
     local body = html.page({
-      title = "Lumisound", eyebrow = "Admin Workspace", lede = "Account, library, and activity data for the Lumisound iOS app.",
+      title = "Lumisound", eyebrow = "Admin", lede = "Account, library, and activity data for the Lumisound iOS app.",
       body = [[
         <div id="lumisound-metrics" class="metric-grid"></div>
         <div class="dashboard-grid">
@@ -513,7 +747,7 @@ function M.register(cfg)
         if (msg.type === "snapshot") applyLumisound(msg.data);
       });
     ]=]
-    return page_shell(req, a, "/lumisound-admin", "Lumisound Admin", body, script)
+    return page_shell(req, a, "/lumisound-admin", "Lumisound", body, script)
   end)
 
   -- -----------------------------------------------------------------
@@ -522,7 +756,7 @@ function M.register(cfg)
   httpd.route("GET", "/intel", function(req)
     local a, status, headers = cfg.require_auth_page(req)
     if not a then return status, "", headers end
-    if not a.admin_mode then return denied(req, a, "/intel", "Intel") end
+    if not kit.allowed(a, "/intel") then return denied(req, a, "/intel", "Intel") end
     -- Ports IntelPage.jsx's 24h TrendChart section (SVG line chart + area
     -- fill + anomaly markers + hover tooltip) -- the first Lua pass never
     -- called /api/metrics/history or /api/metrics/anomalies at all, and
@@ -532,7 +766,7 @@ function M.register(cfg)
     -- samples fleet totals into that table every 5 minutes (see
     -- metrics.capture_metrics_snapshot), and this page actually reads it.
     local body = html.page({
-      title = "Errors And Metrics", eyebrow = "Intel", lede = "Trends, anomalies, and raw events.",
+      title = "Intel", eyebrow = "Admin", lede = "Errors, trends, anomalies, and raw events.",
       body = [[
         <div id="intel-anomaly-banner"></div>
         <div class="panel wide">
@@ -641,15 +875,7 @@ function M.register(cfg)
         // borders) but the events feed was rendered as a bare 3-column
         // table with no description column at all -- description (the
         // actually useful part of each event) was silently dropped.
-        const cards = (events.events || []).map((e) => {
-          const level = (e.level || "info").toLowerCase();
-          const cls = level === "error" ? "event-error" : level === "warning" ? "event-warning" : "";
-          return `<div class="event ${cls}">
-            <div><strong>${(e.title || e.type || "Event").replace(/</g, "&lt;")}</strong><span>${e.timestamp || ""}</span></div>
-            <p>${(e.description || "").replace(/</g, "&lt;")}</p>
-            <div><small>${(e.source || "").replace(/</g, "&lt;")}</small><small>${level}</small></div>
-          </div>`;
-        }).join("");
+        const cards = (events.events || []).map(swarmEventCard).join("");
         document.getElementById("intel-events").innerHTML = cards || '<div class="empty-state">No events.</div>';
       }
       window.swarmLive.watch("metrics_snapshot", (msg) => {
@@ -672,7 +898,7 @@ function M.register(cfg)
   httpd.route("GET", "/audit-log", function(req)
     local a, status, headers = cfg.require_auth_page(req)
     if not a then return status, "", headers end
-    if not (a.admin_mode or a.moderator) then return denied(req, a, "/audit-log", "Audit Log") end
+    if not kit.allowed(a, "/audit-log") then return denied(req, a, "/audit-log", "Audit Log") end
     local body = html.page({
       title = "Audit Log", eyebrow = "Admin", lede = "Every recorded admin action.",
       body = '<div id="audit-rows">' .. html.empty_state("Loading...") .. "</div>",

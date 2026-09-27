@@ -100,6 +100,12 @@ function M.get_image_gallery_admin_data(limit)
   }
 end
 
+-- Open (unreviewed) media reports (Admin overview stat).
+function M.count_open_reports()
+  local row = db.fetchone(SCHEMA, "SELECT COUNT(*) AS count FROM media_reports WHERE status='open'")
+  return db.toint(row and row.count, 0)
+end
+
 function M.get_image_gallery_user_admin(user_id)
   return db.fetchone(
     SCHEMA,

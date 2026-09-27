@@ -208,6 +208,14 @@ struct DashboardView: View {
             }
             .navigationTitle("Dashboard")
             .toolbar {
+                // Invites belongs to the Fleet section (web: /invites) —
+                // moved here from the Account tab's old "Discover" list.
+                ToolbarItem(placement: .navigationBarLeading) {
+                    NavigationLink { InvitesView() } label: {
+                        Image(systemName: "envelope.badge.person.crop")
+                    }
+                    .accessibilityLabel("Invite Bots")
+                }
                 if !allBots.isEmpty {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         ShareLink(item: fleetStatusShareText) {

@@ -870,7 +870,7 @@ function M.get_dashboard_data(music_bots)
     generated_at = os.date("!%Y-%m-%dT%H:%M:%SZ"),
     bots = bots,
     -- BUGFIX: this fallback predates the 2026-08-17 lavalink2/lavalink3
-    -- nodes (NODE_NAMES above) -- harmless today since pages.lua defaults
+    -- nodes (NODE_NAMES above) -- harmless today since pages_fleet.lua defaults
     -- any missing key to {status="unknown"} anyway, but keep it in sync
     -- with NODE_NAMES so a future reader doesn't have to know that.
     node_health = node_health_ok and node_health or { lavalink = { status = "unknown" }, lavalink2 = { status = "unknown" }, lavalink3 = { status = "unknown" }, nodelink = { status = "unknown" } },

@@ -339,6 +339,19 @@ function M.list_notifications(account_id, limit)
   return out
 end
 
+-- Badge counts for the Community section: unread direct messages and
+-- pending incoming friend requests. Two COUNT(*)s, cheap enough for every
+-- page's live socket to watch.
+function M.community_counts(account_id)
+  local aid = coerce_int(account_id)
+  local msg = db.fetchone(SCHEMA, "SELECT COUNT(*) AS n FROM account_messages WHERE recipient_account_id = %s AND read_at IS NULL", aid)
+  local req = db.fetchone(SCHEMA, "SELECT COUNT(*) AS n FROM account_friend_requests WHERE addressee_account_id = %s AND status = 'pending'", aid)
+  return {
+    unread_messages = db.toint(msg and msg.n, 0),
+    pending_friend_requests = db.toint(req and req.n, 0),
+  }
+end
+
 function M.unread_notification_count(account_id)
   local row = db.fetchone(SCHEMA, "SELECT COUNT(*) AS unread FROM account_notifications WHERE recipient_account_id = %s AND read_at IS NULL", coerce_int(account_id))
   return db.toint(row and row.unread, 0)

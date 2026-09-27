@@ -12,6 +12,12 @@ final class NotificationsViewModel: ObservableObject {
     }
     @Published var isLoading = false
     @Published var errorMessage: String?
+    /// Community tab badge: unread direct messages + pending incoming
+    /// friend requests (the "community_counts" live key, same counts the
+    /// web panel shows on its Community nav).
+    @Published var unreadMessages = 0
+    @Published var pendingFriendRequests = 0
+    var communityBadge: Int { unreadMessages + pendingFriendRequests }
 
     private let api = APIClient.shared
     private let socket = SwarmLiveSocket.shared
@@ -26,6 +32,10 @@ final class NotificationsViewModel: ObservableObject {
             self.unreadCount = snapshot.unreadCount ?? 0
             self.notifications = snapshot.notifications ?? self.notifications
         }
+        socket.watch("community_counts", as: CommunityCounts.self) { [weak self] result in
+            guard let self, case .success(let counts) = result else { return }
+            self.applyCommunityCounts(counts)
+        }
         socket.connect()
 
         // Fallback poll only kicks in while the socket is actually down --
@@ -34,11 +44,13 @@ final class NotificationsViewModel: ObservableObject {
         pollTask = Task { [weak self] in
             guard let self else { return }
             await self.refreshUnreadCount()
+            await self.refreshCommunityCounts()
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(20))
                 if Task.isCancelled { break }
                 if !self.socket.isConnected {
                     await self.refreshUnreadCount()
+                    await self.refreshCommunityCounts()
                 }
             }
         }
@@ -49,6 +61,21 @@ final class NotificationsViewModel: ObservableObject {
         pollTask = nil
         watching = false
         socket.unwatch("notifications")
+        socket.unwatch("community_counts")
+    }
+
+    func refreshCommunityCounts() async {
+        do {
+            let counts: CommunityCounts = try await api.get("/api/community/counts")
+            applyCommunityCounts(counts)
+        } catch {
+            // Silent, like the unread-count poll above -- a badge is non-critical.
+        }
+    }
+
+    private func applyCommunityCounts(_ counts: CommunityCounts) {
+        unreadMessages = counts.unreadMessages ?? 0
+        pendingFriendRequests = counts.pendingFriendRequests ?? 0
     }
 
     func refreshUnreadCount() async {

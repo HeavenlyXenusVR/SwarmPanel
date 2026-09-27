@@ -194,3 +194,61 @@ let filterModes = [
     "none", "nightcore", "bassboost", "vaporwave", "8d", "karaoke",
     "tremolo", "vibrato", "lowpass", "lofi", "electronic", "party", "radio", "cinema",
 ]
+
+// MARK: - Guild overview (GET /api/guilds/:guild_id/control-matrix)
+
+/// One row per music bot for a single guild. A bot whose state couldn't be
+/// read comes back as a flat {bot_key, bot_display, error} instead of the
+/// nested {key, display_name, session} shape, so every field is optional.
+struct ControlMatrixResponse: Decodable {
+    let bots: [ControlMatrixBot]?
+}
+
+struct ControlMatrixBot: Decodable, Identifiable {
+    let key: String?
+    let botKey: String?
+    let displayName: String?
+    let botDisplay: String?
+    let session: GuildOverviewSession?
+    let error: String?
+
+    var id: String { resolvedKey.isEmpty ? (label) : resolvedKey }
+    var resolvedKey: String { key ?? botKey ?? session?.botKey ?? "" }
+    var label: String { displayName ?? botDisplay ?? session?.botDisplay ?? resolvedKey }
+    var isActive: Bool { session?.isPlaying == true || session?.isPaused == true }
+}
+
+/// Deliberately a small subset of ControlStateSession: only what the
+/// overview row shows, so an unexpected type in some other field of one
+/// bot's row can't fail decoding for the whole guild.
+struct GuildOverviewSession: Decodable {
+    let botKey: String?
+    let botDisplay: String?
+    let title: String?
+    let isPlaying: Bool?
+    let isPaused: Bool?
+    let sessionStateLabel: String?
+    let queueCount: Int?
+    let channelId: String?
+    let channelName: String?
+}
+
+// MARK: - Voice <-> stage conversion (POST /api/guilds/:guild_id/convert-channels)
+
+struct ChannelConvertRequest: Encodable {
+    let direction: String
+}
+
+struct ChannelConvertResponse: Decodable {
+    let converted: [ConvertedChannel]?
+    let failed: [ConvertFailure]?
+    let skippedNoHomeChannel: Int?
+
+    struct ConvertedChannel: Decodable {
+        let warning: String?
+    }
+
+    struct ConvertFailure: Decodable {
+        let error: String?
+    }
+}

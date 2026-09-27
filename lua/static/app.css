@@ -220,12 +220,14 @@ a {
   }
 }
 
-.panel-layout-focused .stage {
-  width: min(1360px, calc(100vw - 32px));
+/* layout_mode: caps the shell (sidebar + stage) width. The stage itself
+   always fills its grid column -- see .shell-body below. */
+.app-shell.panel-layout-focused {
+  --shell-max: 1480px;
 }
 
-.panel-layout-wide .stage {
-  width: min(1880px, calc(100vw - 28px));
+.app-shell.panel-layout-wide {
+  --shell-max: 2200px;
 }
 
 .panel-density-compact {
@@ -267,7 +269,7 @@ a {
 
 /* show_bot_uptime / show_queue_pressure ("Show bot uptime" / "Show queue
    pressure" checkboxes on /appearance): both were saved but had no
-   corresponding UI element to hide in the first place. pages.lua's
+   corresponding UI element to hide in the first place. pages_fleet.lua's
    dashboard now renders a real per-bot uptime stat and the existing queue
    chip carries data-queue-pressure so these checkboxes have something real
    to toggle. */
@@ -278,24 +280,12 @@ a {
   display: none;
 }
 
-/* sidebar_style / compact_sidebar: the original design's config.js had both
-   fields (default "full"/false), but the app itself has only ever shipped a
-   topbar nav, never an actual sidebar -- these were never wired to
-   anything in the pre-rewrite app either. Repurposed onto the one nav that
-   does exist: sidebar_style controls the desktop topbar's label/icon
-   density (down to icon-only, or fully collapsed to just the mobile
-   hamburger even on desktop), compact_sidebar narrows the mobile slide-out
-   "More" sheet. Both are real, visible effects rather than reviving a
-   sidebar concept the UI doesn't have. */
-.panel-nav-compact .nav-desktop .nav-item span:not(.nav-glyph) {
-  display: none;
-}
-.panel-nav-hidden .nav-desktop {
-  display: none;
-}
-.panel-compact-nav .mobile-nav-sheet {
-  width: min(260px, 82vw);
-}
+/* sidebar_style / compact_sidebar: "full" is the labelled, grouped
+   sidebar; "compact" collapses it to an icon rail; "hidden" drops it and
+   moves navigation into the drawer behind the topbar's menu button (the
+   same drawer the mobile "More" button opens). compact_sidebar tightens
+   the sidebar and narrows the drawer. Rules live with the rest of the
+   shell layout near the end of this file. */
 
 .panel-font-large {
   --font-size-base: 17px;
@@ -936,8 +926,8 @@ a {
 }
 
 .stage {
-  width: min(1740px, calc(100vw - 32px));
-  margin: 0 auto;
+  width: 100%;
+  min-width: 0;
   padding: 24px 0 52px;
 }
 
@@ -1038,8 +1028,17 @@ a {
 
 .mobile-nav-list {
   display: grid;
+  gap: 14px;
+}
+
+.mobile-nav-list .nav-group {
+  display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+
+.mobile-nav-list .nav-group-label {
+  grid-column: 1 / -1;
 }
 
 .mobile-nav-list .nav-item {
@@ -3990,14 +3989,6 @@ tbody tr.is-selected td {
 }
 
 @media (max-width: 1180px) {
-  .topbar {
-    grid-template-columns: 1fr auto;
-  }
-
-  .nav {
-    grid-column: 1 / -1;
-    order: 3;
-  }
 
   .dashboard-grid,
   .control-layout,
@@ -4041,7 +4032,6 @@ tbody tr.is-selected td {
   }
 
   .stage {
-    width: min(100vw - 20px, 1740px);
     padding: 14px 0 28px;
     padding-left: max(0px, env(safe-area-inset-left));
     padding-right: max(0px, env(safe-area-inset-right));
@@ -4750,4 +4740,602 @@ tbody tr.is-selected td {
   font-size: 0.82rem;
   font-weight: 700;
   color: var(--accent);
+}
+
+/* ---------------------------------------------------------------------
+   Panel shell: topbar (brand | breadcrumb | session) over a two-column
+   body (grouped sidebar | stage). The section/page model behind every
+   link here is nav.lua; html.lua's layout() renders it.
+   --------------------------------------------------------------------- */
+.app-shell {
+  --shell-max: 1920px;
+  --sidebar-width: 232px;
+  --topbar-height: 64px;
+}
+
+.skip-link {
+  position: absolute;
+  left: 12px;
+  top: -60px;
+  z-index: 80;
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--accent);
+}
+
+.skip-link:focus {
+  top: 12px;
+}
+
+.topbar-lead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.nav-drawer-button {
+  display: none;
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.crumbs a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.crumbs a:hover {
+  color: var(--text);
+}
+
+.crumbs strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.crumb-sep {
+  color: var(--muted-2);
+}
+
+.shell-body {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  gap: 24px;
+  width: min(var(--shell-max), calc(100vw - 32px));
+  margin: 0 auto;
+}
+
+.shell-body-public {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.sidebar {
+  position: sticky;
+  top: calc(var(--topbar-height) + 16px);
+  align-self: start;
+  max-height: calc(100vh - var(--topbar-height) - 32px);
+  margin-top: 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
+  border-radius: calc(var(--radius) + 2px);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 6%, transparent), transparent 40%),
+    color-mix(in srgb, var(--panel) calc(var(--surface-opacity) * 100%), transparent);
+  backdrop-filter: blur(calc(var(--surface-blur) * 0.75));
+}
+
+.sidebar-nav {
+  display: grid;
+  gap: 16px;
+}
+
+.nav-group {
+  display: grid;
+  gap: 3px;
+}
+
+.nav-group-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+  padding: 0 8px;
+  color: var(--muted-2);
+  font-size: 0.7rem;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.nav-group.current > .nav-group-label {
+  color: var(--accent);
+}
+
+.sidebar .nav-group-label .nav-glyph {
+  display: none;
+}
+
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius) - 4px);
+  color: var(--muted);
+  text-decoration: none;
+  transition: background var(--motion-fast), border-color var(--motion-fast), color var(--motion-fast);
+}
+
+.sidebar-link:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel-3) 60%, transparent);
+}
+
+.sidebar-link.active {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 44%, var(--line));
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 20%, transparent), transparent),
+    color-mix(in srgb, var(--panel-3) 70%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.sidebar-link .nav-glyph {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  flex: 0 0 20px;
+}
+
+.sidebar-link .nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tabs across the top of every multi-screen section. Shares .nav-item so
+   the "Tabs" (tab_style) appearance preference styles them. */
+.section-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.section-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.section-tabs .nav-item {
+  flex: 0 0 auto;
+}
+
+/* Sidebar variants (sidebar_style / compact_sidebar). */
+.panel-nav-compact {
+  --sidebar-width: 64px;
+}
+
+.panel-nav-compact .sidebar {
+  padding: 8px;
+}
+
+.panel-nav-compact .sidebar .nav-group-label {
+  justify-content: center;
+  padding: 0;
+  font-size: 0;
+}
+
+.panel-nav-compact .sidebar .nav-group-label::before {
+  content: "";
+  display: block;
+  width: 24px;
+  height: 1px;
+  background: var(--line);
+}
+
+.panel-nav-compact .sidebar .nav-group:first-child .nav-group-label {
+  display: none;
+}
+
+.panel-nav-compact .sidebar-link {
+  justify-content: center;
+  padding: 8px 0;
+}
+
+.panel-nav-compact .sidebar-link .nav-label {
+  display: none;
+}
+
+.panel-compact-nav:not(.panel-nav-compact) {
+  --sidebar-width: 196px;
+}
+
+.panel-compact-nav .sidebar-link {
+  min-height: 30px;
+  padding: 5px 8px;
+}
+
+.panel-compact-nav .mobile-nav-sheet {
+  width: min(260px, 82vw);
+}
+
+.panel-nav-hidden .shell-body {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.panel-nav-hidden .sidebar {
+  display: none;
+}
+
+.panel-nav-hidden .nav-drawer-button {
+  display: inline-flex;
+}
+
+@media (min-width: 761px) {
+  /* With the sidebar hidden, the mobile drawer becomes a left-side menu. */
+  .panel-nav-hidden .mobile-nav-backdrop,
+  .panel-nav-hidden .mobile-nav-sheet {
+    display: grid;
+  }
+
+  .panel-nav-hidden .mobile-nav-sheet {
+    top: 0;
+    bottom: 0;
+    left: 0;
+    right: auto;
+    width: min(360px, 88vw);
+    max-height: none;
+    align-content: start;
+    border-radius: 0 calc(var(--radius) + 2px) calc(var(--radius) + 2px) 0;
+    transform: translateX(calc(-100% - 20px));
+  }
+
+  .panel-nav-hidden .mobile-nav-sheet.open {
+    transform: translateX(0);
+  }
+}
+
+/* Admin overview hub. */
+.hub-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.hub-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel) calc(var(--surface-opacity) * 100%), transparent);
+  color: var(--text);
+  text-decoration: none;
+  transition: border-color var(--motion-fast), transform var(--motion-fast), background var(--motion-fast);
+}
+
+.hub-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--line));
+  background: color-mix(in srgb, var(--panel-2) 90%, transparent);
+  transform: translateY(-1px);
+}
+
+.hub-card-glyph {
+  display: grid;
+  place-items: center;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  border-radius: calc(var(--radius) - 4px);
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel-2));
+  font-size: 1.15rem;
+}
+
+.hub-card-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.hub-card-copy small {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+@media (max-width: 1180px) {
+  .app-shell {
+    --sidebar-width: 64px;
+  }
+
+  /* Tablet widths: the full sidebar collapses to the icon rail
+     automatically, whatever sidebar_style says. */
+  .sidebar {
+    padding: 8px;
+  }
+
+  .sidebar .nav-group-label {
+    justify-content: center;
+    padding: 0;
+    font-size: 0;
+  }
+
+  .sidebar .nav-group:first-child .nav-group-label {
+    display: none;
+  }
+
+  .sidebar .nav-group-label::before {
+    content: "";
+    display: block;
+    width: 24px;
+    height: 1px;
+    background: var(--line);
+  }
+
+  .sidebar-link {
+    justify-content: center;
+    padding: 8px 0;
+  }
+
+  .sidebar-link .nav-label {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .shell-body {
+    grid-template-columns: minmax(0, 1fr);
+    width: calc(100vw - 20px);
+    gap: 0;
+  }
+
+  .sidebar,
+  .crumbs,
+  .nav-drawer-button,
+  .panel-nav-hidden .nav-drawer-button {
+    display: none;
+  }
+
+  .topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .topbar-lead,
+  .brand,
+  .brand-copy {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .brand-copy strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .section-tabs {
+    margin: 0 -10px 12px;
+    padding: 0 10px;
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Dashboard: pinned bots. Pinned cards sort first via CSS order, so the
+   live patcher never has to move DOM nodes.
+   --------------------------------------------------------------------- */
+#bot-cards .bot-card-pinned {
+  order: -1;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent), var(--shadow);
+}
+
+.bot-pin {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 3;
+  width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.bot-card-pinned .bot-pin {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 50%, var(--line));
+}
+
+/* Community badges (unread messages / pending friend requests). */
+.nav-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: auto;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+/* !important: the mobile bar's `.nav-mobile .nav-item span` rule is more
+   specific and would otherwise un-hide an empty badge. */
+.nav-badge[hidden] {
+  display: none !important;
+}
+
+.section-tab .nav-badge {
+  margin-left: 4px;
+}
+
+/* Icon rail / mobile bar: pin the badge to the icon's corner. */
+.nav-mobile .nav-item,
+.panel-nav-compact .sidebar-link {
+  position: relative;
+}
+
+.nav-mobile .nav-badge,
+.panel-nav-compact .sidebar-link .nav-badge {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  margin: 0;
+}
+
+@media (max-width: 1180px) {
+  .sidebar-link {
+    position: relative;
+  }
+
+  .sidebar-link .nav-badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    margin: 0;
+  }
+
+  .sidebar .nav-group-label .nav-badge {
+    display: none;
+  }
+}
+
+.panel-nav-compact .sidebar .nav-group-label .nav-badge {
+  display: none;
+}
+
+/* Directory "Online now" filter. */
+.toggle-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-2) 80%, transparent);
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.toggle-chip:has(input:checked) {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--ok) 55%, var(--line));
+}
+
+.toggle-chip input {
+  accent-color: var(--ok);
+}
+
+/* Gallery admin "Manage user" dialog. */
+.manage-dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  padding: 18px;
+  overflow-y: auto;
+  color: var(--text);
+  background: var(--panel);
+}
+
+.manage-dialog::backdrop {
+  background: rgba(6, 10, 14, 0.6);
+  backdrop-filter: blur(4px);
+}
+
+.manage-dialog form {
+  display: grid;
+  gap: 12px;
+}
+
+.manage-dialog-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.check-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.check-field input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+/* Admin overview: stat tile that needs attention. */
+.metric.metric-warn {
+  border-color: color-mix(in srgb, var(--warn) 55%, var(--line));
+}
+
+.metric.metric-warn .metric-value {
+  color: var(--warn);
+}
+
+#admin-stats {
+  margin-bottom: 4px;
+}
+
+/* Controls: Guild Overview table. */
+.guild-overview .data-pill {
+  white-space: nowrap;
+}
+
+/* .panel is a grid and .data-table has a 760px min-width, which together
+   pushed this table past Controls' side column. */
+.guild-overview {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.guild-overview .data-table {
+  min-width: 0;
+}
+
+.guild-overview .table-wrap {
+  overflow-x: auto;
+}
+
+/* Stacked so the column stays narrow inside Controls' side column. */
+.guild-overview .table-actions {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.guild-overview .table-actions button {
+  min-height: 32px;
+  padding: 4px 10px;
 }
