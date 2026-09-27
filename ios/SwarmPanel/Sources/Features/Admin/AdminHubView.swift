@@ -18,16 +18,16 @@ struct AdminHubView: View {
             if let stats {
                 Section {
                     if let online = stats.botsOnline, let total = stats.botsTotal {
-                        StatRow(label: "Bots online", value: "\(online) / \(total)", attention: online < total)
+                        AdminStatRow(label: "Bots online", value: "\(online) / \(total)", attention: online < total)
                     }
                     if let rules = stats.alertRulesEnabled {
-                        StatRow(label: "Alert rules on", value: "\(rules)", attention: false)
+                        AdminStatRow(label: "Alert rules on", value: "\(rules)", attention: false)
                     }
                     if let audit = stats.auditEntriesRecent {
-                        StatRow(label: "Audit entries (24h)", value: "\(audit)", attention: false)
+                        AdminStatRow(label: "Audit entries (24h)", value: "\(audit)", attention: false)
                     }
                     if let reports = stats.openReports {
-                        StatRow(label: "Open gallery reports", value: "\(reports)", attention: reports > 0)
+                        AdminStatRow(label: "Open gallery reports", value: "\(reports)", attention: reports > 0)
                     }
                 } header: {
                     SectionLabel(title: "At a Glance")
@@ -114,7 +114,7 @@ struct AdminHubView: View {
     }
 }
 
-private struct StatRow: View {
+private struct AdminStatRow: View {
     let label: String
     let value: String
     let attention: Bool
