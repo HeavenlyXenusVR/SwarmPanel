@@ -44,6 +44,7 @@ end
 local notify = require("notify")
 local ratelimit = require("ratelimit")
 local copas = require("copas")
+local socket = require("socket")
 local cjson = require("cjson.safe")
 
 local M = {}
@@ -874,6 +875,16 @@ function M.register(cfg)
     }
   end
 
+  local THREAD_PERMISSION_TTL_SECONDS = 20
+  local thread_permission_cache = {} -- "actor:target" -> {expires=, allowed=}
+  -- Pruned from the broadcast loop so conversations that were opened once
+  -- don't leave entries behind for the life of the process.
+  local function prune_thread_permission_cache(now)
+    for k, v in pairs(thread_permission_cache) do
+      if v.expires <= now then thread_permission_cache[k] = nil end
+    end
+  end
+
   -- ---------------------------------------------------------------------
   local SNAPSHOT_BUILDERS = {
     dashboard = {
@@ -956,12 +967,26 @@ function M.register(cfg)
         if not actor_id then return false, aerr end
         local target_id = watch_param(params, "account_id")
         if not target_id then return false, "account_id is required" end
-        local target = accounts.get_account_by_id(target_id)
-        if target then
-          local snap = social.get_account_social_snapshot(target.id, actor_id)
-          for k, v in pairs(snap) do target[k] = v end
+        -- The permission check (profile + social snapshot, ~3 queries) only
+        -- changes when someone edits their profile or friendship, but this
+        -- key rebuilds every 2s per open conversation -- remember the
+        -- outcome briefly instead of redoing it every tick.
+        local perm_key = tostring(actor_id) .. ":" .. tostring(target_id)
+        local now = socket.gettime()
+        local cached_perm = thread_permission_cache[perm_key]
+        local allowed
+        if cached_perm and cached_perm.expires > now then
+          allowed = cached_perm.allowed
+        else
+          local target = accounts.get_account_by_id(target_id)
+          if target then
+            local snap = social.get_account_social_snapshot(target.id, actor_id)
+            for k, v in pairs(snap) do target[k] = v end
+          end
+          allowed = target ~= nil and social_permissions(target).can_message
+          thread_permission_cache[perm_key] = { expires = now + THREAD_PERMISSION_TTL_SECONDS, allowed = allowed }
         end
-        if not target or not social_permissions(target).can_message then
+        if not allowed then
           return false, "This profile is not accepting direct messages."
         end
         local ok, messages = pcall(social.list_account_messages, actor_id, target_id, 80)
@@ -1189,8 +1214,11 @@ function M.register(cfg)
                 -- that key this tick, nothing more.
                 local pok, perr = pcall(function()
                   local cache_key = key .. ":" .. builder.scope_key(entry.auth, params)
-                  local serialized = build_cache[cache_key]
-                  if not serialized then
+                  local cached = build_cache[cache_key]
+                  local serialized, digest
+                  if cached then
+                    serialized, digest = cached[1], cached[2]
+                  else
                     -- builder.build() returns (ok, data_or_error) as normal
                     -- multi-return, not by throwing -- this inner pcall is
                     -- only a backstop against an unexpected runtime error
@@ -1200,10 +1228,24 @@ function M.register(cfg)
                     local bok, r1, r2 = pcall(builder.build, entry.auth, params)
                     local ok, data
                     if bok then ok, data = r1, r2 else ok, data = false, r1 end
-                    local payload
+                    local payload, data_json
                     if ok then
-                      payload = { type = "snapshot", key = key, data = data, generated_at = iso_now() }
+                      -- The change digest covers the data only, never the
+                      -- per-build generated_at stamp: with the timestamp in
+                      -- it, every key looked "changed" on every interval, so
+                      -- unchanged notifications/friends/threads/badges were
+                      -- re-sent (and re-rendered client-side) every few
+                      -- seconds forever.
+                      -- Encoded once and spliced into the frame below, so
+                      -- the digest doesn't cost a second full encode of
+                      -- large payloads like the fleet dashboard.
+                      data_json = cjson.encode(data)
+                      if not data_json then
+                        payload = { type = "snapshot_error", key = key, error = "snapshot could not be encoded", generated_at = iso_now() }
+                      end
+                      digest = "s" .. (data_json or "!")
                     else
+                      digest = "e" .. tostring(data)
                       payload = { type = "snapshot_error", key = key, error = tostring(data), generated_at = iso_now() }
                       -- In-depth telemetry (per operator request): a
                       -- snapshot builder failing is invisible outside this
@@ -1212,18 +1254,26 @@ function M.register(cfg)
                       -- every other telemetry call site; this already runs
                       -- inside the outer pcall below too, so a throw here
                       -- can't take the broadcast loop down either way.
-                      pcall(telemetry.record, "websocket", "snapshot_error", {
-                        username = entry.auth and entry.auth.username, text_value = tostring(data),
-                        metadata = { key = key },
-                      })
+                      if entry.last_digests[key] ~= digest then
+                        pcall(telemetry.record, "websocket", "snapshot_error", {
+                          username = entry.auth and entry.auth.username, text_value = tostring(data),
+                          metadata = { key = key },
+                        })
+                      end
                     end
-                    serialized = cjson.encode(payload)
-                    build_cache[cache_key] = serialized
+                    if data_json then
+                      serialized = '{"type":"snapshot","key":' .. cjson.encode(key)
+                        .. ',"data":' .. data_json
+                        .. ',"generated_at":' .. cjson.encode(iso_now()) .. '}'
+                    else
+                      serialized = cjson.encode(payload)
+                    end
+                    build_cache[cache_key] = { serialized, digest }
                   end
-                  if entry.last_digests[key] ~= serialized then
+                  if entry.last_digests[key] ~= digest then
                     local sent = entry.conn:send(serialized)
                     if sent then
-                      entry.last_digests[key] = serialized
+                      entry.last_digests[key] = digest
                     else
                       dead[#dead + 1] = entry
                     end
@@ -1241,6 +1291,7 @@ function M.register(cfg)
           end
         end
         for _, entry in ipairs(dead) do remove_ws_connection(entry) end
+        prune_thread_permission_cache(socket.gettime())
         copas.sleep(1)
       end
       broadcast_loop_running = false
@@ -1257,6 +1308,7 @@ function M.register(cfg)
   -- disconnects/protocol errors still close exactly like the library
   -- function does. conn:send()/conn:close() (unmodified library functions,
   -- from websocket.sync.extend() in httpd.lua) are unaffected by this.
+  local WS_PRESENCE_TOUCH_SECONDS = 60
   local ws_frame = require("websocket.frame")
   local function ws_receive_with_timeout(conn)
     if conn.state ~= "OPEN" and not conn.is_closing then
@@ -1332,10 +1384,27 @@ function M.register(cfg)
     active_ws_connections[#active_ws_connections + 1] = entry
     ensure_broadcast_loop()
 
+    -- Presence: an operator sitting on a page with the live socket open
+    -- makes no HTTP requests at all (everything arrives by push), so
+    -- last_seen_at -- only refreshed by require_auth -- went stale and they
+    -- showed as "Inactive" in the directory/profiles after 3 minutes while
+    -- actively watching the panel. Any inbound frame (pong, watch, or the
+    -- client's own keepalive) now counts as activity, throttled per socket
+    -- so it costs at most one UPDATE a minute.
+    local last_presence_touch = socket.gettime()
+    local function note_activity()
+      local now = socket.gettime()
+      if now - last_presence_touch >= WS_PRESENCE_TOUCH_SECONDS then
+        last_presence_touch = now
+        touch_presence(a)
+      end
+    end
+
     copas.settimeout(sock, 45)
     local keep_going = true
     while keep_going do
       local message, info = ws_receive_with_timeout(conn)
+      if message ~= nil then note_activity() end
       if message == nil and info == "timeout" then
         local sent = conn:send(cjson.encode({ type = "ping", timestamp = iso_now() }))
         if not sent then keep_going = false end

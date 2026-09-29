@@ -12,6 +12,7 @@ local accounts = require("accounts")
 
 local M = {}
 local SCHEMA = "accountlogins"
+local unpack = table.unpack or unpack
 
 local function coerce_int(v)
   local n = tonumber(v)
@@ -82,6 +83,98 @@ function M.get_account_social_snapshot(account_id, viewer_account_id)
     followed_by_me = db.tobool(row.followed_by_me),
     friend_status = friend_status,
   }
+end
+
+-- Batched form of get_account_social_snapshot() for list views (the
+-- directory/search results): the per-profile version costs two round trips
+-- per row, and every DB call blocks the whole copas loop, so a 50-row
+-- directory page used to serialize ~100 queries in front of every other
+-- request on the server. This does the same work in two queries total and
+-- returns { [account_id] = snapshot } with the identical snapshot shape.
+function M.get_account_social_snapshots(account_ids, viewer_account_id)
+  local viewer_id = viewer_account_id and coerce_int(viewer_account_id) or 0
+  local ids, seen = {}, {}
+  for _, v in ipairs(account_ids or {}) do
+    local n = tonumber(v)
+    if n and not seen[n] then
+      seen[n] = true
+      ids[#ids + 1] = math.floor(n)
+    end
+  end
+  local out = {}
+  if #ids == 0 then return out end
+  for _, id in ipairs(ids) do
+    out[id] = {
+      follower_count = 0, following_count = 0, friend_count = 0, followed_by_me = false,
+      friend_status = (viewer_id ~= 0 and viewer_id == id) and "self" or "none",
+    }
+  end
+  local marks = {}
+  for i = 1, #ids do marks[i] = "%s" end
+  local id_list = "(" .. table.concat(marks, ", ") .. ")"
+
+  -- ids are already integers (coerced above), so this VALUES list is built
+  -- from numbers only -- no user text reaches the SQL string.
+  local values = {}
+  for i, id in ipairs(ids) do values[i] = "(" .. string.format("%d", id) .. ")" end
+  local counts = db.fetchall(
+    SCHEMA,
+    string.format(
+      [[SELECT t.id AS account_id,
+          (SELECT COUNT(*) FROM account_follows WHERE followed_account_id=t.id) AS follower_count,
+          (SELECT COUNT(*) FROM account_follows WHERE follower_account_id=t.id) AS following_count,
+          (SELECT COUNT(*) FROM account_friend_requests
+             WHERE status='accepted' AND (requester_account_id=t.id OR addressee_account_id=t.id)) AS friend_count,
+          EXISTS(SELECT 1 FROM account_follows WHERE follower_account_id=%%s AND followed_account_id=t.id) AS followed_by_me
+        FROM (VALUES %s) AS t(id)]],
+      table.concat(values, ", ")
+    ),
+    viewer_id
+  )
+  for _, row in ipairs(counts) do
+    local snap = out[db.toint(row.account_id)]
+    if snap then
+      snap.follower_count = db.toint(row.follower_count, 0)
+      snap.following_count = db.toint(row.following_count, 0)
+      snap.friend_count = db.toint(row.friend_count, 0)
+      snap.followed_by_me = db.tobool(row.followed_by_me)
+    end
+  end
+
+  if viewer_id ~= 0 then
+    local params = { viewer_id }
+    for _, id in ipairs(ids) do params[#params + 1] = id end
+    params[#params + 1] = viewer_id
+    for _, id in ipairs(ids) do params[#params + 1] = id end
+    local rows = db.fetchall(
+      SCHEMA,
+      string.format(
+        [[SELECT status, requester_account_id, addressee_account_id FROM account_friend_requests
+          WHERE (requester_account_id=%%s AND addressee_account_id IN %s)
+             OR (addressee_account_id=%%s AND requester_account_id IN %s)
+          ORDER BY %s, created_at DESC]],
+        id_list, id_list, STATUS_ORDER_SQL
+      ),
+      unpack(params)
+    )
+    local decided = {}
+    for _, row in ipairs(rows) do
+      local requester = db.toint(row.requester_account_id)
+      local other = (requester == viewer_id) and db.toint(row.addressee_account_id) or requester
+      local snap = out[other]
+      -- Rows arrive best-status-first, so the first row per account is the
+      -- same one get_account_social_snapshot's LIMIT 1 would have picked.
+      if snap and not decided[other] and snap.friend_status ~= "self" then
+        decided[other] = true
+        if row.status == "accepted" then
+          snap.friend_status = "friends"
+        elseif row.status == "pending" then
+          snap.friend_status = (requester == viewer_id) and "pending_out" or "pending_in"
+        end
+      end
+    end
+  end
+  return out
 end
 
 function M.get_public_account_profile(account_id, viewer_account_id)
@@ -258,7 +351,9 @@ function M.send_account_message(sender_account_id, recipient_account_id, body)
       WHERE msg.id = %s LIMIT 1]],
     inserted.id
   )
-  return serialize_social_row(message or {})
+  local item = serialize_social_row(message or {})
+  item.mine = true
+  return item
 end
 
 function M.list_account_message_threads(account_id)
@@ -293,12 +388,22 @@ function M.list_account_messages(account_id, other_account_id, limit)
   local aid, oid = coerce_int(account_id), coerce_int(other_account_id)
   if aid == oid then error("Pick another account to view messages.", 0) end
   if not accounts.get_account_by_id(oid) then error("Account not found.", 0) end
-  db.execute(
+  -- The open conversation is re-read every couple of seconds by the live
+  -- push, so only issue the UPDATE (a write transaction) when there is
+  -- actually something unread instead of on every refresh.
+  local unread = db.fetchone(
     SCHEMA,
-    [[UPDATE account_messages SET read_at=COALESCE(read_at, CURRENT_TIMESTAMP)
-      WHERE sender_account_id=%s AND recipient_account_id=%s AND read_at IS NULL]],
+    "SELECT 1 AS present FROM account_messages WHERE sender_account_id=%s AND recipient_account_id=%s AND read_at IS NULL LIMIT 1",
     oid, aid
   )
+  if unread then
+    db.execute(
+      SCHEMA,
+      [[UPDATE account_messages SET read_at=COALESCE(read_at, CURRENT_TIMESTAMP)
+        WHERE sender_account_id=%s AND recipient_account_id=%s AND read_at IS NULL]],
+      oid, aid
+    )
+  end
   local safe_limit = math.max(1, math.min(tonumber(limit) or 80, 200))
   local rows = db.fetchall(
     SCHEMA,
@@ -311,7 +416,11 @@ function M.list_account_messages(account_id, other_account_id, limit)
   )
   -- reverse to chronological order
   local out = {}
-  for i = #rows, 1, -1 do out[#out + 1] = serialize_social_row(rows[i]) end
+  for i = #rows, 1, -1 do
+    local item = serialize_social_row(rows[i])
+    item.mine = db.toint(item.sender_account_id) == aid
+    out[#out + 1] = item
+  end
   return out
 end
 
@@ -344,12 +453,43 @@ end
 -- page's live socket to watch.
 function M.community_counts(account_id)
   local aid = coerce_int(account_id)
-  local msg = db.fetchone(SCHEMA, "SELECT COUNT(*) AS n FROM account_messages WHERE recipient_account_id = %s AND read_at IS NULL", aid)
-  local req = db.fetchone(SCHEMA, "SELECT COUNT(*) AS n FROM account_friend_requests WHERE addressee_account_id = %s AND status = 'pending'", aid)
+  local row = db.fetchone(
+    SCHEMA,
+    [[SELECT
+        (SELECT COUNT(*) FROM account_messages WHERE recipient_account_id = %s AND read_at IS NULL) AS unread_messages,
+        (SELECT COUNT(*) FROM account_friend_requests WHERE addressee_account_id = %s AND status = 'pending') AS pending_requests]],
+    aid, aid
+  )
   return {
-    unread_messages = db.toint(msg and msg.n, 0),
-    pending_friend_requests = db.toint(req and req.n, 0),
+    unread_messages = db.toint(row and row.unread_messages, 0),
+    pending_friend_requests = db.toint(row and row.pending_requests, 0),
   }
+end
+
+-- Indexes behind every hot social query: the live-push badges/threads/
+-- notifications re-run these per connected account every few seconds, and
+-- each one blocks the event loop for its full duration. IF NOT EXISTS makes
+-- this a no-op after the first run, and each statement is pcall'd on its
+-- own -- a panel that cannot create an index must still work, just slower
+-- (same precedent as dashboard.lua's ensure_aria_dashboard_indexes).
+local social_indexes_ready = false
+function M.ensure_indexes()
+  if social_indexes_ready then return end
+  social_indexes_ready = true
+  for _, stmt in ipairs({
+    "CREATE INDEX IF NOT EXISTS account_messages_recipient_unread_idx ON account_messages (recipient_account_id, sender_account_id) WHERE read_at IS NULL",
+    "CREATE INDEX IF NOT EXISTS account_messages_pair_idx ON account_messages (sender_account_id, recipient_account_id, created_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS account_messages_recipient_pair_idx ON account_messages (recipient_account_id, sender_account_id, id)",
+    "CREATE INDEX IF NOT EXISTS account_friend_requests_addressee_status_idx ON account_friend_requests (addressee_account_id, status)",
+    "CREATE INDEX IF NOT EXISTS account_friend_requests_requester_status_idx ON account_friend_requests (requester_account_id, status)",
+    "CREATE INDEX IF NOT EXISTS account_follows_followed_idx ON account_follows (followed_account_id)",
+    "CREATE INDEX IF NOT EXISTS account_notifications_recipient_created_idx ON account_notifications (recipient_account_id, created_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS account_notifications_recipient_unread_idx ON account_notifications (recipient_account_id) WHERE read_at IS NULL",
+    "CREATE INDEX IF NOT EXISTS users_last_seen_idx ON users (last_seen_at DESC)",
+  }) do
+    local ok, done, err = pcall(db.execute, SCHEMA, stmt)
+    if not ok or not done then print("[swarmpanel-lua] social index skipped: " .. tostring(ok and err or done)) end
+  end
 end
 
 function M.unread_notification_count(account_id)

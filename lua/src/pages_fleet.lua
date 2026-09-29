@@ -622,8 +622,10 @@ function M.register(cfg)
           const nowSub = (session && (session.media_source_label || session.session_state_label)) || "Live state will fill in automatically.";
           const offline = botIsOffline(bot);
           const offlineOverlay = offline ? '<div class="bot-card-offline-overlay"><span class="bot-card-offline-label">Offline</span></div>' : "";
-          const age = Number(bot.heartbeat_age_seconds);
-          const uptimeSpan = Number.isFinite(age) ? `<span data-bot-uptime>heartbeat ${Math.floor(age)}s ago</span>` : "";
+          // Text is filled in by patchHeartbeat(): it changes on every push,
+          // and keeping it out of the markup is what lets patchBotCards()
+          // skip rebuilding a card whose real content hasn't changed.
+          const uptimeSpan = Number.isFinite(Number(bot.heartbeat_age_seconds)) ? "<span data-bot-uptime></span>" : "";
           return `
             ${offlineOverlay}
             <div class="bot-head">
@@ -650,12 +652,82 @@ function M.register(cfg)
               ${uptimeSpan}
             </div>`;
         }
+        function formatUptime(seconds) {
+          seconds = Math.floor(Number(seconds) || 0);
+          if (seconds < 60) return seconds + "s";
+          let minutes = Math.floor(seconds / 60);
+          if (minutes < 60) return minutes + "m";
+          let hours = Math.floor(minutes / 60);
+          minutes = minutes % 60;
+          if (hours < 24) return hours + "h " + minutes + "m";
+          const days = Math.floor(hours / 24);
+          hours = hours % 24;
+          return days + "d " + hours + "h";
+        }
+        function plural(n, word) { return n + " " + word + (n === 1 ? "" : "s"); }
+        // Aria's orchestrator card (mirrors the server-rendered one above).
+        // The live patch used to push her through renderBotCardInner(), so
+        // two seconds after load her card turned back into an empty
+        // music-bot card with a "0 live / 0 guilds" chip row.
+        function renderAriaCardInner(bot) {
+          const medic = bot.medic_summary || {};
+          const offline = botIsOffline(bot);
+          const repairs = Number(medic.pending_repairs || 0);
+          const infra = Number(medic.pending_infra || 0);
+          const interactions = Number(bot.recent_interaction_count || 0);
+          const critical = Number(medic.critical_health || 0);
+          const recoverable = Number(medic.recoverable_health || 0);
+          const uptime = bot.uptime_seconds != null ? "up " + formatUptime(bot.uptime_seconds) : "";
+          const memory = bot.memory_kb != null ? Math.floor(bot.memory_kb / 1024) + " MB mem" : "";
+          return `
+            <div data-bot-offline-overlay>${offline ? '<div class="bot-card-offline-overlay"><span class="bot-card-offline-label">Offline</span></div>' : ""}</div>
+            <div class="bot-head">
+              <span class="bot-dot"></span>
+              <div class="bot-head-copy">
+                <h3>${escHtml(bot.display_name)}</h3>
+                <small>Autonomous swarm orchestrator</small>
+              </div>
+              <span class="data-pill data-pill-${offline ? "danger" : "live"}" data-bot-badge>${offline ? "Offline" : "Online"}</span>
+            </div>
+            <div class="bot-now">
+              <div class="bot-thumb bot-thumb-empty">&#9881;</div>
+              <div class="bot-now-copy">
+                <strong data-bot-now-title>${plural(repairs, "pending repair")}, ${plural(infra, "pending infra task")}</strong>
+                <small data-bot-now-sub>${plural(interactions, "interaction")} recorded &middot; ${critical} critical, ${plural(recoverable, "recoverable health issue")}</small>
+              </div>
+            </div>
+            <div class="chip-row">
+              <span data-chip="uptime">${escHtml(uptime)}</span>
+              <span data-chip="memory">${escHtml(memory)}</span>
+              <span data-chip="heartbeat" data-bot-uptime></span>
+            </div>`;
+        }
+        function patchHeartbeat(card, bot) {
+          const el = card.querySelector("[data-bot-uptime]");
+          if (!el) return;
+          const age = Number(bot.heartbeat_age_seconds);
+          const text = (bot.heartbeat_age_seconds != null && Number.isFinite(age)) ? "heartbeat " + Math.floor(age) + "s ago" : "";
+          if (el.textContent !== text) el.textContent = text;
+        }
+        // Last markup written per card. Cards are only rebuilt when their
+        // content actually changed -- rebuilding all of them on every push
+        // re-decoded every thumbnail, reset hover state and forced a full
+        // grid relayout every two seconds, which is what made scrolling the
+        // dashboard stutter.
+        const botCardMarkup = new WeakMap();
         function patchBotCards(data) {
           for (const bot of (data && data.bots) || []) {
             const card = document.querySelector(`[data-bot-key="${window.CSS && CSS.escape ? CSS.escape(bot.key) : bot.key}"]`);
             if (!card) continue;
+            // Never swap a card out from under an in-progress seek drag.
+            if (card.querySelector(".bot-seek-seeking")) continue;
             card.classList.toggle("bot-card-offline", botIsOffline(bot));
-            card.innerHTML = renderBotCardInner(bot);
+            const markup = bot.kind === "orchestrator" ? renderAriaCardInner(bot) : renderBotCardInner(bot);
+            if (botCardMarkup.get(card) !== markup) {
+              card.innerHTML = markup;
+              botCardMarkup.set(card, markup);
+            }
+            patchHeartbeat(card, bot);
           }
         }
         function renderSessionRow(s) {
@@ -675,13 +747,18 @@ function M.register(cfg)
               <td>${s.queue_count || 0} queued</td>
             </tr>`;
         }
+        let lastSessionsMarkup = null;
         function patchSessionsTable(data) {
           const tbody = document.querySelector("#sessions-table tbody");
           if (!tbody) return;
           const rows = ((data && data.sessions) || []).filter((s) => s.is_playing || s.is_paused || (s.title && s.title !== ""));
-          tbody.innerHTML = rows.length
+          const markup = rows.length
             ? rows.map(renderSessionRow).join("")
             : `<tr><td colspan="5">${escHtml("Nothing playing right now.")}</td></tr>`;
+          if (markup === lastSessionsMarkup) return;
+          lastSessionsMarkup = markup;
+          tbody.innerHTML = markup;
+          tickPlaybackCounters();
         }
         // Pinned bots: a star on each card floats that bot to the front of
         // the grid (CSS order, so live patching never has to reshuffle the
@@ -725,13 +802,27 @@ function M.register(cfg)
         }
         decoratePinnedBots();
 
+        // Pushes are applied on the next animation frame, latest one wins:
+        // a burst of snapshots (reconnect, tab returning from background)
+        // costs one DOM pass instead of one per message, and a hidden tab
+        // does no DOM work at all until it's shown again.
+        let pendingDashboard = null;
+        let dashboardFrame = 0;
+        function applyDashboard() {
+          dashboardFrame = 0;
+          const data = pendingDashboard;
+          pendingDashboard = null;
+          if (!data) return;
+          patchDashboardMetrics(data);
+          patchBotCards(data);
+          decoratePinnedBots();
+          patchSessionsTable(data);
+          tickPlaybackCounters();
+        }
         window.swarmLive.watch("dashboard", (msg) => {
-          if (msg.type === "snapshot") {
-            patchDashboardMetrics(msg.data);
-            patchBotCards(msg.data);
-            decoratePinnedBots();
-            patchSessionsTable(msg.data);
-          }
+          if (msg.type !== "snapshot") return;
+          pendingDashboard = msg.data;
+          if (!dashboardFrame) dashboardFrame = requestAnimationFrame(applyDashboard);
         });
 
         const dashEvents = document.getElementById("dash-events");

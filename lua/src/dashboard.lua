@@ -741,7 +741,7 @@ local function ensure_aria_dashboard_indexes()
   end
 end
 
-function M.get_dashboard_data(music_bots)
+local function build_dashboard_data(music_bots)
   ensure_aria_dashboard_indexes()
   local bots = {}
   local total_active = 0
@@ -875,6 +875,38 @@ function M.get_dashboard_data(music_bots)
     -- with NODE_NAMES so a future reader doesn't have to know that.
     node_health = node_health_ok and node_health or { lavalink = { status = "unknown" }, lavalink2 = { status = "unknown" }, lavalink3 = { status = "unknown" }, nodelink = { status = "unknown" } },
   }
+end
+
+-- Short-lived shared snapshot. get_dashboard_data() is called by the WS
+-- broadcast loop once per distinct scope per tick (every guild-scoped
+-- account, admin, ...), by /api/dashboard, by every Dashboard/Controls page
+-- render, and by the invites roster -- and each call is ~10 blocking
+-- queries per bot across 12 bot databases plus Aria's. Every one of those
+-- calls stalls the whole copas loop, so with a few scopes connected the
+-- server spent most of each 2s tick rebuilding the identical fleet state.
+-- All callers now share one build per SNAPSHOT_TTL_SECONDS. Callers mutate
+-- the result (scoping filters bots/sessions, enrichment adds fields), so
+-- each one gets its own deep copy rather than the cached table itself.
+local socket = require("socket")
+local SNAPSHOT_TTL_SECONDS = 1.5
+local snapshot_cache = nil -- { expires = <gettime>, bots_key = <music_bots table>, data = <table> }
+
+local function deep_copy(v)
+  if type(v) ~= "table" then return v end
+  local out = {}
+  for k, val in pairs(v) do out[k] = deep_copy(val) end
+  return setmetatable(out, getmetatable(v))
+end
+
+function M.get_dashboard_data(music_bots)
+  local now = socket.gettime()
+  local hit = snapshot_cache
+  if hit and hit.bots_key == music_bots and hit.expires > now then
+    return deep_copy(hit.data)
+  end
+  local data = build_dashboard_data(music_bots)
+  snapshot_cache = { expires = socket.gettime() + SNAPSHOT_TTL_SECONDS, bots_key = music_bots, data = data }
+  return deep_copy(data)
 end
 
 -- Port of app/db/bots.py's _empty_music_activity_summary() /

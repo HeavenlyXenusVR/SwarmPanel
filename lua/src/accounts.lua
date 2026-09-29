@@ -344,7 +344,9 @@ function M.search_account_profiles(query, limit, viewer_account_id, guild_id, on
   local like = "%" .. q .. "%"
   local viewer_id = tostring(viewer_account_id or 0)
   local guild_clause = ""
-  local params = { viewer_id }
+  -- followed_by_me and the other social counts come from the batched
+  -- snapshot below, not from per-row subqueries here.
+  local params = {}
   if guild_id ~= nil and tostring(guild_id) ~= "" then
     guild_clause = "AND guild_id = %s"
     params[#params + 1] = tostring(guild_id)
@@ -354,19 +356,18 @@ function M.search_account_profiles(query, limit, viewer_account_id, guild_id, on
   local base_params = { q, like, like, like, like, safe_limit }
   for _, p in ipairs(base_params) do params[#params + 1] = p end
   local sql = string.format(
-    [[SELECT id, username, guild_id, email, email_verified_at,
-             verification_webhook_url, verification_webhook_channel_id, verification_webhook_name,
-             webhook_verified_at, webhook_verification_sent_at,
+    -- Public roster: private account fields (email, the verification
+    -- webhook URL -- which embeds a Discord webhook token -- and its
+    -- channel/name) are deliberately not selected here; every signed-in
+    -- operator can read these rows.
+    [[SELECT id, username, guild_id, email_verified_at,
+             webhook_verified_at,
              display_name, avatar_url, bio,
              profile_headline, profile_tags, profile_links, profile_banner_url, profile_banner_mode, profile_card_style, profile_social_mode,
              favorite_bot, theme_accent,
              public_profile, server_invite_url, server_name, server_icon_url,
              profile_quote, profile_layout_mode, profile_header_style, profile_border_accent,
-             created_at, last_login_at, last_seen_at, updated_at,
-             EXISTS(
-               SELECT 1 FROM account_follows mine
-               WHERE mine.follower_account_id = %%s AND mine.followed_account_id = u.id
-             ) AS followed_by_me
+             created_at, last_login_at, last_seen_at, updated_at
       FROM %s u
       WHERE public_profile = TRUE
         %s
@@ -391,9 +392,14 @@ function M.search_account_profiles(query, limit, viewer_account_id, guild_id, on
   -- at load time too without a cycle — calling it lazily here is safe since
   -- by the time any handler runs, every module is already loaded).
   local social = require("social")
+  local ids = {}
+  for _, profile in ipairs(profiles) do ids[#ids + 1] = profile.id end
+  local snaps = social.get_account_social_snapshots(ids, tonumber(viewer_id))
   for _, profile in ipairs(profiles) do
-    local snap = social.get_account_social_snapshot(tonumber(profile.id), tonumber(viewer_id))
-    for k, v in pairs(snap) do profile[k] = v end
+    local snap = snaps[db.toint(profile.id)]
+    if snap then
+      for k, v in pairs(snap) do profile[k] = v end
+    end
   end
   local guild_ids = {}
   for _, profile in ipairs(profiles) do guild_ids[#guild_ids + 1] = profile.guild_id end

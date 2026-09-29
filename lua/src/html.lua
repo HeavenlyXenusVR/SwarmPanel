@@ -65,6 +65,7 @@ end
 -- ---------------------------------------------------------------------------
 
 local nav = require("nav")
+local static_assets = require("static")
 
 -- The mobile bottom bar only has room for ~5 icons + a "More" launcher --
 -- rendering every screen there breaks the CSS's fixed 6-column layout into
@@ -395,9 +396,9 @@ function M.layout(opts)
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>%s // SwarmPanel</title>
-<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="]] .. static_assets.url("/static/app.css") .. [[">
 <script>window.SWARM_TOKEN = %s; window.SWARM_SESSION = %s;</script>
-<script src="/static/app.js"></script>
+<script src="]] .. static_assets.url("/static/app.js") .. [["></script>
 %s
 </head>
 <body>

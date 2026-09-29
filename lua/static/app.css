@@ -1259,7 +1259,12 @@ small,
   border-color: color-mix(in srgb, var(--card-accent, var(--accent)) 38%, var(--line));
   min-height: 142px;
   content-visibility: auto;
-  contain-intrinsic-size: 142px 280px;
+  /* "auto" makes the browser remember each card's real rendered height
+     once it has been on screen, instead of re-assuming a fixed guess every
+     time the card scrolls out of view -- the fixed 280px guess against real
+     cards of a different height is what made the page jump while scrolling
+     past off-screen cards. */
+  contain-intrinsic-size: auto 280px;
   animation: surface-enter var(--motion-slow) both;
   position: relative;
 }
@@ -1418,7 +1423,12 @@ small,
 }
 
 /* ── Bot seek bar ─────────────────────────────────────── */
-.bot-seek-bar { margin-top: 6px; }
+.bot-seek-bar {
+  margin-top: 6px;
+  /* Horizontal drags seek (pointer events in app.js); vertical swipes that
+     start on the bar still scroll the page on touch screens. */
+  touch-action: pan-y;
+}
 .bot-seek-track {
   position: relative;
   height: 6px;
@@ -3919,7 +3929,32 @@ tbody tr.is-selected td {
   }
 }
 
+/* Off-screen directory/invite cards skip layout and paint until they are
+   scrolled near the viewport -- same treatment the bot cards already had. */
+.user-card,
+.invite-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 280px;
+}
+
+/* Touch devices: backdrop blur on surfaces that scroll with the page forces
+   the browser to re-sample and re-blur everything behind them on every
+   scrolled frame -- the main cause of janky scrolling on phones. These
+   in-flow surfaces already sit on a near-opaque background, so the blur is
+   invisible there; fixed chrome (topbar, sheets, dialogs) keeps it. */
+@media (hover: none) and (pointer: coarse) {
+  .page-head,
+  .directory-toolbar,
+  .section-loading-screen,
+  thead th {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
 @supports not (content-visibility: auto) {
+  .user-card,
+  .invite-card,
   .bot-card {
     content-visibility: visible;
     contain-intrinsic-size: auto;
@@ -4479,6 +4514,31 @@ tbody tr.is-selected td {
   border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
 }
 
+.thread-item:has(.presence-dot) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thread-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-item.active {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  background: color-mix(in srgb, var(--accent) 12%, rgba(17, 23, 27, var(--surface-opacity)));
+}
+
+#msg-threads,
+#msg-search-results {
+  display: grid;
+  gap: 8px;
+}
+
 .messages-conversation {
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -4492,7 +4552,26 @@ tbody tr.is-selected td {
 
 #msg-list {
   display: grid;
+  align-content: start;
   gap: 8px;
+  /* The conversation scrolls inside its own box (pinned to the newest
+     message by the page script) instead of growing the whole page without
+     bound as history accumulates. */
+  max-height: min(60vh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+}
+
+.msg-bubble .msg-time {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.7rem;
+  opacity: 0.6;
+}
+
+.msg-bubble {
+  overflow-wrap: anywhere;
 }
 
 .msg-bubble {
