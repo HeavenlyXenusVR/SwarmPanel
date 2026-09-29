@@ -207,24 +207,26 @@ function M.issue_token(secret, payload, ttl_seconds)
   return json_part .. "." .. sig_part
 end
 
--- Returns decoded payload table, or nil if missing/invalid/expired.
+-- Returns decoded payload table, or nil plus a reason ("malformed",
+-- "bad_signature", "expired") if missing/invalid/expired. The reason is for
+-- telemetry only -- callers still treat every failure the same way.
 function M.verify_token(secret, token)
-  if not token or token == "" then return nil end
+  if not token or token == "" then return nil, "missing" end
   local json_part, sig_part = token:match("^([^.]+)%.([^.]+)$")
-  if not json_part then return nil end
+  if not json_part then return nil, "malformed" end
   local expected_sig = M.hmac_sha256(secret, json_part)
   local given_sig = b64url_decode(sig_part)
-  if not given_sig or #given_sig ~= #expected_sig then return nil end
+  if not given_sig or #given_sig ~= #expected_sig then return nil, "bad_signature" end
   local diff = 0
   for i = 1, #expected_sig do
     diff = or_diff(diff, expected_sig:byte(i), given_sig:byte(i))
   end
-  if diff ~= 0 then return nil end
+  if diff ~= 0 then return nil, "bad_signature" end
   local json = b64url_decode(json_part)
-  if not json then return nil end
+  if not json then return nil, "malformed" end
   local ok, payload = pcall(cjson.decode, json)
-  if not ok or type(payload) ~= "table" then return nil end
-  if payload.exp and os.time() > payload.exp then return nil end
+  if not ok or type(payload) ~= "table" then return nil, "malformed" end
+  if payload.exp and os.time() > payload.exp then return nil, "expired" end
   return payload
 end
 
@@ -243,12 +245,16 @@ function M.issue_api_token(secret, username, opts)
     admin_mode = (opts.site_owner and true or false) and (tostring(opts.role or "admin"):lower() == "admin") and not opts.guild_id
   end
   payload.admin_mode = admin_mode and true or false
+  -- Device sessions (native apps' "remember this device"): kept in the
+  -- token itself so every refresh can re-issue with the same long TTL.
+  if opts.device then payload.device = true end
+  if opts.client and opts.client ~= "" then payload.client = tostring(opts.client):sub(1, 20) end
   return M.issue_token(secret, payload, opts.ttl_seconds)
 end
 
 function M.verify_api_token(secret, token)
-  local data = M.verify_token(secret, token)
-  if not data then return nil end
+  local data, reason = M.verify_token(secret, token)
+  if not data then return nil, reason end
   if data.role == nil then data.role = data.guild_id and "account" or "admin" end
   if data.site_owner == nil then data.site_owner = false end
   if data.moderator == nil then data.moderator = false end

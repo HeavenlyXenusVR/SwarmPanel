@@ -10,6 +10,8 @@ import SwiftUI
 struct SwarmPanelTVApp: App {
     @StateObject private var session = TVSession()
     @StateObject private var account = TVAccountModel()
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var activeSince = Date()
 
     var body: some Scene {
         WindowGroup {
@@ -27,6 +29,22 @@ struct SwarmPanelTVApp: App {
             }
             .onAppear {
                 if session.isAuthenticated { account.start() }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                switch phase {
+                case .active:
+                    activeSince = Date()
+                    TVTelemetry.shared.log("app_foreground")
+                    // Renew the session (and reconnect) right away: a
+                    // suspended app's refresh timer doesn't run.
+                    session.appBecameActive()
+                    if session.isAuthenticated { SwarmLiveSocket.shared.connect() }
+                case .background:
+                    TVTelemetry.shared.log("app_background", value: Date().timeIntervalSince(activeSince).rounded())
+                    Task { await TVTelemetry.shared.flush() }
+                default:
+                    break
+                }
             }
         }
     }

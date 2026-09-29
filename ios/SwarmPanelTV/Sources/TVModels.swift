@@ -7,7 +7,7 @@ import Foundation
 /// (heartbeat age, Aria's process stats and Medic summary, node health)
 /// without changing the model the iOS app caches to disk. Session rows reuse
 /// the shared DashboardSession from BotModels.swift.
-struct TVDashboardResponse: Decodable {
+struct TVDashboardResponse: Codable {
     let bots: [TVBot]?
     let sessions: [DashboardSession]?
     let nodeHealth: [String: TVNodeHealth]?
@@ -25,11 +25,11 @@ struct TVDashboardResponse: Decodable {
     }
 }
 
-struct TVNodeHealth: Decodable {
+struct TVNodeHealth: Codable {
     let status: String?
 }
 
-struct TVBot: Decodable, Identifiable {
+struct TVBot: Codable, Identifiable {
     let key: String
     let displayName: String?
     let kind: String?
@@ -67,7 +67,7 @@ struct TVBot: Decodable, Identifiable {
     }
 }
 
-struct TVMedicSummary: Decodable {
+struct TVMedicSummary: Codable {
     let pendingRepairs: Int?
     let pendingInfra: Int?
     let criticalHealth: Int?

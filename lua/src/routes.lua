@@ -64,11 +64,48 @@ function M.register(cfg)
   -- JSON API's Bearer-header path (frontend/src/api.js, and any future
   -- fetch()-based JS on the rendered pages) is unchanged and checked first.
   local SESSION_COOKIE = "swarm_session"
+
+  -- Device sessions ("remember this device", native apps only): a longer
+  -- token that each refresh re-issues with the same lifetime. See
+  -- config.lua's device_token_ttl_seconds.
+  local function token_ttl(device)
+    if device then return settings.device_token_ttl_seconds or 2592000 end
+    return settings.api_token_ttl_seconds
+  end
+  local KNOWN_CLIENTS = { web = true, ios = true, tvos = true, widget = true }
+  local function client_name(value)
+    local c = tostring(value or ""):lower()
+    return KNOWN_CLIENTS[c] and c or nil
+  end
+
+  -- A presented-but-rejected token (expired, bad signature, ...) is what a
+  -- "why did I get logged out" report comes down to, and was invisible
+  -- before. Throttled per IP+reason so a client stuck retrying a dead token
+  -- can't flood the telemetry table.
+  local token_reject_last = {}
+  local function record_token_rejected(req, reason, via)
+    local key = tostring(req.client_ip) .. ":" .. tostring(reason)
+    local now = os.time()
+    if (token_reject_last[key] or 0) > now - 60 then return end
+    token_reject_last[key] = now
+    if next(token_reject_last) and math.random(50) == 1 then
+      for k, t in pairs(token_reject_last) do
+        if t <= now - 60 then token_reject_last[k] = nil end
+      end
+    end
+    pcall(telemetry.record, "auth", "token_rejected", {
+      path = req.path, client_ip = req.client_ip, text_value = reason,
+      metadata = { reason = reason, via = via },
+    })
+  end
+
   local function get_auth(req)
     local token = auth.extract_bearer_token(req.headers["authorization"])
-    if not token and req.cookies then token = req.cookies[SESSION_COOKIE] end
+    local via = "bearer"
+    if not token and req.cookies then token, via = req.cookies[SESSION_COOKIE], "cookie" end
     if not token then return nil end
-    local a = auth.verify_api_token(settings.session_secret, token)
+    local a, reject_reason = auth.verify_api_token(settings.session_secret, token)
+    if not a then record_token_rejected(req, reject_reason, via) end
     -- Side effect, not just a return value: httpd.lua's request-telemetry
     -- recorder (see its own comment) reads req.auth AFTER the handler
     -- returns to attribute the request to a username/guild -- never the
@@ -350,10 +387,21 @@ function M.register(cfg)
     local account_guild_id = resolve_account_guild_id(a)
     local site_owner = is_site_owner(a)
     local admin_mode = is_admin_auth(a)
+    -- A device session stays a device session across refreshes (same
+    -- long TTL, same client tag); a normal session keeps the normal TTL.
+    local device = a.device == true
     local fresh_token = auth.issue_api_token(settings.session_secret, username, {
       role = role, guild_id = account_guild_id or a.guild_id, admin_mode = admin_mode,
-      site_owner = site_owner, moderator = a.moderator, ttl_seconds = settings.api_token_ttl_seconds,
+      site_owner = site_owner, moderator = a.moderator, ttl_seconds = token_ttl(device),
+      device = device, client = a.client,
     })
+    if a.client and a.client ~= "web" then
+      pcall(telemetry.record, "auth", "session_refresh", {
+        username = username, guild_id = account_guild_id, client_ip = req.client_ip,
+        numeric_value = a.exp and (a.exp - os.time()) or nil,
+        metadata = { client = a.client, device = device },
+      })
+    end
     return 200, {
       authenticated = true,
       mode = "token",
@@ -367,7 +415,7 @@ function M.register(cfg)
       image_gallery_owner = admin_mode and site_owner,
       token = fresh_token,
       pages_public_url = settings.pages_public_url,
-      expires_in = settings.api_token_ttl_seconds,
+      expires_in = token_ttl(device),
     }, { ["Set-Cookie"] = session_cookie_header(fresh_token) }
   end)
 
@@ -392,7 +440,8 @@ function M.register(cfg)
     local role = a.role or "account"
     local fresh_token = auth.issue_api_token(settings.session_secret, username, {
       role = role, guild_id = linked_guild_id, admin_mode = admin_mode,
-      site_owner = true, moderator = a.moderator, ttl_seconds = settings.api_token_ttl_seconds,
+      site_owner = true, moderator = a.moderator, ttl_seconds = token_ttl(a.device == true),
+      device = a.device == true, client = a.client,
     })
     return 200, {
       ok = true, username = username, role = role,
@@ -401,7 +450,7 @@ function M.register(cfg)
       image_gallery_owner = admin_mode and true or false,
       token = fresh_token,
       pages_public_url = settings.pages_public_url,
-      expires_in = settings.api_token_ttl_seconds,
+      expires_in = token_ttl(a.device == true),
     }, { ["Set-Cookie"] = session_cookie_header(fresh_token) }
   end)
 
@@ -463,12 +512,19 @@ function M.register(cfg)
       -- visible -- generic HTTP telemetry alone (see httpd.lua) only shows
       -- "POST /api/session/login -> 401", with no way to tell one repeatedly
       -- failing username apart from many different ones failing once each.
-      pcall(telemetry.record, "auth", "login_failed", { username = username, client_ip = req.client_ip })
+      pcall(telemetry.record, "auth", "login_failed", {
+        username = username, client_ip = req.client_ip, metadata = { client = client_name(body.client) or "web" },
+      })
       return 401, { detail = "Invalid username or password" }
     end
+    -- Native apps ask to be remembered so closing the app doesn't mean
+    -- signing in again (see token_ttl). Only honored for a known native
+    -- client tag; browsers keep the normal cookie-length session.
+    local client = client_name(body.client) or "web"
+    local device = body.remember_device == true and client ~= "web"
     pcall(telemetry.record, "auth", "login_success", {
       username = auth_result.username, guild_id = auth_result.guild_id, client_ip = req.client_ip,
-      metadata = { role = auth_result.role, site_owner = auth_result.site_owner },
+      metadata = { role = auth_result.role, site_owner = auth_result.site_owner, client = client, device = device },
     })
 
     -- Clients that must never run in admin mode (the tvOS dashboard) ask
@@ -480,15 +536,87 @@ function M.register(cfg)
 
     local token = auth.issue_api_token(settings.session_secret, auth_result.username, {
       role = auth_result.role, guild_id = auth_result.guild_id, admin_mode = auth_result.admin_mode,
-      site_owner = auth_result.site_owner, moderator = auth_result.moderator, ttl_seconds = settings.api_token_ttl_seconds,
+      site_owner = auth_result.site_owner, moderator = auth_result.moderator, ttl_seconds = token_ttl(device),
+      device = device, client = client,
     })
     return 200, {
       ok = true, token = token, username = auth_result.username, role = auth_result.role,
       guild_id = auth_result.guild_id, account_guild_id = auth_result.guild_id,
       site_owner = auth_result.site_owner, admin_mode = auth_result.admin_mode, moderator = auth_result.moderator,
       image_gallery_owner = auth_result.admin_mode and auth_result.site_owner,
-      pages_public_url = settings.pages_public_url, expires_in = settings.api_token_ttl_seconds,
+      pages_public_url = settings.pages_public_url, expires_in = token_ttl(device),
     }, { ["Set-Cookie"] = session_cookie_header(token) }
+  end)
+
+  -- ----------------------------------------------------- client telemetry
+  -- Batched events from the native apps (tvOS today): launches, session
+  -- restores/expiries, socket drops, load latency, ... -- the things the
+  -- server can't see for itself. Stored in the same swarmpanel_telemetry_events
+  -- table under category "client", with the app's platform/version/launch id
+  -- folded into metadata. telemetry.record() already drops credential-looking
+  -- keys and redacts token-shaped text.
+  --
+  -- Auth is optional and this route never answers 401: the apps sign the
+  -- user out on any 401, and a telemetry upload must never be the thing
+  -- that does that (an expired token here just means the batch is recorded
+  -- without a username).
+  local CLIENT_TELEMETRY_MAX_BYTES = 65536
+  local CLIENT_TELEMETRY_MAX_EVENTS = 50
+  local function clean_event_name(v)
+    local name = tostring(v or ""):gsub("[^%w_%.%-]", ""):sub(1, 80)
+    return name ~= "" and name or nil
+  end
+  local function clean_meta_string(v, max_len)
+    if v == nil then return nil end
+    return tostring(v):sub(1, max_len or 120)
+  end
+  httpd.route("POST", "/api/telemetry/client", function(req)
+    if #(req.raw_body or "") > CLIENT_TELEMETRY_MAX_BYTES then
+      return 413, { detail = "Telemetry batch too large." }
+    end
+    local a = get_auth(req)
+    local rl_key = "client-telemetry:" .. tostring((a and a.username) or req.client_ip or "unknown"):lower()
+    if not ratelimit.allow(rl_key, 10, 60) then
+      return 429, { detail = "Too many telemetry batches. Try again later." }
+    end
+    local body = req.json or {}
+    local events = type(body.events) == "table" and body.events or {}
+    local client = client_name(body.client) or "unknown"
+    local base_meta = {
+      client = client,
+      app_version = clean_meta_string(body.app_version, 40),
+      os_version = clean_meta_string(body.os_version, 40),
+      device_model = clean_meta_string(body.device_model, 60),
+      launch_id = clean_meta_string(body.launch_id, 64),
+    }
+    local accepted = 0
+    for i = 1, math.min(#events, CLIENT_TELEMETRY_MAX_EVENTS) do
+      local e = events[i]
+      local name = type(e) == "table" and clean_event_name(e.name) or nil
+      if name then
+        local meta = {}
+        for k, v in pairs(base_meta) do meta[k] = v end
+        if type(e.metadata) == "table" then
+          local n = 0
+          for k, v in pairs(e.metadata) do
+            n = n + 1
+            if n > 20 then break end
+            meta[tostring(k):sub(1, 40)] = (type(v) == "number" or type(v) == "boolean") and v or clean_meta_string(v, 200)
+          end
+        end
+        meta.client_ts = tonumber(e.at)
+        pcall(telemetry.record, "client", client .. "." .. name, {
+          username = a and a.username or nil,
+          guild_id = a and a.guild_id or nil,
+          client_ip = req.client_ip,
+          numeric_value = tonumber(e.value),
+          text_value = e.text ~= nil and clean_meta_string(e.text, 500) or nil,
+          metadata = meta,
+        })
+        accepted = accepted + 1
+      end
+    end
+    return 200, { ok = true, accepted = accepted }
   end)
 
   httpd.route("POST", "/api/session/logout", function(req)
@@ -1430,7 +1558,11 @@ function M.register(cfg)
     if raw then
       local ok, msg = pcall(cjson.decode, raw)
       if ok and type(msg) == "table" and msg.type == "auth" then
-        a = auth.verify_api_token(settings.session_secret, tostring(msg.token or ""))
+        local reason
+        a, reason = auth.verify_api_token(settings.session_secret, tostring(msg.token or ""))
+        if not a then
+          record_token_rejected({ path = req.path, client_ip = req.headers and (req.headers["x-forwarded-for"] or ""):match("^[^,]*") }, reason, "websocket")
+        end
       end
     end
     if not a then
@@ -1707,16 +1839,18 @@ function M.register(cfg)
       end
     end
 
+    local reg_client = client_name(body.client) or "web"
+    local reg_device = body.remember_device == true and reg_client ~= "web"
     local token = auth.issue_api_token(settings.session_secret, account.username, {
       role = "account", guild_id = account.guild_id, admin_mode = false, site_owner = false, moderator = false,
-      ttl_seconds = settings.api_token_ttl_seconds,
+      ttl_seconds = token_ttl(reg_device), device = reg_device, client = reg_client,
     })
     return 200, {
       ok = true, token = token, username = account.username, role = "account",
       guild_id = account.guild_id, account_guild_id = account.guild_id,
       site_owner = false, admin_mode = false, moderator = false, image_gallery_owner = false,
       verification_sent = verification_sent,
-      pages_public_url = settings.pages_public_url, expires_in = settings.api_token_ttl_seconds,
+      pages_public_url = settings.pages_public_url, expires_in = token_ttl(reg_device),
     }
   end)
 

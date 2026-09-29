@@ -5,12 +5,12 @@ import SwiftUI
 /// REST fallback (GET /api/users/me + /api/users/preferences) at start and
 /// whenever the socket is down. Changing the background, accent or profile
 /// on the web shows up on the TV within ~10 seconds.
-struct TVAccountSnapshot: Decodable {
+struct TVAccountSnapshot: Codable {
     let profile: TVProfile?
     let preferences: TVPreferences?
 }
 
-struct TVProfile: Decodable {
+struct TVProfile: Codable {
     let username: String?
     let displayName: String?
     let avatarUrl: String?
@@ -25,7 +25,7 @@ struct TVProfile: Decodable {
     }
 }
 
-struct TVPreferences: Decodable {
+struct TVPreferences: Codable {
     let accentColor: String?
     let backgroundMode: String?
     let backgroundColor: String?
@@ -43,14 +43,30 @@ final class TVAccountModel: ObservableObject {
 
     private let socket = SwarmLiveSocket.shared
     private let api = APIClient.shared
+    private let telemetry = TVTelemetry.shared
     private var pollTask: Task<Void, Never>?
+
+    private static let cacheKey = "swarmpanel.tv.accountSnapshot"
+
+    /// The last known profile + appearance from disk, so the TV comes up in
+    /// the account's own background straight away instead of flashing the
+    /// default one until the network answers.
+    init() {
+        guard let data = UserDefaults.standard.data(forKey: Self.cacheKey),
+              let cached = try? JSONDecoder().decode(TVAccountSnapshot.self, from: data) else { return }
+        profile = cached.profile
+        preferences = cached.preferences
+    }
+
+    static func clearCache() {
+        UserDefaults.standard.removeObject(forKey: cacheKey)
+    }
 
     func start() {
         guard pollTask == nil else { return }
         socket.watch("account", as: TVAccountSnapshot.self) { [weak self] result in
             guard let self, case .success(let snapshot) = result else { return }
-            if let profile = snapshot.profile { self.profile = profile }
-            if let preferences = snapshot.preferences { self.preferences = preferences }
+            self.update(profile: snapshot.profile, preferences: snapshot.preferences, source: "live")
         }
         socket.connect()
         pollTask = Task { [weak self] in
@@ -73,11 +89,42 @@ final class TVAccountModel: ObservableObject {
     }
 
     private func loadOnce() async {
-        if let me: TVMeEnvelope = try? await api.get("/api/users/me"), let profile = me.profile {
-            self.profile = profile
+        var newProfile: TVProfile?
+        var newPreferences: TVPreferences?
+        do {
+            let me: TVMeEnvelope = try await api.get("/api/users/me")
+            newProfile = me.profile
+            let prefs: TVPreferencesEnvelope = try await api.get("/api/users/preferences")
+            newPreferences = prefs.preferences
+        } catch {
+            if !error.isCancellation {
+                telemetry.log("account_load_failure", ["kind": TVTelemetry.kind(of: error)])
+            }
         }
-        if let prefs: TVPreferencesEnvelope = try? await api.get("/api/users/preferences"), let preferences = prefs.preferences {
-            self.preferences = preferences
+        update(profile: newProfile, preferences: newPreferences, source: "rest")
+    }
+
+    /// Applies whatever arrived, logs what actually changed (so a web-side
+    /// Appearance edit reaching the TV is visible in telemetry), and saves
+    /// the result for the next launch.
+    private func update(profile newProfile: TVProfile?, preferences newPreferences: TVPreferences?, source: String) {
+        var changed: [String] = []
+        if let newPreferences {
+            if newPreferences.backgroundMode != preferences?.backgroundMode
+                || newPreferences.backgroundColor != preferences?.backgroundColor
+                || newPreferences.backgroundImageUrl != preferences?.backgroundImageUrl { changed.append("background") }
+            if newPreferences.accentColor != preferences?.accentColor { changed.append("accent") }
+            preferences = newPreferences
+        }
+        if let newProfile {
+            if newProfile.displayName != profile?.displayName || newProfile.avatarUrl != profile?.avatarUrl
+                || newProfile.serverName != profile?.serverName { changed.append("profile") }
+            profile = newProfile
+        }
+        guard !changed.isEmpty else { return }
+        telemetry.log("account_sync", ["source": source, "changed": changed.joined(separator: ",")])
+        if let data = try? JSONEncoder().encode(TVAccountSnapshot(profile: profile, preferences: preferences)) {
+            UserDefaults.standard.set(data, forKey: Self.cacheKey)
         }
     }
 

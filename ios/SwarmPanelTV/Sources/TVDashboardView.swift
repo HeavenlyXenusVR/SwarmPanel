@@ -59,9 +59,18 @@ struct TVDashboardView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            if let updated = model.lastUpdated, model.isFromCache || !live.isConnected {
+                // Cached or stale data on screen: say how old it is.
+                Text("Updated \(updated, style: .relative) ago")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             TVStatusPill(text: live.isConnected ? "Live" : "Reconnecting",
                          color: live.isConnected ? Color(red: 0.49, green: 0.91, blue: 0.53) : .orange)
-            Button("Sign Out") { confirmSignOut = true }
+            Button("Sign Out") {
+                TVTelemetry.shared.log("sign_out_prompted")
+                confirmSignOut = true
+            }
         }
     }
 
@@ -94,7 +103,10 @@ struct TVDashboardView: View {
         } else {
             LazyVGrid(columns: columns, spacing: 40) {
                 ForEach(model.musicBots) { bot in
-                    Button { selectedBot = bot } label: {
+                    Button {
+                        TVTelemetry.shared.log("bot_detail_opened", ["bot": bot.key, "offline": bot.isOffline ? "true" : "false"])
+                        selectedBot = bot
+                    } label: {
                         TVBotCard(bot: bot, accent: account.accent)
                     }
                     .buttonStyle(.card)
