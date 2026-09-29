@@ -38,6 +38,7 @@ local function denull(v)
 end
 
 local CACHE_TTL = 300
+local ERROR_CACHE_TTL = 30
 local cache = {} -- cache_key -> {expires_monotonic, data}
 local rest_clients = {} -- token -> Rest instance
 
@@ -62,10 +63,19 @@ local function cached_get(token, path)
   -- intended.
   local now = socket.gettime()
   local hit = cache[key]
-  if hit and hit[1] > now then return hit[2], nil end
+  if hit and hit[1] > now then return hit[2], hit[3] end
   local rest = rest_for(token)
   local data, err = rest:get(path)
-  if data == nil then return nil, err end
+  if data == nil then
+    -- Failures are cached too, briefly. The REST client is blocking (up to
+    -- a 15s timeout per call, see swarmlua/rest.lua), so during a Discord
+    -- outage every dashboard/invites/inventory request used to retry every
+    -- bot's lookups from scratch and freeze the entire event loop for each
+    -- of them in turn. Now a failed lookup is retried at most once per
+    -- ERROR_CACHE_TTL.
+    cache[key] = { socket.gettime() + ERROR_CACHE_TTL, nil, err or "Discord request failed." }
+    return nil, err
+  end
   cache[key] = { now + CACHE_TTL, data }
   return data, nil
 end

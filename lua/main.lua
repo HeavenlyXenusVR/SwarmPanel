@@ -79,6 +79,14 @@ static.register()
 -- metrics.lua port explicitly left out for lack of a scheduler -- copas
 -- (already used for the dashboard WebSocket broadcast loop) works fine as
 -- one.
+-- Social-table indexes (see social.lua's ensure_indexes): run once, off the
+-- request path, shortly after startup so the listener is already up.
+copas.addthread(function()
+  copas.sleep(5)
+  local ok, err = pcall(require("social").ensure_indexes)
+  if not ok then print("[swarmpanel-lua] social index setup failed: " .. tostring(err)) end
+end)
+
 local METRICS_HISTORY_CAPTURE_INTERVAL_SECONDS = 300
 copas.addthread(function()
   copas.sleep(30)

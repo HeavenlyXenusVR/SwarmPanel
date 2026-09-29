@@ -154,8 +154,17 @@ function swarmLiveConnect() {
   let ws = null;
   let attempt = 0;
   let closedByUs = false;
+  let authRejected = false;
+  let reconnectTimer = null;
+  let watchdogTimer = null;
   const handlers = {}; // key -> handler (one per key -- see resubscribe())
   const watchParams = {}; // key -> params sent with the watch (re-sent on reconnect)
+  // The server pushes "dashboard" every couple of seconds and pings any
+  // socket that has been quiet for 45s, so a connection that has delivered
+  // nothing for this long is dead in a way the browser hasn't noticed yet
+  // (sleep/wake, network switch, a proxy silently dropping it). Without a
+  // watchdog the page just froze on its last snapshot until reload.
+  const SILENCE_LIMIT_MS = 100000;
 
   function send(obj) {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
@@ -167,39 +176,79 @@ function swarmLiveConnect() {
     }
   }
 
+  function armWatchdog() {
+    clearTimeout(watchdogTimer);
+    watchdogTimer = setTimeout(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) { try { ws.close(); } catch { /* already closing */ } }
+    }, SILENCE_LIMIT_MS);
+  }
+
+  function isLive() {
+    return ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING);
+  }
+
+  function scheduleReconnect() {
+    if (reconnectTimer || closedByUs || authRejected) return;
+    // Exponential backoff with jitter, so every open tab doesn't hammer the
+    // server in lockstep the moment it comes back after a restart.
+    const base = Math.min(15000, 1000 * Math.pow(2, attempt));
+    const delay = base / 2 + Math.random() * (base / 2);
+    attempt += 1;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      if (!document.hidden) connect();
+    }, delay);
+  }
+
   function connect() {
-    if (!window.SWARM_TOKEN) return;
+    if (!window.SWARM_TOKEN || closedByUs || authRejected) return;
+    // Never run two sockets at once: a queued backoff reconnect and the
+    // visibility/online handlers below used to be able to both fire,
+    // leaving a second live socket that doubled every push and render.
+    if (isLive()) return;
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    ws = new WebSocket(proto + "//" + window.location.host + "/ws");
-    ws.addEventListener("open", () => {
+    const sock = new WebSocket(proto + "//" + window.location.host + "/ws");
+    ws = sock;
+    sock.addEventListener("open", () => {
       attempt = 0;
-      ws.send(JSON.stringify({ type: "auth", token: window.SWARM_TOKEN }));
+      sock.send(JSON.stringify({ type: "auth", token: window.SWARM_TOKEN }));
       resubscribeAll();
+      armWatchdog();
     });
-    ws.addEventListener("message", (event) => {
+    sock.addEventListener("message", (event) => {
+      if (sock !== ws) return;
+      armWatchdog();
       let msg;
       try { msg = JSON.parse(event.data); } catch { return; }
-      if (msg.type === "ping") { ws.send(JSON.stringify({ type: "pong" })); return; }
+      if (msg.type === "ping") { send({ type: "pong" }); return; }
       if (msg.type === "snapshot" || msg.type === "snapshot_error") {
         const fn = handlers[msg.key];
         if (fn) { try { fn(msg); } catch { /* a bad handler shouldn't take the socket down */ } }
       }
     });
-    ws.addEventListener("close", () => {
+    sock.addEventListener("close", (event) => {
+      if (sock !== ws) return;
+      clearTimeout(watchdogTimer);
+      // 4401 = the server rejected the session token (expired/revoked).
+      // Retrying with the same token can never succeed; stop instead of
+      // reconnecting every few seconds for the life of the tab.
+      if (event && event.code === 4401) { authRejected = true; return; }
       if (closedByUs || document.hidden) return;
-      const delay = Math.min(8000, 1000 * Math.pow(2, attempt));
-      attempt += 1;
-      setTimeout(() => { if (!document.hidden) connect(); }, delay);
+      scheduleReconnect();
     });
-    ws.addEventListener("error", () => { try { ws.close(); } catch { /* already closing */ } });
+    sock.addEventListener("error", () => { try { sock.close(); } catch { /* already closing */ } });
   }
 
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) return;
-    if (!ws || ws.readyState === WebSocket.CLOSED) connect();
+    if (!isLive()) { attempt = 0; connect(); }
+    // Coming back to the tab counts as activity for the presence system.
+    else send({ type: "pong" });
   });
   window.addEventListener("online", () => {
-    if (!ws || ws.readyState === WebSocket.CLOSED) connect();
+    if (!isLive()) { attempt = 0; connect(); }
   });
 
   connect();
@@ -233,7 +282,12 @@ function swarmLiveConnect() {
       delete watchParams[key];
       send({ type: "unwatch", key: key });
     },
-    close() { closedByUs = true; if (ws) ws.close(); },
+    close() {
+      closedByUs = true;
+      clearTimeout(reconnectTimer);
+      clearTimeout(watchdogTimer);
+      if (ws) ws.close();
+    },
   };
 }
 window.swarmLive = swarmLiveConnect();
@@ -278,7 +332,12 @@ function parseSqlTimestampSeconds(raw) {
 }
 
 function tickPlaybackCounters() {
+  // Nothing to animate in a background tab; the next visible tick (and the
+  // visibilitychange handler below) catches the counters up immediately.
+  if (document.hidden) return;
   document.querySelectorAll("[data-playback-counter]").forEach((el) => {
+    // A bar the user is dragging owns its own fill/thumb until release.
+    if (el.querySelector(".bot-seek-seeking")) return;
     const playing = el.getAttribute("data-playing") === "true";
     const basePos = parseFloat(el.getAttribute("data-position") || "0");
     const observedAt = parseSqlTimestampSeconds(el.getAttribute("data-observed-at"));
@@ -300,6 +359,7 @@ function tickPlaybackCounters() {
   });
 }
 setInterval(tickPlaybackCounters, 1000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) tickPlaybackCounters(); });
 
 window.swarmSelectedIds = function (table) {
   return Array.from(table.querySelectorAll("[data-select-row]:checked")).map((b) => b.value);
@@ -380,50 +440,66 @@ document.addEventListener("DOMContentLoaded", () => {
   // <div data-seek-bar data-bot-key="..." data-guild-id="..." data-duration="240">
   //   <div data-playback-bar></div>
   // </div>
-  // Posts SEEK via /api/bots/control on release. Uses event delegation
-  // (document-level mousedown) so it also works for seek bars added to the
-  // page later via innerHTML, not just ones present at DOMContentLoaded.
-  document.addEventListener("mousedown", (e) => {
+  // Posts SEEK via /api/bots/control on release. Pointer events (not
+  // mouse-only, as before) so seeking also works on touch screens, with
+  // pointer capture so a drag that leaves the bar keeps tracking. Delegated
+  // from the document so it also works for seek bars added via innerHTML.
+  document.addEventListener("pointerdown", (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
     const bar = e.target.closest("[data-seek-bar]");
     if (!bar) return;
     const duration = parseFloat(bar.getAttribute("data-duration") || "0");
     if (!duration) return;
+    e.preventDefault();
     // CSS's hover/active thumb-reveal rule is keyed off .bot-seek-seeking
-    // (static/app.css), not .dragging -- the thumb never actually got shown
-    // while dragging before this matched the class name up.
+    // (static/app.css), not .dragging.
     bar.classList.add("bot-seek-seeking");
+    try { bar.setPointerCapture(e.pointerId); } catch { /* capture unsupported */ }
+    const rect = bar.getBoundingClientRect();
     function fractionFromEvent(evt) {
-      const rect = bar.getBoundingClientRect();
-      return Math.min(1, Math.max(0, (evt.clientX - rect.left) / rect.width));
+      return rect.width > 0 ? Math.min(1, Math.max(0, (evt.clientX - rect.left) / rect.width)) : 0;
     }
-    function onMove(evt) {
-      const frac = fractionFromEvent(evt);
-      const pct = frac * 100 + "%";
+    let lastFrac = fractionFromEvent(e);
+    let frame = 0;
+    function paint() {
+      frame = 0;
+      const pct = lastFrac * 100 + "%";
       const fill = bar.querySelector("[data-playback-bar]");
       if (fill) fill.style.width = pct;
       const thumb = bar.querySelector("[data-seek-thumb]");
       if (thumb) thumb.style.left = pct;
       const current = bar.parentElement && bar.parentElement.querySelector("[data-seek-current]");
-      if (current) current.textContent = formatDuration(frac * duration);
+      if (current) current.textContent = formatDuration(lastFrac * duration);
     }
-    function onUp(evt) {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
+    function onMove(evt) {
+      lastFrac = fractionFromEvent(evt);
+      if (!frame) frame = requestAnimationFrame(paint);
+    }
+    function finish(evt, commit) {
+      bar.removeEventListener("pointermove", onMove);
+      bar.removeEventListener("pointerup", onUp);
+      bar.removeEventListener("pointercancel", onCancel);
+      if (frame) cancelAnimationFrame(frame);
       bar.classList.remove("bot-seek-seeking");
-      const frac = fractionFromEvent(evt);
-      const seconds = Math.round(frac * duration);
+      if (!commit) return;
+      lastFrac = fractionFromEvent(evt);
+      paint();
       swarmFetch("/api/bots/control", {
         method: "POST",
         body: JSON.stringify({
           bot_key: bar.getAttribute("data-bot-key"),
           guild_id: bar.getAttribute("data-guild-id"),
           action: "SEEK",
-          payload: { position_seconds: seconds },
+          payload: { position_seconds: Math.round(lastFrac * duration) },
         }),
       }).catch(() => swarmToast("Seek failed.", "error"));
     }
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
+    function onUp(evt) { finish(evt, true); }
+    function onCancel(evt) { finish(evt, false); }
+    bar.addEventListener("pointermove", onMove);
+    bar.addEventListener("pointerup", onUp);
+    bar.addEventListener("pointercancel", onCancel);
+    paint();
   });
 
   // Generic copy-to-clipboard button. Element contract:
