@@ -247,6 +247,36 @@ function M.get_panel_preferences(username, guild_id)
   return prefs
 end
 
+-- The site owner's admin-mode choice persists across logins: it used to
+-- live only in the session token, so every fresh login re-derived it and
+-- switched admin mode back on even after the owner had turned it off.
+-- Stored in the account's panel_preferences JSON (no schema change), read
+-- and merged raw so nothing else in the blob is touched. nil = never set
+-- (callers keep their default); otherwise true/false.
+function M.get_admin_mode_preference(username, guild_id)
+  local uname = normalize_username(username)
+  if not uname or not guild_id or guild_id == "" then return nil end
+  local profile = M.get_account_profile(uname, guild_id)
+  local prefs = profile and profile.panel_preferences
+  if type(prefs) ~= "table" or prefs.admin_mode_enabled == nil then return nil end
+  return prefs.admin_mode_enabled == true
+end
+
+function M.set_admin_mode_preference(username, guild_id, enabled)
+  local uname = normalize_username(username)
+  if not uname or not guild_id or guild_id == "" then return false end
+  local profile = M.get_account_profile(uname, guild_id)
+  if not profile then return false end
+  local prefs = (type(profile.panel_preferences) == "table") and profile.panel_preferences or {}
+  prefs.admin_mode_enabled = enabled and true or false
+  local ok = db.execute(
+    SCHEMA,
+    "UPDATE " .. TABLE .. " SET panel_preferences = %s WHERE username = %s AND guild_id = %s",
+    cjson.encode(prefs), uname, guild_id
+  )
+  return ok == true
+end
+
 -- Every column update_account_profile/update_account_admin is allowed to
 -- touch. Mirrors helpers.py's ACCOUNT_PROFILE_FIELDS (derived from
 -- ACCOUNT_PROFILE_COLUMNS) — the actual field-level shape/enum validation
