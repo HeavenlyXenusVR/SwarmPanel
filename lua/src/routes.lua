@@ -621,6 +621,15 @@ function M.register(cfg)
     return data
   end
 
+  -- Server-rendered pages (pages_fleet.lua's Dashboard/Controls) use this
+  -- instead of the raw fleet snapshot, so the first paint is scoped exactly
+  -- like the live "dashboard" push that replaces it: a guild account only
+  -- ever sees the bots/sessions in its own guild. Rendering the unscoped
+  -- snapshot showed every guild's bots, tracks and guild names until the
+  -- first push arrived (and left cards the push never touches, like Aria's,
+  -- on screen for good).
+  M.scoped_dashboard_data = function(a) return build_dashboard_payload(a, false) end
+
   -- DoS backstop: every require_auth-only (non-admin) endpoint below gets a
   -- modest per-account rate limit, same ratelimit.lua mechanism the auth
   -- routes above use, keyed on the account's username alone (any authorized

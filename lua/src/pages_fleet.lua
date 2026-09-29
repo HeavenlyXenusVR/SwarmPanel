@@ -52,7 +52,9 @@ function M.register(cfg)
     local a, redirect_status, redirect_headers = cfg.require_auth_page(req)
     if not a then return redirect_status, "", redirect_headers end
 
-    local data = dashboard.get_dashboard_data(music_bots)
+    -- Scoped to the caller's guild, same as the live push (see
+    -- routes.lua's scoped_dashboard_data).
+    local data = cfg.scoped_dashboard_data(a)
 
     -- Mirrors swarm.jsx's bestSession()/playbackBadge(): the featured
     -- session for a card is whichever guild is actually playing, falling
@@ -858,7 +860,9 @@ function M.register(cfg)
     local a, status, headers = cfg.require_auth_page(req)
     if not a then return status, "", headers end
 
-    local data = dashboard.get_dashboard_data(music_bots)
+    -- Only bots this account can actually send orders to (a guild account
+    -- gets its own guild's bots; POST /api/bots/control rejects the rest).
+    local data = cfg.scoped_dashboard_data(a)
     local bot_options = {}
     for _, bot in ipairs(data.bots) do
       bot_options[#bot_options + 1] = ("<option value=\"%s\">%s</option>"):format(html.esc(bot.key), html.esc(bot.display_name))

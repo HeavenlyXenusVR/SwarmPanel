@@ -66,6 +66,7 @@ local pages_cfg = {
   aria_bot = config.aria_bot,
   get_auth = routes.get_auth,
   require_auth_page = routes.require_auth_page,
+  scoped_dashboard_data = routes.scoped_dashboard_data,
   session_cookie_header = routes.session_cookie_header,
   clear_session_cookie_header = routes.clear_session_cookie_header,
 }
