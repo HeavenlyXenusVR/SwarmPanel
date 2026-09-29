@@ -224,6 +224,37 @@ jobs:
           echo "ipa_name=$IPA_NAME" >> "$GITHUB_OUTPUT"
           echo "ipa_path=ios/build/$IPA_NAME" >> "$GITHUB_OUTPUT"
 
+      # The Apple TV app (ios/SwarmPanelTV) ships in the same release as an
+      # unsigned .app zip -- sign it in Xcode (or with your own tooling) to
+      # install on an Apple TV. Best-effort: a tvOS build failure must never
+      # block the iOS release, so this step can fail without failing the job
+      # and the release step only attaches the zip if it was produced.
+      - name: Build Apple TV app (unsigned)
+        id: tvos
+        continue-on-error: true
+        working-directory: ios
+        run: |
+          set -o pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          xcodebuild build \
+            -project SwarmPanel.xcodeproj \
+            -scheme SwarmPanelTV \
+            -configuration Release \
+            -destination "generic/platform=tvOS" \
+            -derivedDataPath build/TVDerivedData \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee /tmp/xcodebuild-tvos.log | tail -20
+          TV_APP=$(find build/TVDerivedData/Build/Products -name "SwarmPanelTV.app" -type d | head -1)
+          if [ -z "$TV_APP" ]; then
+            echo "::warning::Apple TV build did not produce SwarmPanelTV.app; releasing iOS only"
+            exit 1
+          fi
+          TV_ZIP="SwarmPanelTV-${VERSION}-unsigned.zip"
+          ditto -c -k --keepParent "$TV_APP" "build/$TV_ZIP"
+          echo "zip_name=$TV_ZIP" >> "$GITHUB_OUTPUT"
+          echo "Apple TV app: $(du -sh build/$TV_ZIP)"
+
       - name: Update altstore-source.json
         run: |
           VERSION="${{ steps.version.outputs.version }}"
@@ -274,10 +305,17 @@ jobs:
           else
             INSTALL_NOTE="Download the IPA and install with [Sideloadly](https://sideloadly.io/) or [AltStore](https://altstore.io/)."
           fi
+          ASSETS=("ios/build/$IPA_NAME")
+          TV_NOTE=""
+          TV_ZIP="${{ steps.tvos.outputs.zip_name }}"
+          if [ -n "$TV_ZIP" ] && [ -f "ios/build/$TV_ZIP" ]; then
+            ASSETS+=("ios/build/$TV_ZIP")
+            TV_NOTE=$(printf '\n\n**Apple TV:** `%s` is the unsigned tvOS app (Dashboard only). Sign it with your Apple developer account in Xcode to install it on an Apple TV.' "$TV_ZIP")
+          fi
           gh release create "$TAG" \
             --title "SwarmPanel iOS v${VERSION}" \
-            --notes "$(printf '## SwarmPanel iOS v%s\n\n**Installation:** %s\n\n**AltStore users:** Add the source URL to get automatic updates.' "$VERSION" "$INSTALL_NOTE")" \
-            "ios/build/$IPA_NAME"
+            --notes "$(printf '## SwarmPanel iOS v%s\n\n**Installation:** %s\n\n**AltStore users:** Add the source URL to get automatic updates.%s' "$VERSION" "$INSTALL_NOTE" "$TV_NOTE")" \
+            "${ASSETS[@]}"
 
       # Best-effort: never fail the build over this housekeeping commit.
       - name: Commit updated altstore-source.json
