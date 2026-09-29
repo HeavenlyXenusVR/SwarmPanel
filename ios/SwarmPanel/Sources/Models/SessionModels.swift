@@ -5,6 +5,11 @@ struct LoginRequest: Encodable {
     let username: String
     let password: String
     let guildId: String?
+    /// Ask for a "remember this device" session (routes.lua's token_ttl):
+    /// a long-lived token that every GET /api/session refresh renews, so
+    /// closing the app overnight doesn't mean signing in again.
+    var rememberDevice: Bool = true
+    var client: String = "ios"
 }
 
 /// Body for POST /api/session/register (mirrors SessionRegisterRequest).
@@ -18,6 +23,9 @@ struct RegisterRequest: Encodable {
     /// verification code to this Discord User ID instead of a webhook when
     /// verificationWebhookUrl is nil/empty and this is set.
     let discordUserId: String?
+    /// Same "remember this device" session as LoginRequest.
+    var rememberDevice: Bool = true
+    var client: String = "ios"
 }
 
 /// Body for POST /api/session/admin-mode.

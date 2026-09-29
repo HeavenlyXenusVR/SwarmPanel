@@ -167,6 +167,13 @@ function M.load()
     cors_allowed_origins = M.env_csv("PANEL_CORS_ALLOWED_ORIGINS"),
     cors_allow_origin_regex = M.env("PANEL_CORS_ALLOW_ORIGIN_REGEX", ""),
     api_token_ttl_seconds = tonumber(M.env("PANEL_API_TOKEN_TTL_SECONDS", "43200")),
+    -- "Remember this device" sessions for the native apps (iOS, tvOS). The
+    -- normal 12h token meant closing the app overnight = signing in again
+    -- the next morning. A device session lasts this long and renews on
+    -- every GET /api/session refresh, so it only lapses after this much
+    -- time with the app never opened. Tokens are stateless (no server-side
+    -- revocation), which is why this is opt-in per login, not the default.
+    device_token_ttl_seconds = tonumber(M.env("PANEL_DEVICE_TOKEN_TTL_SECONDS", "2592000")),
     pages_public_url = M.env("PANEL_PAGES_PUBLIC_URL", ""),
     site_owner_email = M.env("SWARM_PANEL_SITE_OWNER_EMAIL", M.env("IMAGE_GALLERY_OWNER_EMAIL", "")):lower(),
     owner_email_requires_verification = M.env_bool("SWARM_PANEL_OWNER_EMAIL_REQUIRES_VERIFICATION", true),
