@@ -71,6 +71,20 @@ function bit_xor_byte(a, b)
   return XOR_TABLE[a][b]
 end
 
+-- Accumulator for the constant-time comparisons below. It MUST be OR, not
+-- XOR: these used to do `diff = diff XOR (a XOR b)`, and XOR lets byte
+-- differences cancel each other out -- two bytes that differ in the same
+-- bits leave diff at 0 -- so a wrong value was accepted whenever the XOR of
+-- all its byte differences happened to be zero (about 1 in 256 for a random
+-- guess). That made session tokens forgeable in a few hundred tries and the
+-- env admin password guessable at 1-in-256 per same-length attempt. OR only
+-- ever sets bits, so any differing byte keeps diff non-zero.
+local function or_diff(acc, a, b)
+  if bit_ok then return bitlib.bor(acc, bitlib.bxor(a, b)) end
+  if acc ~= 0 or a ~= b then return 1 end
+  return 0
+end
+
 function M.sha256(msg)
   return sodium.crypto_hash_sha256(msg)
 end
@@ -171,7 +185,7 @@ function M.verify_password_hash(password, stored_hash)
   if #actual ~= #expected then return false end
   local diff = 0
   for i = 1, #actual do
-    diff = bit_xor_byte(diff, bit_xor_byte(actual:byte(i), expected:byte(i)))
+    diff = or_diff(diff, actual:byte(i), expected:byte(i))
   end
   return diff == 0
 end
@@ -203,7 +217,7 @@ function M.verify_token(secret, token)
   if not given_sig or #given_sig ~= #expected_sig then return nil end
   local diff = 0
   for i = 1, #expected_sig do
-    diff = bit_xor_byte(diff, bit_xor_byte(expected_sig:byte(i), given_sig:byte(i)))
+    diff = or_diff(diff, expected_sig:byte(i), given_sig:byte(i))
   end
   if diff ~= 0 then return nil end
   local json = b64url_decode(json_part)
@@ -256,7 +270,7 @@ local function constant_time_eq(a, b)
   if #a ~= #b then return false end
   local diff = 0
   for i = 1, #a do
-    diff = bit_xor_byte(diff, bit_xor_byte(a:byte(i), b:byte(i)))
+    diff = or_diff(diff, a:byte(i), b:byte(i))
   end
   return diff == 0
 end
