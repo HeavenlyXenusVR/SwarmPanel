@@ -292,6 +292,12 @@ function M.clean_panel_preferences(raw, base)
   for _, key in ipairs({ "show_bot_uptime", "show_queue_pressure", "compact_sidebar" }) do
     if raw[key] ~= nil then prefs[key] = raw[key] and true or false end
   end
+  -- Site owner's last admin-mode choice (see accounts.set_admin_mode_preference).
+  -- Carried through here only so an Appearance save -- which rebuilds the
+  -- whole blob from this whitelist -- doesn't silently drop it. Clients never
+  -- set it through that route (routes.lua strips it from the request body);
+  -- only POST /api/session/admin-mode writes it.
+  if raw.admin_mode_enabled ~= nil then prefs.admin_mode_enabled = raw.admin_mode_enabled == true end
   return prefs
 end
 

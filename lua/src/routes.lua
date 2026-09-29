@@ -383,6 +383,12 @@ function M.register(cfg)
     if not linked_guild_id then return 400, { detail = "This owner account is not linked to a registered guild." } end
     local body = req.json or {}
     local admin_mode = body.enabled == true
+    -- Remember the choice so the next login starts in the same mode.
+    -- Best-effort: failing to save it must not block the switch itself.
+    local saved_ok, saved = pcall(accounts.set_admin_mode_preference, username, linked_guild_id, admin_mode)
+    if not saved_ok or not saved then
+      print("[swarmpanel-lua] could not save admin-mode preference for " .. username .. ": " .. tostring(saved))
+    end
     local role = a.role or "account"
     local fresh_token = auth.issue_api_token(settings.session_secret, username, {
       role = role, guild_id = linked_guild_id, admin_mode = admin_mode,
@@ -435,9 +441,17 @@ function M.register(cfg)
           if account.email and settings.site_owner_email ~= "" and account.email:lower() == settings.site_owner_email then
             site_owner = (not settings.owner_email_requires_verification) or account.email_verified
           end
+          -- The owner starts in admin mode unless they switched it off
+          -- last time (accounts.get_admin_mode_preference); a lookup
+          -- failure falls back to the old default of admin mode on.
+          local admin_mode = site_owner
+          if site_owner then
+            local pref_ok, pref = pcall(accounts.get_admin_mode_preference, account.username, account.guild_id)
+            if pref_ok and pref == false then admin_mode = false end
+          end
           auth_result = {
             username = account.username, role = "account", guild_id = account.guild_id,
-            site_owner = site_owner, moderator = account.panel_role == "moderator", admin_mode = site_owner,
+            site_owner = site_owner, moderator = account.panel_role == "moderator", admin_mode = admin_mode,
           }
         end
       end
@@ -1918,7 +1932,13 @@ function M.register(cfg)
     local stored = (type(current_profile.panel_preferences) == "table") and current_profile.panel_preferences or nil
     local ok1, base_prefs = pcall(profiles.clean_panel_preferences, stored, defaults)
     if not ok1 then base_prefs = defaults end
-    local ok2, prefs = pcall(profiles.clean_panel_preferences, req.json or {}, base_prefs)
+    -- admin_mode_enabled is owned by POST /api/session/admin-mode (which
+    -- checks site-owner status); never accept it from an Appearance save.
+    local incoming = {}
+    for k, v in pairs(req.json or {}) do
+      if k ~= "admin_mode_enabled" then incoming[k] = v end
+    end
+    local ok2, prefs = pcall(profiles.clean_panel_preferences, incoming, base_prefs)
     if not ok2 then return 400, { detail = tostring(prefs):gsub("^.-:%d+:%s*", "") } end
     local profile = accounts.update_account_panel_preferences(username, scoped_gid, prefs)
     if not profile then return 404, { detail = "Account profile not found" } end
