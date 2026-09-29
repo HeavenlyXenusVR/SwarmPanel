@@ -1,0 +1,148 @@
+import SwiftUI
+
+/// The signed-in account's display profile + panel preferences, kept in sync
+/// with the web panel through the "account" live key (routes.lua), with a
+/// REST fallback (GET /api/users/me + /api/users/preferences) at start and
+/// whenever the socket is down. Changing the background, accent or profile
+/// on the web shows up on the TV within ~10 seconds.
+struct TVAccountSnapshot: Decodable {
+    let profile: TVProfile?
+    let preferences: TVPreferences?
+}
+
+struct TVProfile: Decodable {
+    let username: String?
+    let displayName: String?
+    let avatarUrl: String?
+    let serverName: String?
+    let serverIconUrl: String?
+    let profileHeadline: String?
+    let guildId: String?
+
+    var name: String {
+        if let displayName, !displayName.isEmpty { return displayName }
+        return username ?? "Operator"
+    }
+}
+
+struct TVPreferences: Decodable {
+    let accentColor: String?
+    let backgroundMode: String?
+    let backgroundColor: String?
+    let backgroundImageUrl: String?
+    let accentContrastText: String?
+}
+
+private struct TVMeEnvelope: Decodable { let profile: TVProfile? }
+private struct TVPreferencesEnvelope: Decodable { let preferences: TVPreferences? }
+
+@MainActor
+final class TVAccountModel: ObservableObject {
+    @Published private(set) var profile: TVProfile?
+    @Published private(set) var preferences: TVPreferences?
+
+    private let socket = SwarmLiveSocket.shared
+    private let api = APIClient.shared
+    private var pollTask: Task<Void, Never>?
+
+    func start() {
+        guard pollTask == nil else { return }
+        socket.watch("account", as: TVAccountSnapshot.self) { [weak self] result in
+            guard let self, case .success(let snapshot) = result else { return }
+            if let profile = snapshot.profile { self.profile = profile }
+            if let preferences = snapshot.preferences { self.preferences = preferences }
+        }
+        socket.connect()
+        pollTask = Task { [weak self] in
+            await self?.loadOnce()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                if Task.isCancelled { break }
+                guard let self else { break }
+                if !self.socket.isConnected { await self.loadOnce() }
+            }
+        }
+    }
+
+    func stop() {
+        pollTask?.cancel()
+        pollTask = nil
+        socket.unwatch("account")
+        profile = nil
+        preferences = nil
+    }
+
+    private func loadOnce() async {
+        if let me: TVMeEnvelope = try? await api.get("/api/users/me"), let profile = me.profile {
+            self.profile = profile
+        }
+        if let prefs: TVPreferencesEnvelope = try? await api.get("/api/users/preferences"), let preferences = prefs.preferences {
+            self.preferences = preferences
+        }
+    }
+
+    // MARK: - Appearance (mirrors html.lua's panel_style())
+
+    var accent: Color { Color(hex: preferences?.accentColor) ?? Color(hex: "#89b4fa")! }
+
+    /// Base colour: the chosen preset, or the custom colour.
+    var backgroundColor: Color {
+        let mode = preferences?.backgroundMode ?? "default"
+        if mode == "custom_color", let custom = Color(hex: preferences?.backgroundColor) { return custom }
+        let presets = ["default": "#0d1117", "midnight": "#090b12", "aurora": "#101821", "ember": "#17100d"]
+        return Color(hex: presets[mode] ?? presets["default"]!)!
+    }
+
+    /// Only used in custom_image mode, and only for http(s) URLs -- same
+    /// rule as the web panel.
+    var backgroundImageURL: URL? {
+        guard preferences?.backgroundMode == "custom_image",
+              let raw = preferences?.backgroundImageUrl?.trimmingCharacters(in: .whitespaces),
+              raw.hasPrefix("http://") || raw.hasPrefix("https://") else { return nil }
+        return URL(string: raw)
+    }
+}
+
+extension Color {
+    /// "#rrggbb" -> Color; nil for anything else.
+    init?(hex: String?) {
+        guard var text = hex?.trimmingCharacters(in: .whitespaces), text.hasPrefix("#") else { return nil }
+        text.removeFirst()
+        guard text.count == 6, let value = UInt32(text, radix: 16) else { return nil }
+        self.init(
+            red: Double((value >> 16) & 0xFF) / 255,
+            green: Double((value >> 8) & 0xFF) / 255,
+            blue: Double(value & 0xFF) / 255
+        )
+    }
+}
+
+/// Full-screen panel background: the account's colour, its custom image
+/// (if set), and the same darkening + accent wash the web shell draws over
+/// it so cards stay readable.
+struct TVPanelBackground: View {
+    @ObservedObject var account: TVAccountModel
+
+    var body: some View {
+        ZStack {
+            account.backgroundColor
+            if let url = account.backgroundImageURL {
+                AsyncImage(url: url) { phase in
+                    if let image = phase.image {
+                        image.resizable().aspectRatio(contentMode: .fill)
+                    }
+                }
+            }
+            LinearGradient(
+                colors: [Color.black.opacity(0.55), Color.black.opacity(0.85)],
+                startPoint: .top, endPoint: .bottom
+            )
+            LinearGradient(
+                colors: [account.accent.opacity(0.14), .clear],
+                startPoint: .topLeading, endPoint: .center
+            )
+        }
+        .ignoresSafeArea()
+        .animation(.easeInOut(duration: 0.6), value: account.backgroundImageURL)
+    }
+}

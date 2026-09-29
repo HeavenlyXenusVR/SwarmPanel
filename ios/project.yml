@@ -4,6 +4,7 @@ options:
   bundleIdPrefix: com.swarmpanel
   deploymentTarget:
     iOS: "16.0"
+    tvOS: "17.0"
 
 configs:
   Debug: debug
@@ -101,6 +102,44 @@ targets:
         DEVELOPMENT_TEAM: ""
         SKIP_INSTALL: "YES"
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
+
+  # Apple TV app: the Dashboard only, read-only, never in admin mode (see
+  # SwarmPanelTV/Sources/SwarmPanelTVApp.swift). Reuses the iOS app's
+  # networking, live socket and session/dashboard models directly -- the
+  # same way SwarmPanelWidget does -- rather than a separate framework.
+  # FleetControlService is left out: it sends bot orders and depends on
+  # the widget's shared file.
+  SwarmPanelTV:
+    type: application
+    platform: tvOS
+    sources:
+      - path: SwarmPanelTV/Sources
+      - path: SwarmPanel/Sources/Networking/APIClient.swift
+      - path: SwarmPanel/Sources/Networking/APIError.swift
+      - path: SwarmPanel/Sources/Networking/CancellationCheck.swift
+      - path: SwarmPanel/Sources/Networking/KeychainStore.swift
+      - path: SwarmPanel/Sources/Networking/SwarmLiveSocket.swift
+      - path: SwarmPanel/Sources/Models/BotModels.swift
+      - path: SwarmPanel/Sources/Models/Common.swift
+      - path: SwarmPanel/Sources/Models/SessionModels.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.swarmpanel.tvos
+        PRODUCT_NAME: SwarmPanelTV
+        INFOPLIST_FILE: SwarmPanelTV/Resources/Info.plist
+        TVOS_DEPLOYMENT_TARGET: "17.0"
+        # The project-level base settings are iPhone/iPad ones; 3 = Apple TV.
+        TARGETED_DEVICE_FAMILY: "3"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+    scheme:
+      buildAction:
+        targets:
+          - SwarmPanelTV
+      runAction:
+        config: Debug
+      archiveAction:
+        config: Release
 
   SwarmPanelTests:
     type: bundle.unit-test

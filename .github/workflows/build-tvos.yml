@@ -1,0 +1,70 @@
+name: Build tvOS app
+
+# Compiles the Apple TV target (ios/SwarmPanelTV) on every PR and push that
+# touches the Apple apps. It shares the iOS app's networking and model
+# files, so this also catches an iOS-side change that breaks the TV build.
+on:
+  pull_request:
+    paths:
+      - 'ios/**'
+      - '.github/workflows/build-tvos.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/build-tvos.yml'
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    name: Build SwarmPanelTV (unsigned)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          XCODE=$(ls /Applications | grep '^Xcode' | sort -rV | head -1)
+          sudo xcode-select -s "/Applications/$XCODE/Contents/Developer"
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Build (unsigned)
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project SwarmPanel.xcodeproj \
+            -scheme SwarmPanelTV \
+            -configuration Release \
+            -destination "generic/platform=tvOS" \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee /tmp/xcodebuild-tvos.log | tail -30
+          APP=$(find build/DerivedData/Build/Products -name "SwarmPanelTV.app" -type d | head -1)
+          if [ -z "$APP" ]; then
+            echo "::error::Build did not produce SwarmPanelTV.app"
+            grep "error:" /tmp/xcodebuild-tvos.log | head -30
+            exit 1
+          fi
+          mkdir -p build/out
+          ditto -c -k --keepParent "$APP" build/out/SwarmPanelTV-unsigned.app.zip
+
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: SwarmPanelTV-unsigned
+          path: ios/build/out/SwarmPanelTV-unsigned.app.zip
+          retention-days: 14

@@ -471,6 +471,13 @@ function M.register(cfg)
       metadata = { role = auth_result.role, site_owner = auth_result.site_owner },
     })
 
+    -- Clients that must never run in admin mode (the tvOS dashboard) ask
+    -- for a non-admin session here. This only shapes THIS token -- it does
+    -- not touch the owner's saved admin-mode preference, so signing in on
+    -- the TV doesn't switch admin mode off on the web. GET /api/session
+    -- refreshes keep the token's own admin_mode, so it stays off.
+    if body.disable_admin_mode == true then auth_result.admin_mode = false end
+
     local token = auth.issue_api_token(settings.session_secret, auth_result.username, {
       role = auth_result.role, guild_id = auth_result.guild_id, admin_mode = auth_result.admin_mode,
       site_owner = auth_result.site_owner, moderator = auth_result.moderator, ttl_seconds = settings.api_token_ttl_seconds,
@@ -949,6 +956,41 @@ function M.register(cfg)
           incoming = social.list_account_friend_requests(actor_id, "incoming"),
           outgoing = social.list_account_friend_requests(actor_id, "outgoing"),
         }
+      end,
+    },
+    -- The signed-in account's own profile summary + panel preferences
+    -- (background, accent, ...), so another device -- the tvOS dashboard --
+    -- picks up an Appearance or profile change made on the web within
+    -- seconds instead of only at its next launch. Same data as GET
+    -- /api/users/me + /api/users/preferences, trimmed to display fields.
+    account = {
+      interval = 10,
+      scope_key = function(a)
+        return "acct:" .. tostring(a and a.username or "") .. ":" .. tostring(account_guild_id(a))
+      end,
+      build = function(a)
+        local username = tostring((a and a.username) or settings.admin_username or "")
+        local gid = account_guild_id(a)
+        local defaults = profiles.default_panel_preferences()
+        local summary = { username = username, display_name = username, guild_id = gid }
+        local prefs = defaults
+        if gid and username ~= "" then
+          local ok, profile = pcall(accounts.get_account_profile, username, gid)
+          if ok and profile then
+            for _, field in ipairs({ "display_name", "avatar_url", "server_name", "server_icon_url",
+                                     "profile_headline", "favorite_bot", "theme_accent" }) do
+              if profile[field] ~= nil then summary[field] = profile[field] end
+            end
+            local stored = (type(profile.panel_preferences) == "table") and profile.panel_preferences or nil
+            local okp, cleaned = pcall(profiles.clean_panel_preferences, stored, defaults)
+            if okp then prefs = cleaned end
+          end
+        end
+        -- Internal flag, not a display preference.
+        prefs.admin_mode_enabled = nil
+        summary.role = a and a.role or nil
+        summary.admin_mode = is_admin_auth(a)
+        return true, { profile = summary, preferences = with_derived_accent(prefs) }
       end,
     },
     -- Community badge counts (sidebar/mobile nav/section tabs on every

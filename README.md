@@ -28,6 +28,10 @@ The panel is grouped into five sections. The sidebar, mobile menu, breadcrumbs, 
 
 Server-rendered screens live in one Lua module per section: `pages_fleet.lua`, `pages_insights.lua`, `pages_community.lua`, `pages_account.lua`, and `pages_admin.lua`, with sign-in in `pages_auth.lua`. Shared page plumbing lives in `page_kit.lua`.
 
+## Apple TV
+
+`ios/SwarmPanelTV` is a tvOS app with just the Dashboard: fleet metrics, Aria's card and a live card per bot, updated over the same WebSocket feed as the web panel. It is read-only. There are no Controls (you can't paste a YouTube link with a Siri Remote), and it always signs in with admin mode off without changing the account's saved admin-mode choice on the web or iPhone. Your panel background, accent colour and profile (name, avatar, server) follow your web settings live through the `account` feed. The `Build tvOS app` workflow builds it unsigned. Sign it in Xcode to install on an Apple TV.
+
 ## Servers And Data
 
 - Frontend: React and Vite, deployable to GitHub Pages.
