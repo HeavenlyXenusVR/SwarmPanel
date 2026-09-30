@@ -276,7 +276,7 @@ jobs:
           TV_IPA="SwarmPanelTV-${VERSION}-unsigned.ipa"
           # Verifies Info.plist/executable/icon assets and wraps as an .ipa;
           # exits non-zero (no TV asset attached) if anything is missing.
-          scripts/package-tvos-ipa.sh "$TV_APP" "build/$TV_IPA"
+          scripts/package-tvos-ipa.sh "$TV_APP" "build/$TV_IPA" SwarmPanelTV/Resources/Assets.xcassets
           echo "ipa_name=$TV_IPA" >> "$GITHUB_OUTPUT"
 
       - name: Update altstore-source.json

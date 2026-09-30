@@ -3,17 +3,47 @@
 # bundle has everything a sideloading tool (Sideloadly, AltStore, ...) and
 # tvOS need, failing loudly if anything is missing.
 #
-#   scripts/package-tvos-ipa.sh <path/to/SwarmPanelTV.app> <output.ipa>
+#   scripts/package-tvos-ipa.sh <path/to/SwarmPanelTV.app> <output.ipa> [path/to/Assets.xcassets]
+#
+# With the optional asset catalog argument it also compiles the app icon and
+# Top Shelf art into the bundle if the build didn't (see below).
 #
 # An .ipa is a zip with the app inside a top-level Payload/ folder -- the
 # same layout for tvOS as for iOS. Used by build-tvos.yml (PR builds) and
 # release-ios.yml (releases). macOS only (plutil, lipo).
 set -euo pipefail
 
-APP="${1:?usage: package-tvos-ipa.sh <SwarmPanelTV.app> <output.ipa>}"
-OUT="${2:?usage: package-tvos-ipa.sh <SwarmPanelTV.app> <output.ipa>}"
+APP="${1:?usage: package-tvos-ipa.sh <SwarmPanelTV.app> <output.ipa> [Assets.xcassets]}"
+OUT="${2:?usage: package-tvos-ipa.sh <SwarmPanelTV.app> <output.ipa> [Assets.xcassets]}"
+XCASSETS="${3:-}"
 PLIST="$APP/Info.plist"
 fail=0
+
+# Unsigned builds of this project (CODE_SIGNING_ALLOWED=NO) come out without
+# a compiled asset catalog -- the iOS release works around the same thing by
+# running actool itself. Do the same for tvOS: compile the brand assets
+# (layered app icon + Top Shelf) into the bundle and merge the Info.plist
+# keys actool reports (CFBundleIcons, TVTopShelfImage) into the app's own.
+if [ -n "$XCASSETS" ] && [ ! -f "$APP/Assets.car" ]; then
+  echo "Assets.car missing -- compiling $XCASSETS with actool"
+  MIN_OS="$(plutil -extract MinimumOSVersion raw -o - "$PLIST" 2>/dev/null || echo 17.0)"
+  PARTIAL="$(mktemp -t tvos-assets-partial).plist"
+  xcrun actool \
+    --output-format human-readable-text \
+    --notices --warnings \
+    --platform appletvos \
+    --target-device tv \
+    --minimum-deployment-target "$MIN_OS" \
+    --app-icon "App Icon & Top Shelf Image" \
+    --output-partial-info-plist "$PARTIAL" \
+    --compress-pngs \
+    --compile "$APP" \
+    "$XCASSETS"
+  echo "--- keys added by actool"
+  plutil -p "$PARTIAL" || true
+  /usr/libexec/PlistBuddy -c "Merge $PARTIAL" "$PLIST"
+  rm -f "$PARTIAL"
+fi
 
 check() { # check <description> <command...>
   local what="$1"; shift
