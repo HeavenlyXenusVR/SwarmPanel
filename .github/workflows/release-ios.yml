@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - 'ios/v*'
+  # Manual release from the Actions tab (or the API) without pushing a tag
+  # first: give a version like 0.15.0 and the release step creates the
+  # ios/v<version> tag on the commit this run was started from.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, e.g. 0.15.0 (creates tag ios/v<version>)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -26,8 +35,22 @@ jobs:
       - name: Extract version from tag
         id: version
         run: |
-          TAG="${{ github.ref_name }}"
-          VERSION="${TAG#ios/v}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+            VERSION="${VERSION#v}"
+            if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "::error::Version must look like 1.2.3, got '$VERSION'"
+              exit 1
+            fi
+            TAG="ios/v$VERSION"
+            if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+              echo "::error::Tag $TAG already exists; pick a new version"
+              exit 1
+            fi
+          else
+            TAG="${{ github.ref_name }}"
+            VERSION="${TAG#ios/v}"
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Releasing SwarmPanel iOS version: $VERSION (tag: $TAG)"
@@ -312,7 +335,10 @@ jobs:
             ASSETS+=("ios/build/$TV_ZIP")
             TV_NOTE=$(printf '\n\n**Apple TV:** `%s` is the unsigned tvOS app (Dashboard only). Sign it with your Apple developer account in Xcode to install it on an Apple TV.' "$TV_ZIP")
           fi
+          # --target only matters for a manual run, where the tag doesn't
+          # exist yet: gh creates it on the exact commit this run built.
           gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
             --title "SwarmPanel iOS v${VERSION}" \
             --notes "$(printf '## SwarmPanel iOS v%s\n\n**Installation:** %s\n\n**AltStore users:** Add the source URL to get automatic updates.%s' "$VERSION" "$INSTALL_NOTE" "$TV_NOTE")" \
             "${ASSETS[@]}"
