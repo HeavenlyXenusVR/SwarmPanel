@@ -59,12 +59,21 @@ jobs:
             grep "error:" /tmp/xcodebuild-tvos.log | head -30
             exit 1
           fi
-          mkdir -p build/out
-          ditto -c -k --keepParent "$APP" build/out/SwarmPanelTV-unsigned.app.zip
+          grep -q "CompileAssetCatalog" /tmp/xcodebuild-tvos.log \
+            && echo "Xcode compiled the asset catalog" \
+            || echo "Xcode did not compile the asset catalog (packaging step will run actool)"
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
 
-      - name: Upload app
+      # Checks the bundle has everything sideloading needs (Info.plist keys,
+      # executable, compiled icon/Top Shelf assets) and wraps it as an .ipa
+      # (Payload/SwarmPanelTV.app) -- fails the build if anything is missing.
+      - name: Verify bundle and package IPA
+        working-directory: ios
+        run: scripts/package-tvos-ipa.sh "$APP_PATH" build/out/SwarmPanelTV-unsigned.ipa SwarmPanelTV/Resources/Assets.xcassets
+
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: SwarmPanelTV-unsigned
-          path: ios/build/out/SwarmPanelTV-unsigned.app.zip
+          name: SwarmPanelTV-unsigned-ipa
+          path: ios/build/out/SwarmPanelTV-unsigned.ipa
           retention-days: 14

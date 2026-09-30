@@ -122,9 +122,18 @@ targets:
       - path: SwarmPanel/Sources/Models/BotModels.swift
       - path: SwarmPanel/Sources/Models/Common.swift
       - path: SwarmPanel/Sources/Models/SessionModels.swift
+    # Listed explicitly (like the iOS target) so XcodeGen creates a real
+    # "Compile Asset Catalogs" phase: that's what produces Assets.car and
+    # writes the app icon (CFBundleIcons) and Top Shelf (TVTopShelfImage)
+    # entries into the built Info.plist.
+    resources:
+      - path: SwarmPanelTV/Resources/Assets.xcassets
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.swarmpanel.tvos
+        # tvOS icons are layered "brand assets" (App Icon + App Store icon +
+        # Top Shelf images) rather than a flat .appiconset.
+        ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"
         PRODUCT_NAME: SwarmPanelTV
         INFOPLIST_FILE: SwarmPanelTV/Resources/Info.plist
         TVOS_DEPLOYMENT_TARGET: "17.0"
