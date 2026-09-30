@@ -248,8 +248,8 @@ jobs:
           echo "ipa_path=ios/build/$IPA_NAME" >> "$GITHUB_OUTPUT"
 
       # The Apple TV app (ios/SwarmPanelTV) ships in the same release as an
-      # unsigned .app zip -- sign it in Xcode (or with your own tooling) to
-      # install on an Apple TV. Best-effort: a tvOS build failure must never
+      # unsigned .ipa (Payload/SwarmPanelTV.app), ready for Sideloadly and
+      # similar tools, which sign it on install. Best-effort: a tvOS build failure must never
       # block the iOS release, so this step can fail without failing the job
       # and the release step only attaches the zip if it was produced.
       - name: Build Apple TV app (unsigned)
@@ -273,10 +273,11 @@ jobs:
             echo "::warning::Apple TV build did not produce SwarmPanelTV.app; releasing iOS only"
             exit 1
           fi
-          TV_ZIP="SwarmPanelTV-${VERSION}-unsigned.zip"
-          ditto -c -k --keepParent "$TV_APP" "build/$TV_ZIP"
-          echo "zip_name=$TV_ZIP" >> "$GITHUB_OUTPUT"
-          echo "Apple TV app: $(du -sh build/$TV_ZIP)"
+          TV_IPA="SwarmPanelTV-${VERSION}-unsigned.ipa"
+          # Verifies Info.plist/executable/icon assets and wraps as an .ipa;
+          # exits non-zero (no TV asset attached) if anything is missing.
+          scripts/package-tvos-ipa.sh "$TV_APP" "build/$TV_IPA"
+          echo "ipa_name=$TV_IPA" >> "$GITHUB_OUTPUT"
 
       - name: Update altstore-source.json
         run: |
@@ -330,10 +331,10 @@ jobs:
           fi
           ASSETS=("ios/build/$IPA_NAME")
           TV_NOTE=""
-          TV_ZIP="${{ steps.tvos.outputs.zip_name }}"
-          if [ -n "$TV_ZIP" ] && [ -f "ios/build/$TV_ZIP" ]; then
-            ASSETS+=("ios/build/$TV_ZIP")
-            TV_NOTE=$(printf '\n\n**Apple TV:** `%s` is the unsigned tvOS app (Dashboard only). Sign it with your Apple developer account in Xcode to install it on an Apple TV.' "$TV_ZIP")
+          TV_IPA="${{ steps.tvos.outputs.ipa_name }}"
+          if [ -n "$TV_IPA" ] && [ -f "ios/build/$TV_IPA" ]; then
+            ASSETS+=("ios/build/$TV_IPA")
+            TV_NOTE=$(printf '\n\n**Apple TV:** `%s` is the tvOS app (Dashboard only). Install it on an Apple TV with Sideloadly (or sign it in Xcode).' "$TV_IPA")
           fi
           # --target only matters for a manual run, where the tag doesn't
           # exist yet: gh creates it on the exact commit this run built.
