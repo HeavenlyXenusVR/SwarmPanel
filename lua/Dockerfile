@@ -28,6 +28,7 @@ RUN luarocks-5.1 install luasocket \
  && luarocks-5.1 install luasec \
  && luarocks-5.1 install lua-cjson \
  && luarocks-5.1 install pgmoon \
+ && luarocks-5.1 install luaossl \
  && luarocks-5.1 install luasodium \
  && luarocks-5.1 install lua-websockets \
  && luarocks-5.1 install copas
