@@ -133,8 +133,11 @@ end
 -- case at all. Confirmed live: every browser loading the panel from its own
 -- production URL (https://swarmpanel.xenusanimations.studio) sends that
 -- exact URL as the WS upgrade's Origin header, which was never in the
--- cross-origin allowlist (that only lists heavenlyxenusvr.github.io and
--- *.trycloudflare.com/*.ngrok.io), so handle_ws_upgrade's 403 branch above
+-- cross-origin allowlist (which at the time listed only
+-- heavenlyxenusvr.github.io and *.trycloudflare.com/*.ngrok.io -- the
+-- production hostname has since been added to PANEL_CORS_ALLOWED_ORIGINS
+-- too, but the same-origin case below is what actually makes this correct
+-- regardless of that), so handle_ws_upgrade's 403 branch above
 -- rejected the dashboard's OWN real-time WebSocket for literally every
 -- visitor to the real site -- "WebSocket connection ... failed:
 -- Unexpected response code: 403" in the console on every single page load.

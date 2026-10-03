@@ -4,6 +4,8 @@
 
 SwarmPanel is the React and FastAPI command center for Aria and the 12-node music bot fleet. It focuses on live operational visibility, queue and playback control, owner-safe administration, account profiles, social features, and mobile-friendly monitoring.
 
+**Live panel: <https://swarmpanel.xenusanimations.studio>** — a named Cloudflare tunnel onto the backend. That hostname is the panel's public address for the web UI, the iOS app and the Apple TV app alike; the older `*.github.io/SwarmPanel/` Pages address is no longer the entry point.
+
 ## What It Does
 
 - Shows live bot status across all music nodes: track, guild, voice channel, queue depth, backup depth, filters, heartbeat, and drift.
@@ -14,7 +16,7 @@ SwarmPanel is the React and FastAPI command center for Aria and the 12-node musi
 - Supports profile discovery, friend requests, follows, and direct messages between panel users.
 - Includes appearance controls with real previews so users can see how dashboard, queue, Medic, and database sections will look.
 - Sends scoped Telegram operator alerts for important panel health issues without spamming normal logs.
-- Publishes a static GitHub Pages frontend that reads `live-config.json` for the current live backend URL.
+- Serves the panel over a named Cloudflare tunnel at the fixed hostname above. A static GitHub Pages copy of the frontend can still be published as a fallback; it reads `live-config.json` at runtime to find the backend.
 
 ## Main Surfaces
 
@@ -34,7 +36,8 @@ Server-rendered screens live in one Lua module per section: `pages_fleet.lua`, `
 
 ## Servers And Data
 
-- Frontend: React and Vite, deployable to GitHub Pages.
+- Frontend: React and Vite, served by the backend behind the Cloudflare tunnel (and optionally published to GitHub Pages as a fallback).
+- Public URL: set `PANEL_PAGES_PUBLIC_URL` (and `PANEL_CLOUDFLARE_PUBLIC_URL`, `PANEL_TRUSTED_HOSTS`) to the tunnel hostname. The backend builds email-verification and operator-alert links from it and hands it to the native apps, so a stale value sends people to an address that no longer serves the panel.
 - Backend: FastAPI app served from `app.main`.
 - Database: MySQL schemas for panel accounts, Aria telemetry, and each music bot queue.
 - Bot network: 12 Discord music bots plus Aria.

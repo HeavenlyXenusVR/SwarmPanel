@@ -37,7 +37,7 @@ fi
 PAGES_ORIGIN="${PANEL_PAGES_ORIGIN:-$(read_env_value PANEL_PAGES_ORIGIN)}"
 PAGES_URL="${PANEL_PAGES_PUBLIC_URL:-$(read_env_value PANEL_PAGES_PUBLIC_URL)}"
 if [[ -z "${PAGES_URL}" ]]; then
-  echo "PANEL_PAGES_PUBLIC_URL must be set for live mode, for example: https://YOUR_GITHUB_USERNAME.github.io/SwarmPanel/" >&2
+  echo "PANEL_PAGES_PUBLIC_URL must be set for live mode, and must be the panel's real public URL, for example: https://swarmpanel.xenusanimations.studio" >&2
   exit 1
 fi
 if [[ -z "${PAGES_ORIGIN}" ]]; then
