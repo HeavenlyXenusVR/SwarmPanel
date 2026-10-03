@@ -39,6 +39,11 @@ struct SwarmPanelTVApp: App {
                     // suspended app's refresh timer doesn't run.
                     session.appBecameActive()
                     if session.isAuthenticated { SwarmLiveSocket.shared.connect() }
+                    // Push anything a previous run left queued now, while
+                    // the app is definitely awake: the TV is often switched
+                    // off (killing the app) before the periodic uploader's
+                    // next tick, which is how backlogs used to age for days.
+                    Task { await TVTelemetry.shared.flush() }
                 case .background:
                     TVTelemetry.shared.log("app_background", value: Date().timeIntervalSince(activeSince).rounded())
                     Task { await TVTelemetry.shared.flush() }

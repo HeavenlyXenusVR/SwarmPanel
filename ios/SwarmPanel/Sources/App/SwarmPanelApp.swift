@@ -10,6 +10,7 @@ struct SwarmPanelApp: App {
     @StateObject private var appearance = AppearanceSettings()
     @StateObject private var router = DeepLinkRouter()
     @StateObject private var biometricLock = BiometricLock()
+    @State private var activeSince = Date()
 
     init() {
         Self.configureGlobalChrome()
@@ -69,9 +70,23 @@ struct SwarmPanelApp: App {
                 }
                 .onOpenURL { url in router.handleURL(url) }
                 .onChange(of: scenePhase) { newPhase in
-                    if newPhase == .background {
+                    switch newPhase {
+                    case .active:
+                        activeSince = Date()
+                        ClientTelemetry.shared.log("app_foreground")
+                        // A suspended app's refresh timer doesn't run, so
+                        // renew the session and bring the live socket back
+                        // immediately rather than waiting for the next tick.
+                        Task { await appState.refreshSession() }
+                        if appState.isAuthenticated { SwarmLiveSocket.shared.connect() }
+                    case .background:
                         biometricLock.lock()
                         BackgroundRefreshManager.scheduleNext()
+                        ClientTelemetry.shared.log("app_background",
+                                                   value: Date().timeIntervalSince(activeSince).rounded())
+                        Task { await ClientTelemetry.shared.flush() }
+                    default:
+                        break
                     }
                 }
         }

@@ -33,10 +33,26 @@ final class SwarmLiveSocket: ObservableObject {
     private var reconnectDelay: TimeInterval = 1
     private var shouldStayConnected = false
 
+    /// routes.lua's /ws loop sends a {"type":"ping"} after 45s with no
+    /// inbound frame, so a healthy connection always delivers *something*
+    /// at least that often (a ping, or a changed snapshot). If nothing
+    /// arrives for well over that window the connection is dead in a way
+    /// URLSession has not reported: `receive()` can sit indefinitely on a
+    /// half-open socket (a dropped cloudflared tunnel, a network change,
+    /// a NAT timeout), which left `isConnected` stuck true -- so neither
+    /// the reconnect path NOR the ViewModels' `if !socket.isConnected`
+    /// REST fallback poll ever ran, and the dashboard silently showed
+    /// whatever it last received, indefinitely.
+    private static let staleFrameTimeout: TimeInterval = 120
+    private static let watchdogInterval: TimeInterval = 15
+    private var lastFrameAt = Date()
+    private var watchdogTask: Task<Void, Never>?
+
     private init() {}
 
     func connect() {
         shouldStayConnected = true
+        ensureWatchdog()
         guard task == nil, let token = APIClient.shared.token else { return }
 
         var components = URLComponents(url: APIClient.shared.baseURL, resolvingAgainstBaseURL: false)
@@ -70,6 +86,8 @@ final class SwarmLiveSocket: ObservableObject {
         shouldStayConnected = false
         receiveTask?.cancel()
         reconnectTask?.cancel()
+        watchdogTask?.cancel()
+        watchdogTask = nil
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
         isConnected = false
@@ -122,9 +140,14 @@ final class SwarmLiveSocket: ObservableObject {
     private func receiveLoop(_ socketTask: URLSessionWebSocketTask) async {
         isConnected = true
         reconnectDelay = 1
+        lastFrameAt = Date()
         while !Task.isCancelled {
             do {
                 let message = try await socketTask.receive()
+                // Stamped for every frame type, including ones `handle`
+                // ignores, so the watchdog measures connection liveness
+                // rather than "did a watched key change recently".
+                lastFrameAt = Date()
                 handle(message)
             } catch {
                 isConnected = false
@@ -132,6 +155,37 @@ final class SwarmLiveSocket: ObservableObject {
                 return
             }
         }
+    }
+
+    /// Periodically checks that frames are still arriving and forces a
+    /// reconnect when they stop, covering the half-open-socket case
+    /// `receive()` never reports. Runs for as long as the app wants a
+    /// connection; `disconnect()` tears it down.
+    private func ensureWatchdog() {
+        guard watchdogTask == nil else { return }
+        watchdogTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(Self.watchdogInterval))
+                if Task.isCancelled { break }
+                guard let self else { break }
+                guard self.shouldStayConnected, self.isConnected, self.task != nil else { continue }
+                if Date().timeIntervalSince(self.lastFrameAt) > Self.staleFrameTimeout {
+                    self.dropStalledConnection()
+                }
+            }
+        }
+    }
+
+    private func dropStalledConnection() {
+        receiveTask?.cancel()
+        task?.cancel(with: .abnormalClosure, reason: nil)
+        task = nil
+        isConnected = false
+        // A stall is not a backoff-worthy failure -- the network is usually
+        // fine by now -- so retry promptly rather than at whatever delay an
+        // earlier failure had escalated to.
+        reconnectDelay = 1
+        Task { await self.scheduleReconnect() }
     }
 
     private func handle(_ message: URLSessionWebSocketTask.Message) {

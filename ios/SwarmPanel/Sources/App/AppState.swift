@@ -17,6 +17,7 @@ final class AppState: ObservableObject {
     @Published var errorMessage: String?
 
     private let api = APIClient.shared
+    private let telemetry = ClientTelemetry.shared
     private var refreshTask: Task<Void, Never>?
 
     /// AppState only holds guildId in memory for the SwiftUI app's lifetime —
@@ -33,6 +34,12 @@ final class AppState: ObservableObject {
         api.onUnauthorized = { [weak self] in
             Task { @MainActor in self?.handleUnauthorized() }
         }
+        // Mirrors the Apple TV app's event names (ClientTelemetry) so both
+        // native clients produce comparable series server-side. The iOS app
+        // reported nothing at all before this, which is why the "ios" client
+        // never appeared in the panel's client telemetry.
+        telemetry.start()
+        telemetry.log("app_launch", ["restored_session": api.token != nil ? "true" : "false"])
     }
 
     /// Called once at app launch. If a token is already stored, validates and
@@ -47,15 +54,20 @@ final class AppState: ObservableObject {
     func login(username: String, password: String, guildId: String?) async {
         errorMessage = nil
         let trimmedGuildId = guildId?.trimmingCharacters(in: .whitespaces)
+        let started = Date()
+        telemetry.log("login_attempt")
         do {
             let payload: SessionPayload = try await api.post(
                 "/api/session/login",
                 body: LoginRequest(username: username, password: password, guildId: trimmedGuildId?.isEmpty == false ? trimmedGuildId : nil)
             )
             apply(payload)
+            telemetry.log("login_success", value: ClientTelemetry.ms(since: started))
         } catch {
             guard !error.isCancellation else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Login failed."
+            telemetry.log("login_failure", value: ClientTelemetry.ms(since: started),
+                          ["kind": ClientTelemetry.kind(of: error)])
         }
     }
 
@@ -96,6 +108,8 @@ final class AppState: ObservableObject {
     }
 
     func logout() {
+        telemetry.log("sign_out")
+        Task { await telemetry.flush() }
         api.token = nil
         stopRefreshLoop()
         isAuthenticated = false
@@ -115,6 +129,7 @@ final class AppState: ObservableObject {
     /// here must not log the user out; only an explicit 401 does that, via
     /// APIClient.onUnauthorized.
     func refreshSession() async {
+        let started = Date()
         do {
             let payload: SessionPayload = try await api.get("/api/session")
             if payload.authenticated == false {
@@ -122,8 +137,12 @@ final class AppState: ObservableObject {
                 return
             }
             apply(payload)
+            telemetry.log("session_refresh", value: ClientTelemetry.ms(since: started))
         } catch {
             // Ignore — keep the existing session state and retry on the next tick.
+            guard !error.isCancellation else { return }
+            telemetry.log("session_refresh_failure", value: ClientTelemetry.ms(since: started),
+                          ["kind": ClientTelemetry.kind(of: error)])
         }
     }
 
@@ -142,6 +161,7 @@ final class AppState: ObservableObject {
     }
 
     private func handleUnauthorized() {
+        if isAuthenticated { telemetry.log("session_expired") }
         api.token = nil
         stopRefreshLoop()
         isAuthenticated = false

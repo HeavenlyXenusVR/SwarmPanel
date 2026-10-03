@@ -41,6 +41,10 @@ targets:
       # needing a separate framework target.
       - path: Shared/WidgetShared.swift
       - path: Shared/SwarmPanelControlIntents.swift
+      # Client telemetry, shared with the Apple TV app. The iOS target had
+      # none before, which is why "ios" never showed up in the server-side
+      # client telemetry at all.
+      - path: Shared/ClientTelemetry.swift
     # Resources listed EXPLICITLY so XcodeGen creates a proper "Compile Asset
     # Catalogs" (actool) build phase — mirrors Lumisound's project.yml.
     resources:
@@ -114,6 +118,7 @@ targets:
     platform: tvOS
     sources:
       - path: SwarmPanelTV/Sources
+      - path: Shared/ClientTelemetry.swift
       - path: SwarmPanel/Sources/Networking/APIClient.swift
       - path: SwarmPanel/Sources/Networking/APIError.swift
       - path: SwarmPanel/Sources/Networking/CancellationCheck.swift
