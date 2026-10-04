@@ -118,10 +118,68 @@ function M.init()
   )]])
 end
 
+-- Rows waiting for the next batched INSERT. httpd.lua records every HTTP
+-- request, so writing each one as its own INSERT cost a DB round trip per
+-- request; buffering them and flushing every FLUSH_INTERVAL_SECONDS turns
+-- that into one multi-row INSERT. Bounded so a database outage can't grow
+-- it without limit (oldest rows are dropped first).
+local copas_ok, copas = pcall(require, "copas")
+local EVENT_COLUMNS = 11
+local FLUSH_INTERVAL_SECONDS = 2
+local FLUSH_BATCH_ROWS = 200
+local MAX_PENDING_ROWS = 5000
+local pending = {}
+local flusher_running = false
+
+local function insert_rows(rows)
+  local marks, args, n = {}, {}, 0
+  for i, row in ipairs(rows) do
+    marks[i] = "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)"
+    for j = 1, EVENT_COLUMNS do
+      n = n + 1
+      args[n] = row[j]
+    end
+  end
+  return db.execute(DB,
+    ("INSERT INTO %s (event_category, event_name, method, path, status_code, username, guild_id, client_ip, numeric_value, text_value, metadata) VALUES "):format(EVENTS_TABLE)
+      .. table.concat(marks, ", "),
+    unpack(args, 1, n))
+end
+
+-- Writes everything buffered so far. A failed batch is logged and dropped
+-- rather than retried, so one bad row can't wedge the queue.
+function M.flush()
+  if #pending == 0 then return end
+  local rows = pending
+  pending = {}
+  for i = 1, #rows, FLUSH_BATCH_ROWS do
+    local batch = {}
+    for j = i, math.min(i + FLUSH_BATCH_ROWS - 1, #rows) do batch[#batch + 1] = rows[j] end
+    local ok, res, err = pcall(insert_rows, batch)
+    if not ok or not res then
+      print("[swarmpanel-lua] telemetry flush failed (" .. #batch .. " rows dropped): " .. tostring(ok and err or res))
+    end
+  end
+end
+
+local function ensure_flusher()
+  if flusher_running then return end
+  flusher_running = true
+  copas.addthread(function()
+    while true do
+      copas.sleep(FLUSH_INTERVAL_SECONDS)
+      local ok, err = pcall(M.flush)
+      if not ok then print("[swarmpanel-lua] telemetry flush error: " .. tostring(err)) end
+    end
+  end)
+end
+
 -- record(category, name, opts) -- opts: { method, path, status_code,
 -- username, guild_id, client_ip, numeric_value, text_value, metadata }.
 -- Fire-and-forget: never throws, a DB hiccup here must never take down
--- whatever real request/action triggered the telemetry.
+-- whatever real request/action triggered the telemetry. Inside the event
+-- loop the row is buffered (see M.flush); outside it (startup) it is
+-- written straight away.
 function M.record(category, name, opts)
   opts = opts or {}
   local text_value = opts.text_value ~= nil and redact_text(tostring(opts.text_value)) or nil
@@ -133,14 +191,20 @@ function M.record(category, name, opts)
       metadata_json = encoded
     end
   end
-  local ok2, err = pcall(db.execute, DB,
-    ("INSERT INTO %s (event_category, event_name, method, path, status_code, username, guild_id, client_ip, numeric_value, text_value, metadata) " ..
-     "VALUES (%%s, %%s, %%s, %%s, %%s, %%s, %%s, %%s, %%s, %%s, %%s::jsonb)"):format(EVENTS_TABLE),
+  local row = {
     tostring(category), tostring(name), opts.method, opts.path and tostring(opts.path):sub(1, 200),
     opts.status_code, opts.username and tostring(opts.username):sub(1, 80), opts.guild_id,
-    opts.client_ip and tostring(opts.client_ip):sub(1, 64), opts.numeric_value, text_value, metadata_json)
-  if not ok2 then
-    print("[swarmpanel-lua] telemetry record failed: " .. tostring(err))
+    opts.client_ip and tostring(opts.client_ip):sub(1, 64), opts.numeric_value, text_value, metadata_json,
+  }
+  if copas_ok and coroutine.isyieldable and coroutine.isyieldable() then
+    if #pending >= MAX_PENDING_ROWS then table.remove(pending, 1) end
+    pending[#pending + 1] = row
+    ensure_flusher()
+    return
+  end
+  local ok2, res, err = pcall(insert_rows, { row })
+  if not ok2 or not res then
+    print("[swarmpanel-lua] telemetry record failed: " .. tostring(ok2 and err or res))
   end
 end
 

@@ -287,8 +287,7 @@ function M.control_bot(bot, gid, action, payload, actor)
   end
 
   local result = { action = action, command = action }
-  local ok, err = pcall(function()
-    db.execute(schema, "BEGIN")
+  local ok, err = pcall(db.transaction, schema, function()
 
     if action == "PAUSE" or action == "RESUME" or action == "SKIP" or action == "STOP" then
       clear_pending_orders(schema, prefix, gid, bot.key)
@@ -503,12 +502,10 @@ function M.control_bot(bot, gid, action, payload, actor)
       result.message = string.format("Seek order queued for %s in guild %s at position %ds.", bot.display_name, gid, math.floor(position_seconds))
     end
 
-    db.execute(schema, "COMMIT")
   end)
 
   local latency_ms = (socket.gettime() - t0) * 1000
   if not ok then
-    pcall(db.execute, schema, "ROLLBACK")
     pcall(telemetry.record, "bot_command", action, {
       guild_id = gid, username = actor, numeric_value = latency_ms,
       metadata = { bot_key = bot.key, success = false, error = tostring(err), payload = payload },

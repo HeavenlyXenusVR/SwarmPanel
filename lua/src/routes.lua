@@ -137,11 +137,20 @@ function M.register(cfg)
   -- set once at login -- every account showed "Inactive" a few minutes
   -- into a session no matter how actively they were using the panel.
   local PRESENCE_TOUCH_INTERVAL_SECONDS = 30
+  -- touch_account_seen's UPDATE is already a no-op inside the interval, but
+  -- it still cost a DB round trip on every authenticated request. Remember
+  -- when each account was last touched and skip the query until it's due.
+  local last_presence_touch = {} -- "username\0guild" -> socket.gettime()
   local function touch_presence(a)
     if not a then return end
     local username = tostring(a.username or ""):match("^%s*(.-)%s*$")
     local guild_id = a.guild_id
     if username == "" or not guild_id or guild_id == "" then return end
+    local touch_key = username:lower() .. "\0" .. tostring(guild_id)
+    local now = socket.gettime()
+    local last = last_presence_touch[touch_key]
+    if last and now - last < PRESENCE_TOUCH_INTERVAL_SECONDS then return end
+    last_presence_touch[touch_key] = now
     local ok, err = pcall(accounts.touch_account_seen, username, guild_id, PRESENCE_TOUCH_INTERVAL_SECONDS)
     if not ok then
       print("[swarmpanel-lua] presence touch failed for " .. username .. ": " .. tostring(err))

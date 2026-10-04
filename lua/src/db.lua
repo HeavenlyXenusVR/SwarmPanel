@@ -6,32 +6,17 @@
 -- lifetime. None of SwarmPanel's queries actually JOIN across two different
 -- top-level databases (accountlogins / discord_aria / each bot's own
 -- discord_music_<bot> db are always queried independently, then combined in
--- application code), so the fix is simply: keep one lazily-connected Pg
--- instance PER DATABASE NAME instead of one pool for the whole server.
-local Pg = require("swarmlua.pg")
+-- application code), so the fix is simply: keep a separate connection pool
+-- PER DATABASE NAME instead of one pool for the whole server.
+local Pool = require("swarmlua.pgpool")
 local socket = require("socket")
 
 local M = {}
-local pools = {} -- dbname -> Pg instance
+local pools = {} -- dbname -> Pool
 local cfg = nil
 
 function M.init(settings)
   cfg = settings
-end
-
-function M.conn(dbname)
-  local pg = pools[dbname]
-  if not pg then
-    pg = Pg.new({
-      host = cfg.db_host,
-      port = cfg.db_port,
-      user = cfg.db_user,
-      password = cfg.db_password,
-      database = dbname,
-    })
-    pools[dbname] = pg
-  end
-  return pg
 end
 
 -- pgmoon's default OID 1700 (NUMERIC) deserializer runs every value through
@@ -40,31 +25,49 @@ end
 -- image_gallery schema stores several large id-ish columns (user_id,
 -- media_id, avatar_file_id, banned_by, file_size, ...) as NUMERIC(20,0),
 -- which is exactly the >2^53 precision-loss trap the swarm-wide snowflake
--- rule warns about. Patched here at the call site instead of editing the
--- vendored pg.lua: force NUMERIC to come back as a string too, on every
--- connection (including after an auto-reconnect, since pgmoon.new() resets
--- deserializers on each fresh socket) — cheap to re-check per query via a
--- one-field marker on the live connection object.
-local function ensure_numeric_precision(pg)
-  local ok = pg:ensure()
-  if ok and pg.conn and not pg.conn._swarmpanel_numeric_fixed then
-    pg.conn:set_type_deserializer(1700, "string")
-    pg.conn._swarmpanel_numeric_fixed = true
+-- rule warns about. Force NUMERIC to come back as a string too, on every
+-- fresh connection (pg.lua runs on_connect after each (re)connect).
+local function on_connect(conn)
+  conn:set_type_deserializer(1700, "string")
+end
+
+-- Each database gets its own small pool (see swarmlua/pgpool.lua): queries
+-- yield to the copas loop instead of blocking it, and concurrent requests
+-- against the same database no longer queue behind one shared socket.
+function M.conn(dbname)
+  local pool = pools[dbname]
+  if not pool then
+    local size = (dbname == "accountlogins") and cfg.db_pool_size_main or cfg.db_pool_size
+    pool = Pool.new({
+      host = cfg.db_host,
+      port = cfg.db_port,
+      user = cfg.db_user,
+      password = cfg.db_password,
+      database = dbname,
+      size = size or 1,
+      on_connect = on_connect,
+    })
+    pools[dbname] = pool
   end
-  return ok
+  return pool
 end
 
 -- Runs `sql` (with %s-style placeholders, pgmoon-escaped) against `dbname`.
 -- Returns rows (array of column->value tables) or nil, err.
 function M.query(dbname, sql, ...)
-  local pg = M.conn(dbname)
-  ensure_numeric_precision(pg)
-  local rows, err = pg:query(sql, ...)
+  local rows, err = M.conn(dbname):query(sql, ...)
   if rows == nil then
     return nil, err
   end
   if rows == true then return {} end -- DDL/DML with no result set
   return rows
+end
+
+-- Runs fn() inside BEGIN/COMMIT on a single connection to `dbname`; every
+-- db.* call fn makes against that database uses the same connection.
+-- ROLLBACK and re-raise on error.
+function M.transaction(dbname, fn)
+  return M.conn(dbname):transaction(fn)
 end
 
 function M.fetchall(dbname, sql, ...)

@@ -35,6 +35,8 @@ local mime = require("mime")
 -- (set once, don't fuss over it) is kept rather than inventing a different
 -- pattern for just this module.
 https.TIMEOUT = 10
+-- Yields to the copas loop instead of blocking it (see swarmlua/rest.lua).
+local http_request = require("swarmlua.rest").http_request
 
 local M = {}
 
@@ -63,7 +65,7 @@ end
 local function http_post_json(url, payload)
   local body = cjson.encode(payload)
   local response_body = {}
-  local ok, status = https.request({
+  local ok, status = http_request({
     url = url,
     method = "POST",
     headers = {
@@ -81,7 +83,7 @@ end
 
 local function http_get(url)
   local response_body = {}
-  local ok, status = https.request({
+  local ok, status = http_request({
     url = url,
     method = "GET",
     headers = { ["User-Agent"] = "SwarmPanel-Lua (https://github.com/, 1.0)" },
@@ -131,8 +133,7 @@ end
 -- members -- Discord does not allow bots to message arbitrary strangers
 -- with no shared server, and there is no way around that from this side.
 -- Mirrors the Image Gallery app's discord_bot.lua (same product, proven
--- design), ported onto this file's ssl.https+copas client instead of
--- copas.http since that's this codebase's established HTTP pattern.
+-- design), sent through swarmlua/rest.lua's copas-aware http_request.
 -- ---------------------------------------------------------------------------
 
 local function http_bot_call(method, path, token, payload)
@@ -146,7 +147,7 @@ local function http_bot_call(method, path, token, payload)
     headers["Content-Type"] = "application/json"
     headers["Content-Length"] = tostring(#body)
   end
-  local ok, status = https.request({
+  local ok, status = http_request({
     url = "https://discord.com/api/v10" .. path,
     method = method,
     headers = headers,
