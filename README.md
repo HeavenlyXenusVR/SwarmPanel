@@ -20,7 +20,7 @@ SwarmPanel is the React and FastAPI command center for Aria and the 12-node musi
 
 ## Main Surfaces
 
-The panel is grouped into five sections. The sidebar, mobile menu, breadcrumbs, and the tabs above each screen all come from one definition in `lua/src/nav.lua`. The iOS app uses the same sections as its tabs.
+The panel is grouped into five sections. The sidebar, mobile menu, breadcrumbs, and the tabs above each screen all come from one definition in `lua/src/nav.lua`. The iOS app uses the same sections on its floating console dock: Fleet, Insights, Community and You, with Controls as the Deck on the dock's centre orb.
 
 - **Fleet:** Dashboard (live fleet status, health summaries, sessions), Controls (per-bot playback and queue orders, channel conversion), Invites.
 - **Insights:** Leaderboard (top tracks and listeners) and Learning (what the recommendation engine has learned).

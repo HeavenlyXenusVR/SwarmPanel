@@ -14,6 +14,13 @@ struct AdminHubView: View {
 
     var body: some View {
         List {
+            Section {
+                ResScreenHeader(eyebrow: "Command center", title: "Admin", subtitle: "Monitoring, moderation and data for the whole swarm.")
+                    .padding(.horizontal, -20)
+                    .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20))
+                    .listRowBackground(Color.clear)
+            }
+
             // Same stats as the web /admin overview.
             if let stats {
                 Section {
@@ -104,6 +111,7 @@ struct AdminHubView: View {
         .scrollContentBackground(.hidden)
         .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle("Admin")
+        .navigationBarTitleDisplayMode(.inline)
         .task { await loadStats() }
         .refreshable { await loadStats() }
     }

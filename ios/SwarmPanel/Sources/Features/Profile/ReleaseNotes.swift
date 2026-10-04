@@ -16,6 +16,15 @@ let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"
 /// Static changelog shown on the "What's New" screen — updated by hand
 /// alongside each ios/vX.Y.Z tag, mirroring the tag's own release notes.
 let releaseNotes: [ReleaseNote] = [
+    ReleaseNote(version: "0.17.0", highlights: [
+        "New look: \"Resonance\" -- a dark studio sky with slow sound-wave ribbons in your accent, glass panels and rounded display type",
+        "A floating console dock replaces the tab bar: Fleet, Insights, Community and You, with the Deck (Controls) on the centre orb",
+        "Fleet shows the whole swarm as a hive -- one hexagon per bot in its own colour, glowing while it plays -- tap a cell to open that bot",
+        "Now Playing has a waveform scrubber and an ambient glow from the track's artwork",
+        "The Deck picks bots from a hexagon strip and orders from a grid of tiles instead of menus",
+        "Insights opens with a podium for the top three tracks",
+        "Apple TV gets the same redesign: a focusable hive, Aria as the conductor, and an On Air row",
+    ]),
     ReleaseNote(version: "0.12.8", highlights: [
         "Accounts admin can now edit an account's username, display name, email, guild, and server name directly instead of only verify/reset/delete",
     ]),
