@@ -107,6 +107,7 @@ struct RegisterView: View {
                     .opacity(canSubmit ? 1 : 0.5)
                 }
             }
+            .resonanceScreen()
             .navigationTitle("Register")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

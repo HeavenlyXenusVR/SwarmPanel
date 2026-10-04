@@ -28,10 +28,39 @@ struct LeaderboardView: View {
         }
     }
 
+    /// The top three of whichever list is showing, for the podium.
+    private var podiumTracks: [PodiumEntry]? {
+        if viewModel.scope == .swarm && appState.isAdmin {
+            let tracks = viewModel.swarmData?.tracks ?? []
+            return tracks.prefix(3).map {
+                PodiumEntry(title: $0.title?.isEmpty == false ? $0.title! : "Untitled", value: "\($0.playCount ?? 0) plays", botKey: $0.botKey)
+            }
+        }
+        let tracks = sortedTracks(viewModel.data?.topTracks ?? [])
+        return tracks.prefix(3).map {
+            PodiumEntry(
+                title: $0.title?.isEmpty == false ? $0.title! : "Untitled",
+                value: trackSort == .plays ? "\($0.playCount ?? 0) plays" : "\($0.likeCount ?? 0) likes",
+                botKey: viewModel.selectedBotKey.isEmpty ? nil : viewModel.selectedBotKey
+            )
+        }
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    ResScreenHeader(
+                        eyebrow: viewModel.scope == .swarm && appState.isAdmin ? "Across the swarm" : "Charts",
+                        title: "Insights",
+                        subtitle: "What the fleet plays most, and who's listening."
+                    )
+
+                    if let podium = podiumTracks, podium.count >= 3 {
+                        Podium(entries: podium)
+                            .padding(.horizontal)
+                    }
+
                     if appState.isAdmin {
                         Picker("Scope", selection: $viewModel.scope) {
                             ForEach(LeaderboardScope.allCases) { scope in
@@ -219,9 +248,11 @@ struct LeaderboardView: View {
                     }
                 }
                 .padding(.vertical)
+                .dockClearance()
             }
-            .background(ResonanceBackdrop().ignoresSafeArea())
-            .navigationTitle(viewModel.scope == .swarm && appState.isAdmin ? "Swarm Leaderboard" : "Leaderboard")
+            .resonanceScreen()
+            .navigationTitle(viewModel.scope == .swarm && appState.isAdmin ? "Swarm Leaderboard" : "Insights")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     NavigationLink {
@@ -258,6 +289,72 @@ struct LeaderboardView: View {
     }
 }
 
+struct PodiumEntry {
+    let title: String
+    let value: String
+    var botKey: String?
+}
+
+/// The top three as a podium: first place raised in the middle, each step
+/// a glass block with a medal hexagon.
+private struct Podium: View {
+    let entries: [PodiumEntry]
+
+    @Environment(\.resAccent) private var accent
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            step(entries[1], rank: 2, height: 92)
+            step(entries[0], rank: 1, height: 122)
+            step(entries[2], rank: 3, height: 74)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func step(_ entry: PodiumEntry, rank: Int, height: CGFloat) -> some View {
+        let medal = medalColor(rank)
+        return VStack(spacing: 8) {
+            ZStack {
+                Hexagon().fill(LinearGradient(colors: [medal, medal.opacity(0.55)], startPoint: .top, endPoint: .bottom))
+                Text("\(rank)")
+                    .font(.system(size: 17, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.black.opacity(0.75))
+            }
+            .frame(width: 38, height: 44)
+            .shadow(color: medal.opacity(0.55), radius: rank == 1 ? 14 : 8)
+            Text(entry.title)
+                .font(.system(.caption, design: .rounded).weight(.bold))
+                .foregroundStyle(Res.ink)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .frame(height: 32, alignment: .top)
+            Text(entry.value)
+                .font(.system(.caption2, design: .rounded).monospacedDigit())
+                .foregroundStyle(Res.mist)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(LinearGradient(colors: [medal.opacity(0.35), medal.opacity(0.06)], startPoint: .top, endPoint: .bottom))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(medal.opacity(0.4), lineWidth: 1))
+                .frame(height: height)
+                .overlay(alignment: .bottom) {
+                    if let botKey = entry.botKey {
+                        Hexagon().fill(BotPalette.color(for: botKey)).frame(width: 12, height: 14).padding(.bottom, 10)
+                    }
+                }
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Number \(rank): \(entry.title), \(entry.value)")
+    }
+
+    private func medalColor(_ rank: Int) -> Color {
+        switch rank {
+        case 1: return BotPalette.rgb(0xFFD700)
+        case 2: return BotPalette.rgb(0xC9D3DF)
+        default: return BotPalette.rgb(0xD9935A)
+        }
+    }
+}
+
 private struct RankRow: View {
     let rank: Int
     let title: String
@@ -266,46 +363,38 @@ private struct RankRow: View {
 
     private var medalColor: Color? {
         switch rank {
-        case 1: return Color(hex: "FFD700") ?? SwarmTheme.warn
-        case 2: return Color(hex: "C0C0C0") ?? SwarmTheme.textMuted
-        case 3: return Color(hex: "CD7F32") ?? SwarmTheme.warn
+        case 1: return BotPalette.rgb(0xFFD700)
+        case 2: return BotPalette.rgb(0xC9D3DF)
+        case 3: return BotPalette.rgb(0xD9935A)
         default: return nil
         }
     }
 
     var body: some View {
         HStack(spacing: 12) {
-            if let medalColor {
-                Circle()
-                    .fill(medalColor.gradient)
-                    .frame(width: 28, height: 28)
-                    .overlay(
-                        Image(systemName: "trophy.fill")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.white)
-                    )
-            } else {
+            ZStack {
+                Hexagon()
+                    .fill(medalColor.map { AnyShapeStyle($0.gradient) } ?? AnyShapeStyle(Res.well))
                 Text("\(rank)")
-                    .font(.caption.bold())
-                    .frame(width: 28, height: 28)
-                    .background(SwarmTheme.panel2, in: Circle())
-                    .foregroundStyle(SwarmTheme.textMuted)
+                    .font(.system(size: 12, weight: .heavy, design: .rounded).monospacedDigit())
+                    .foregroundStyle(medalColor == nil ? Res.mist : Color.black.opacity(0.75))
             }
+            .frame(width: 28, height: 32)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.subheadline.bold())
-                    .foregroundStyle(SwarmTheme.textPrimary)
+                    .font(.system(.subheadline, design: .rounded).weight(.bold))
+                    .foregroundStyle(Res.ink)
                     .lineLimit(1)
                 Text(subtitle)
                     .font(.caption)
-                    .foregroundStyle(SwarmTheme.textMuted)
+                    .foregroundStyle(Res.mist)
             }
             Spacer()
             if videoUrl?.isEmpty == false {
-                Image(systemName: "link")
-                    .font(.caption)
-                    .foregroundStyle(SwarmTheme.textMuted)
+                Image(systemName: "arrow.up.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Res.mist)
             }
         }
         .padding(14)

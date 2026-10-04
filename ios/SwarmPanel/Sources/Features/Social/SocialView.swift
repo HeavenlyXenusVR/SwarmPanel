@@ -9,6 +9,13 @@ struct SocialView: View {
         NavigationStack {
             ScrollViewReader { proxy in
             List {
+                Section {
+                    ResScreenHeader(eyebrow: "The people", title: "Community", subtitle: "Find operators, add friends, and talk shop.")
+                        .padding(.horizontal, -20)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20))
+                        .listRowBackground(Color.clear)
+                }
+
                 if let error = viewModel.errorMessage {
                     Section { ErrorBanner(message: error) }
                         .listRowBackground(ResRowBackground())
@@ -197,6 +204,7 @@ struct SocialView: View {
             .scrollContentBackground(.hidden)
             .background(ResonanceBackdrop().ignoresSafeArea())
             .navigationTitle("Community")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 // Full directory browse (web: /users) — moved here from the
                 // Account tab's old "Discover" list so every Community
