@@ -1,4 +1,4 @@
--- Discord REST API client (blocking; see README for the async trade-off note).
+-- Discord REST API client (yields under copas; see Rest.http_request below).
 local copas = require("copas") -- must load before socket.http/ssl.https anywhere in the process
 local socket_http = require("socket.http")
 local https = require("ssl.https")
@@ -25,6 +25,24 @@ local API_BASE = "https://discord.com/api/v10"
 local Rest = {}
 Rest.__index = Rest
 
+-- ssl.https is a plain blocking client: requiring copas first does NOT make
+-- it yield, so every Discord call used to freeze the whole single-threaded
+-- event loop (every other request and WebSocket) for its full round trip --
+-- up to the timeout when Discord is slow. copas.http has the same request()
+-- interface and yields while waiting. It needs a copas coroutine, so code
+-- running outside the loop (startup) keeps the blocking client.
+local copas_http_ok, copas_http = pcall(require, "copas.http")
+
+-- Drop-in for https.request(reqt) (table form). The timeout is read from
+-- https.TIMEOUT at call time so modules that tune it keep working.
+function Rest.http_request(reqt)
+  if copas_http_ok and coroutine.isyieldable and coroutine.isyieldable() then
+    reqt.timeout = reqt.timeout or https.TIMEOUT or socket_http.TIMEOUT
+    return copas_http.request(reqt)
+  end
+  return https.request(reqt)
+end
+
 function Rest.new(token)
   return setmetatable({ token = token }, Rest)
 end
@@ -41,7 +59,7 @@ function Rest:_request_once(method, path, body)
     headers["Content-Length"] = tostring(#request_body)
   end
 
-  local ok, status = https.request({
+  local ok, status = Rest.http_request({
     url = API_BASE .. path,
     method = method,
     headers = headers,

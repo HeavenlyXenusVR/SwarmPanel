@@ -747,8 +747,7 @@ function M.register_account_login(username, guild_id, password, email, verificat
   -- relying on DB column defaults — see the schema-defaults note in
   -- social.lua's set_account_follow(): this accountlogins schema is missing
   -- several DEFAULT clauses that the Python original's DDL specifies.
-  local ok, err = pcall(function()
-    db.execute(SCHEMA, "BEGIN")
+  local ok, err = pcall(db.transaction, SCHEMA, function()
     db.execute(SCHEMA, "INSERT INTO guild_locks (guild_id, username, created_at) VALUES (%s, %s, CURRENT_TIMESTAMP)", gid, uname)
     db.execute(
       SCHEMA,
@@ -760,10 +759,8 @@ function M.register_account_login(username, guild_id, password, email, verificat
         VALUES (%s, %s, %s, %s, TRUE, 'member', CURRENT_TIMESTAMP, %s, %s, %s, %s, CASE WHEN %s IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END)]],
       uname, gid, auth.password_hash(pw), em, webhook_url, webhook_channel_id, webhook_name, code_hash, code_hash
     )
-    db.execute(SCHEMA, "COMMIT")
   end)
   if not ok then
-    pcall(db.execute, SCHEMA, "ROLLBACK")
     error(err, 0)
   end
   return { username = uname, guild_id = gid, email = em, verification_webhook_url = webhook_url }

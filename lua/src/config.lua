@@ -149,6 +149,12 @@ function M.load()
     db_port = tonumber(M.env("PANEL_DB_PG_PORT", "5432")),
     db_user = M.env("PANEL_DB_USER", M.env("DB_USER", "botuser")),
     db_password = M.env("PANEL_DB_PASSWORD", M.env("DB_PASSWORD", "bot_logins")),
+    -- Max concurrent connections per database (db.lua opens them lazily and
+    -- closes extras after a minute idle). accountlogins backs nearly every
+    -- request, so it gets more than each bot's own database. The same
+    -- Postgres serves the 13 bots and Nyxframe, so keep these modest.
+    db_pool_size_main = math.max(1, tonumber(M.env("PANEL_DB_POOL_SIZE_MAIN", "4")) or 4),
+    db_pool_size = math.max(1, tonumber(M.env("PANEL_DB_POOL_SIZE", "2")) or 2),
     db_default_schema = M.env("PANEL_DB_DEFAULT_SCHEMA", "discord_music_gws"),
     admin_username = M.env("PANEL_ADMIN_USERNAME", "admin"),
     admin_password = M.env("PANEL_ADMIN_PASSWORD", ""),

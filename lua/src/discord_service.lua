@@ -1,10 +1,9 @@
 -- Discord REST enrichment: bot identity/avatar, guild/channel name
 -- resolution, OAuth invite links. Port of the read paths of
 -- app/discord_api.py's DiscordInventoryService, on top of the already-
--- vendored lua/lib/swarmlua/rest.lua (blocking client, but copas-patched
--- luasocket/luasec means the blocking wait only suspends the current
--- request's own coroutine, not the whole event loop — same trade-off the
--- vendored rest.lua's own header comment already calls out).
+-- vendored lua/lib/swarmlua/rest.lua, which goes through copas.http inside
+-- the event loop so a Discord round trip only suspends the current
+-- request's own coroutine, not the whole server.
 --
 -- NOT ported: fetch_active_threads / archived-thread channel-name fallback,
 -- fetch_inventory (the full per-bot guild+channel tree used by a settings/
@@ -67,12 +66,10 @@ local function cached_get(token, path)
   local rest = rest_for(token)
   local data, err = rest:get(path)
   if data == nil then
-    -- Failures are cached too, briefly. The REST client is blocking (up to
-    -- a 15s timeout per call, see swarmlua/rest.lua), so during a Discord
-    -- outage every dashboard/invites/inventory request used to retry every
-    -- bot's lookups from scratch and freeze the entire event loop for each
-    -- of them in turn. Now a failed lookup is retried at most once per
-    -- ERROR_CACHE_TTL.
+    -- Failures are cached too, briefly: during a Discord outage every
+    -- dashboard/invites/inventory request used to retry every bot's lookups
+    -- from scratch, each waiting out the full timeout. Now a failed lookup
+    -- is retried at most once per ERROR_CACHE_TTL.
     cache[key] = { socket.gettime() + ERROR_CACHE_TTL, nil, err or "Discord request failed." }
     return nil, err
   end
