@@ -9,18 +9,22 @@ struct TVLoginView: View {
     private enum Field { case username, password }
 
     var body: some View {
-        VStack(spacing: 36) {
-            VStack(spacing: 12) {
+        HStack(spacing: 100) {
+            VStack(alignment: .leading, spacing: 28) {
+                ResonanceEmblem(size: 260)
                 Text("SwarmPanel")
-                    .font(.system(size: 76, weight: .heavy, design: .rounded))
-                Text("Sign in with your SwarmPanel account to put the live fleet dashboard on this TV.")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 900)
+                    .font(TVRes.display(92))
+                Text("Put the live fleet on this TV: every bot in the hive, what it's playing, and the Medic's watch — read-only.")
+                    .font(.system(size: 30, design: .rounded))
+                    .foregroundStyle(TVRes.mist)
+                    .frame(maxWidth: 760, alignment: .leading)
             }
 
-            VStack(spacing: 20) {
+            VStack(alignment: .leading, spacing: 26) {
+                Text("SIGN IN")
+                    .font(TVRes.eyebrow)
+                    .tracking(2)
+                    .foregroundStyle(TVRes.mist)
                 TextField("Username", text: $username)
                     .textContentType(.username)
                     .autocorrectionDisabled()
@@ -32,25 +36,26 @@ struct TVLoginView: View {
                     .focused($focused, equals: .password)
                     .submitLabel(.go)
                     .onSubmit(signIn)
-            }
-            .frame(width: 760)
 
-            if let error = session.errorMessage {
-                Text(error)
-                    .font(.headline)
-                    .foregroundStyle(Color(red: 1, green: 0.55, blue: 0.55))
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 900)
-            }
-
-            Button(action: signIn) {
-                if session.isWorking {
-                    ProgressView()
-                } else {
-                    Text("Sign In").frame(minWidth: 280)
+                if let error = session.errorMessage {
+                    Text(error)
+                        .font(.system(size: 26, weight: .semibold, design: .rounded))
+                        .foregroundStyle(TVRes.danger)
+                        .frame(maxWidth: 640, alignment: .leading)
                 }
+
+                Button(action: signIn) {
+                    if session.isWorking {
+                        ProgressView()
+                    } else {
+                        Text("Sign In").frame(minWidth: 300)
+                    }
+                }
+                .disabled(session.isWorking)
             }
-            .disabled(session.isWorking)
+            .padding(50)
+            .frame(width: 740)
+            .tvGlass(radius: 44)
         }
         .padding(80)
         .onAppear { focused = .username }

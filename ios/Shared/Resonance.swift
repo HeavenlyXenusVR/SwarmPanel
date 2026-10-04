@@ -259,3 +259,42 @@ struct EqualizerBars: View {
         return CGFloat(min(max(value, 0.12), 1))
     }
 }
+
+// MARK: - Emblem
+
+/// SwarmPanel's mark in Resonance: a seven-cell hive in the fleet's own
+/// colours, with an optional slow "listening" shimmer that sweeps across
+/// the cells. Used on the launch screen, sign-in and the Face ID lock.
+struct ResonanceEmblem: View {
+    var size: CGFloat = 120
+    var animated = true
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private let keys = ["aria", "gws", "maestro", "melodic", "nexus", "rhythm", "sapphire"]
+
+    var body: some View {
+        let positions = HiveLayout.positions(count: keys.count)
+        let cell = size / 3.2
+        let cellHeight = cell * 2 / sqrt(3)
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !animated || reduceMotion)) { context in
+            let time = (animated && !reduceMotion) ? context.date.timeIntervalSinceReferenceDate : 0
+            ZStack {
+                ForEach(Array(keys.enumerated()), id: \.offset) { index, key in
+                    let point = positions[index]
+                    let wave = 0.5 + 0.5 * sin(time * 1.6 - Double(point.x) * 1.4 - Double(point.y) * 0.8)
+                    let color = BotPalette.color(for: key)
+                    Hexagon()
+                        .fill(LinearGradient(colors: [color.opacity(0.35 + 0.55 * wave), color.opacity(0.12 + 0.25 * wave)],
+                                             startPoint: .top, endPoint: .bottom))
+                        .overlay(Hexagon().stroke(color.opacity(0.9), lineWidth: 1.2))
+                        .frame(width: cell * 0.94, height: cellHeight * 0.94)
+                        .shadow(color: color.opacity(0.5 * wave), radius: 8)
+                        .offset(x: point.x * cell * 1.04, y: point.y * cell * 1.04)
+                }
+            }
+            .frame(width: size, height: size)
+        }
+        .accessibilityHidden(true)
+    }
+}

@@ -1,29 +1,38 @@
 import SwiftUI
 import UIKit
 
-/// The TV version of the web Dashboard: account header, fleet metric strip,
-/// Aria's orchestrator card and one card per music bot with its live
-/// now-playing session. Read-only -- selecting a card opens that bot's
-/// sessions, nothing sends orders.
+/// The TV version of the web Dashboard, in Resonance: the account header,
+/// the fleet as a focusable hive beside its readouts and Aria's conductor
+/// card, then an "On air" row with one card per music bot. Read-only --
+/// selecting a hive cell or card opens that bot's sessions, nothing sends
+/// orders.
 struct TVDashboardView: View {
     @ObservedObject var session: TVSession
     @ObservedObject var account: TVAccountModel
     @StateObject private var model = TVDashboardModel()
     @ObservedObject private var live = SwarmLiveSocket.shared
     @State private var selectedBot: TVBot?
+    @State private var focusedHiveKey: String?
     @State private var confirmSignOut = false
-
-    private let columns = [GridItem(.adaptive(minimum: 520, maximum: 640), spacing: 40)]
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 40) {
+            VStack(alignment: .leading, spacing: 48) {
                 header
-                metrics
-                if let aria = model.orchestrator {
-                    TVAriaCard(bot: aria, accent: account.accent)
+                if model.dashboard == nil {
+                    loadingState
+                } else {
+                    HStack(alignment: .top, spacing: 48) {
+                        hivePanel
+                        VStack(alignment: .leading, spacing: 32) {
+                            metrics
+                            if let aria = model.orchestrator {
+                                TVAriaCard(bot: aria, accent: account.accent)
+                            }
+                        }
+                    }
+                    onAir
                 }
-                content
             }
             .padding(.horizontal, 80)
             .padding(.vertical, 50)
@@ -48,25 +57,39 @@ struct TVDashboardView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 28) {
+        HStack(spacing: 32) {
             TVAvatar(url: account.profile?.avatarUrl ?? account.profile?.serverIconUrl,
-                     name: account.profile?.name ?? session.username, accent: account.accent, size: 96)
+                     name: account.profile?.name ?? session.username, accent: account.accent, size: 104)
+                .overlay(Circle().strokeBorder(account.accent, lineWidth: 3))
+                .shadow(color: account.accent.opacity(0.5), radius: 20)
             VStack(alignment: .leading, spacing: 6) {
+                Text((account.profile?.serverName ?? "SwarmPanel fleet").uppercased())
+                    .font(TVRes.eyebrow)
+                    .tracking(2)
+                    .foregroundStyle(account.accent)
                 Text(account.profile?.name ?? session.username)
-                    .font(.title2.weight(.bold))
-                Text(account.profile?.serverName ?? account.profile?.profileHeadline ?? "SwarmPanel fleet")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
+                    .font(TVRes.display(58))
+                    .lineLimit(1)
+                Text(headline)
+                    .font(.system(size: 28, weight: .medium, design: .rounded))
+                    .foregroundStyle(TVRes.mist)
             }
             Spacer()
-            if let updated = model.lastUpdated, model.isFromCache || !live.isConnected {
-                // Cached or stale data on screen: say how old it is.
-                Text("Updated \(updated, style: .relative) ago")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .trailing, spacing: 10) {
+                HStack(spacing: 12) {
+                    Circle().fill(live.isConnected ? TVRes.live : TVRes.warn).frame(width: 14, height: 14)
+                    Text(live.isConnected ? "LIVE" : "RECONNECTING")
+                        .font(TVRes.eyebrow)
+                        .tracking(2)
+                        .foregroundStyle(live.isConnected ? TVRes.live : TVRes.warn)
+                }
+                if let updated = model.lastUpdated, model.isFromCache || !live.isConnected {
+                    // Cached or stale data on screen: say how old it is.
+                    Text("Updated \(updated, style: .relative) ago")
+                        .font(.caption)
+                        .foregroundStyle(TVRes.mist)
+                }
             }
-            TVStatusPill(text: live.isConnected ? "Live" : "Reconnecting",
-                         color: live.isConnected ? Color(red: 0.49, green: 0.91, blue: 0.53) : .orange)
             Button("Sign Out") {
                 TVTelemetry.shared.log("sign_out_prompted")
                 confirmSignOut = true
@@ -74,45 +97,134 @@ struct TVDashboardView: View {
         }
     }
 
+    private var headline: String {
+        guard model.dashboard != nil else { return "Tuning in to the fleet…" }
+        let live = model.liveSessionCount
+        if live == 0 { return "The hive is quiet — \(model.musicBots.count) bots standing by." }
+        return "\(live) \(live == 1 ? "session" : "sessions") on air across \(model.guildsServed) guilds."
+    }
+
+    private var hivePanel: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            Text("THE HIVE")
+                .font(TVRes.eyebrow)
+                .tracking(2)
+                .foregroundStyle(account.accent)
+            TVHiveMap(bots: model.dashboard?.bots ?? [], cellWidth: 132, onSelect: open, focusedKey: $focusedHiveKey)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+            focusedCaption
+        }
+        .padding(36)
+        .frame(width: 860)
+        .tvGlass(radius: 40)
+        .focusSection()
+    }
+
+    /// Name and track of whichever hive cell has focus.
+    @ViewBuilder
+    private var focusedCaption: some View {
+        let bot = focusedHiveKey.flatMap { key in model.dashboard?.bots?.first { $0.key == key } }
+        HStack(spacing: 16) {
+            if let bot {
+                Hexagon().fill(BotPalette.color(for: bot.key)).frame(width: 26, height: 30)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(bot.name).font(.system(size: 30, weight: .bold, design: .rounded))
+                    Text(bot.isOrchestrator ? "Autonomous swarm orchestrator" : (bot.featuredSession?.title ?? "Waiting for live playback."))
+                        .font(.system(size: 24, design: .rounded))
+                        .foregroundStyle(TVRes.mist)
+                        .lineLimit(1)
+                }
+                Spacer()
+                TVStateBadge(state: bot.hiveState)
+            } else {
+                Text("Move across the hive to see what each bot is playing.")
+                    .font(.system(size: 24, design: .rounded))
+                    .foregroundStyle(TVRes.mist)
+            }
+        }
+        .frame(height: 70)
+        .animation(.easeInOut(duration: 0.2), value: focusedHiveKey)
+    }
+
     private var metrics: some View {
-        HStack(spacing: 24) {
-            TVMetric(label: "Bots Online", value: "\(model.onlineCount) / \(model.musicBots.count)", accent: account.accent)
-            TVMetric(label: "Live Sessions", value: "\(model.liveSessionCount)", accent: account.accent)
-            TVMetric(label: "Queued", value: "\(model.queueDepth)", accent: account.accent)
-            TVMetric(label: "Backup", value: "\(model.backupDepth)", accent: account.accent)
-            TVMetric(label: "Guilds", value: "\(model.guildsServed)", accent: account.accent)
-            TVMetric(label: "Audio Nodes", value: model.dashboard == nil ? "--" : (model.audioNodesHealthy ? "Healthy" : "Checking"), accent: account.accent)
+        VStack(alignment: .leading, spacing: 30) {
+            HStack(spacing: 24) {
+                TVReadout(value: "\(model.onlineCount)/\(model.musicBots.count)", label: "Online")
+                TVReadout(value: "\(model.liveSessionCount)", label: "On air", tint: model.liveSessionCount > 0 ? TVRes.live : TVRes.ink)
+                TVReadout(value: "\(model.queueDepth)", label: "Queued", tint: account.accent)
+            }
+            HStack(spacing: 24) {
+                TVReadout(value: "\(model.backupDepth)", label: "Backup")
+                TVReadout(value: "\(model.guildsServed)", label: "Guilds")
+                TVReadout(value: model.audioNodesHealthy ? "Healthy" : "Checking", label: "Audio nodes",
+                          tint: model.audioNodesHealthy ? TVRes.live : TVRes.warn)
+            }
+        }
+        .padding(36)
+        .tvGlass(radius: 40)
+        .focusable()
+    }
+
+    @ViewBuilder
+    private var onAir: some View {
+        let bots = model.musicBots.sorted { a, b in
+            let rank: (TVBot) -> Int = { bot in
+                switch bot.hiveState {
+                case .playing: return 0
+                case .paused: return 1
+                case .idle: return 2
+                case .offline: return 3
+                }
+            }
+            if rank(a) != rank(b) { return rank(a) < rank(b) }
+            return (BotPalette.fleetOrder.firstIndex(of: a.key) ?? 99) < (BotPalette.fleetOrder.firstIndex(of: b.key) ?? 99)
+        }
+        VStack(alignment: .leading, spacing: 24) {
+            Text("ON AIR")
+                .font(TVRes.eyebrow)
+                .tracking(2)
+                .foregroundStyle(account.accent)
+            if bots.isEmpty {
+                Text("No bots are serving your guild yet.")
+                    .font(.title3)
+                    .foregroundStyle(TVRes.mist)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 40) {
+                        ForEach(bots) { bot in
+                            Button { open(bot) } label: {
+                                TVBotCard(bot: bot, accent: account.accent)
+                            }
+                            .buttonStyle(.card)
+                        }
+                    }
+                    .padding(.vertical, 30)
+                    .padding(.horizontal, 6)
+                }
+                .focusSection()
+            }
         }
     }
 
     @ViewBuilder
-    private var content: some View {
-        if model.dashboard == nil {
+    private var loadingState: some View {
+        VStack(spacing: 30) {
+            ResonanceEmblem(size: 220)
             if let error = model.errorMessage {
-                Text(error).font(.title3).foregroundStyle(.secondary)
+                Text(error).font(.title3).foregroundStyle(TVRes.mist)
             } else {
-                HStack(spacing: 20) {
-                    ProgressView()
-                    Text("Loading the fleet…").font(.title3).foregroundStyle(.secondary)
-                }
-            }
-        } else if model.musicBots.isEmpty {
-            Text("No bots are serving your guild yet.")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-        } else {
-            LazyVGrid(columns: columns, spacing: 40) {
-                ForEach(model.musicBots) { bot in
-                    Button {
-                        TVTelemetry.shared.log("bot_detail_opened", ["bot": bot.key, "offline": bot.isOffline ? "true" : "false"])
-                        selectedBot = bot
-                    } label: {
-                        TVBotCard(bot: bot, accent: account.accent)
-                    }
-                    .buttonStyle(.card)
-                }
+                Text("Tuning in to the fleet…").font(.title3).foregroundStyle(TVRes.mist)
             }
         }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 80)
+    }
+
+    private func open(_ bot: TVBot) {
+        TVTelemetry.shared.log("bot_detail_opened", ["bot": bot.key, "offline": bot.isOffline ? "true" : "false"])
+        guard !bot.isOrchestrator else { return }
+        selectedBot = bot
     }
 }
 
@@ -122,85 +234,106 @@ struct TVBotCard: View {
     let bot: TVBot
     let accent: Color
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var color: Color { BotPalette.color(for: bot.key) }
+
     var body: some View {
         let session = bot.featuredSession
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                Text(bot.name).font(.title3.weight(.bold)).lineLimit(1)
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(spacing: 16) {
+                ZStack {
+                    Hexagon().fill(LinearGradient(colors: [color, color.opacity(0.45)], startPoint: .top, endPoint: .bottom))
+                    Text(BotPalette.monogram(for: bot.key, name: bot.displayName))
+                        .font(.system(size: 22, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.white)
+                }
+                .frame(width: 52, height: 60)
+                Text(bot.name)
+                    .font(.system(size: 34, weight: .heavy, design: .rounded))
+                    .lineLimit(1)
                 Spacer()
-                TVStatusPill(text: badge.text, color: badge.color)
+                TVStateBadge(state: bot.hiveState)
             }
-            HStack(spacing: 20) {
+            HStack(spacing: 22) {
                 TVThumbnail(url: session?.thumbnail)
-                VStack(alignment: .leading, spacing: 6) {
+                    .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(color.opacity(bot.hiveState == .playing ? 0.9 : 0.3), lineWidth: 3))
+                VStack(alignment: .leading, spacing: 8) {
                     Text(session?.title ?? "Waiting for live playback.")
-                        .font(.headline)
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
                         .lineLimit(2)
                     Text(session?.mediaSourceLabel ?? session?.sessionStateLabel ?? session?.guildName ?? "Idle")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 22, design: .rounded))
+                        .foregroundStyle(TVRes.mist)
                         .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                if bot.hiveState == .playing {
+                    EqualizerBars(isActive: true, color: color, barCount: 5,
+                                  seed: bot.key.utf8.reduce(UInt64(3)) { $0 &* 31 &+ UInt64($1) }, animated: !reduceMotion)
+                        .frame(width: 44, height: 40)
                 }
             }
             if let session, (session.durationSeconds ?? 0) > 0 {
-                TVPlaybackBar(session: session, accent: accent)
+                TVPlaybackBar(session: session, accent: color)
             }
             HStack(spacing: 14) {
-                TVChip(text: "\(bot.activePlayingCount ?? 0) live")
-                TVChip(text: "\(bot.knownGuildCount ?? 0) guilds")
                 TVChip(text: "\(bot.queueDepth ?? 0) queued")
+                TVChip(text: "\(bot.knownGuildCount ?? 0) guilds")
                 if let age = bot.heartbeatAgeSeconds { TVChip(text: "heartbeat \(Int(age))s") }
             }
         }
-        .padding(28)
-        .frame(maxWidth: .infinity, minHeight: 300, alignment: .topLeading)
-        .background(Color.black.opacity(0.35))
-        .overlay(alignment: .leading) {
-            Rectangle().fill(bot.isOffline ? Color.red.opacity(0.7) : accent).frame(width: 6)
-        }
+        .padding(32)
+        .frame(width: 640, height: 400, alignment: .topLeading)
+        .background(
+            LinearGradient(colors: [color.opacity(bot.hiveState == .playing ? 0.28 : 0.1), Color.black.opacity(0.45)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+        )
         .opacity(bot.isOffline ? 0.6 : 1)
-    }
-
-    /// Same precedence as the web card: offline first, then playback state.
-    private var badge: (text: String, color: Color) {
-        if bot.isOffline { return ("Offline", .red) }
-        let session = bot.featuredSession
-        if session?.isPlaying == true { return ("Live", Color(red: 0.49, green: 0.91, blue: 0.53)) }
-        if session?.isPaused == true { return ("Paused", .yellow) }
-        if (bot.heartbeatStatus ?? bot.status ?? "").lowercased().contains("stale") { return ("Stale", .red) }
-        return ("Idle", .gray)
     }
 }
 
+/// Aria as the conductor: the swarm's orchestrator, with the Medic's repair
+/// queue and process stats.
 struct TVAriaCard: View {
     let bot: TVBot
     let accent: Color
 
     var body: some View {
         let medic = bot.medicSummary
-        HStack(spacing: 32) {
-            Image(systemName: "gearshape.2.fill")
-                .font(.system(size: 56))
-                .foregroundStyle(accent)
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 16) {
-                    Text(bot.name).font(.title3.weight(.bold))
-                    Text("Autonomous swarm orchestrator").font(.headline).foregroundStyle(.secondary)
+        let color = BotPalette.color(for: "aria")
+        VStack(alignment: .leading, spacing: 22) {
+            HStack(spacing: 20) {
+                ZStack {
+                    Hexagon().fill(LinearGradient(colors: [color, color.opacity(0.4)], startPoint: .top, endPoint: .bottom))
+                    Image(systemName: "gearshape.2.fill").font(.system(size: 30, weight: .semibold)).foregroundStyle(.white)
                 }
-                Text("\(medic?.pendingRepairs ?? 0) pending repairs · \(medic?.pendingInfra ?? 0) infra tasks · \(medic?.criticalHealth ?? 0) critical · \(medic?.recoverableHealth ?? 0) recoverable")
-                    .font(.headline)
-                HStack(spacing: 14) {
-                    if let uptime = bot.uptimeSeconds { TVChip(text: "up " + TVFormat.uptime(uptime)) }
-                    if let memory = bot.memoryKb { TVChip(text: "\(Int(memory / 1024)) MB mem") }
-                    TVChip(text: "\(bot.recentInteractionCount ?? 0) interactions")
+                .frame(width: 70, height: 80)
+                .shadow(color: color.opacity(0.6), radius: 18)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("THE CONDUCTOR")
+                        .font(TVRes.eyebrow)
+                        .tracking(2)
+                        .foregroundStyle(color)
+                    Text(bot.name).font(TVRes.display(40))
                 }
+                Spacer()
+                TVStateBadge(state: bot.isOffline ? .offline : .playing)
             }
-            Spacer()
-            TVStatusPill(text: bot.isOffline ? "Offline" : "Online",
-                         color: bot.isOffline ? .red : Color(red: 0.49, green: 0.91, blue: 0.53))
+            HStack(spacing: 24) {
+                TVReadout(value: "\(medic?.pendingRepairs ?? 0)", label: "Repairs", tint: (medic?.pendingRepairs ?? 0) > 0 ? TVRes.warn : TVRes.ink)
+                TVReadout(value: "\(medic?.criticalHealth ?? 0)", label: "Critical", tint: (medic?.criticalHealth ?? 0) > 0 ? TVRes.danger : TVRes.ink)
+                TVReadout(value: "\(medic?.recoverableHealth ?? 0)", label: "Recoverable")
+            }
+            HStack(spacing: 14) {
+                if let uptime = bot.uptimeSeconds { TVChip(text: "up " + TVFormat.uptime(uptime)) }
+                if let memory = bot.memoryKb { TVChip(text: "\(Int(memory / 1024)) MB mem") }
+                TVChip(text: "\(medic?.pendingInfra ?? 0) infra tasks")
+                TVChip(text: "\(bot.recentInteractionCount ?? 0) interactions")
+            }
         }
-        .padding(28)
-        .background(Color.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 24))
+        .padding(36)
+        .tvGlass(radius: 40, edge: color)
         .focusable()
     }
 }
@@ -210,36 +343,61 @@ struct TVBotDetailView: View {
     let accent: Color
 
     var body: some View {
+        let color = BotPalette.color(for: bot.key)
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                Text(bot.name).font(.largeTitle.weight(.bold))
+            VStack(alignment: .leading, spacing: 32) {
+                HStack(spacing: 28) {
+                    ZStack {
+                        Hexagon().fill(LinearGradient(colors: [color, color.opacity(0.4)], startPoint: .top, endPoint: .bottom))
+                        Text(BotPalette.monogram(for: bot.key, name: bot.displayName))
+                            .font(.system(size: 40, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.white)
+                    }
+                    .frame(width: 110, height: 127)
+                    .shadow(color: color.opacity(0.6), radius: 24)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("MUSIC BOT").font(TVRes.eyebrow).tracking(2).foregroundStyle(color)
+                        Text(bot.name).font(TVRes.display(64))
+                    }
+                    Spacer()
+                    TVStateBadge(state: bot.hiveState)
+                }
                 let sessions = bot.sessions ?? []
                 if sessions.isEmpty {
-                    Text("No sessions right now.").font(.title3).foregroundStyle(.secondary)
+                    Text("No sessions right now.").font(.title3).foregroundStyle(TVRes.mist)
                 }
                 ForEach(sessions) { session in
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack(spacing: 20) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack(spacing: 24) {
                             TVThumbnail(url: session.thumbnail)
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(session.title ?? "Nothing playing").font(.headline).lineLimit(2)
-                                Text([session.guildName, session.channelName].compactMap { $0 }.joined(separator: " · "))
-                                    .font(.subheadline).foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(session.title ?? "Nothing playing")
+                                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                                    .lineLimit(2)
+                                Text([session.guildName, session.channelName.map { "#\($0)" }].compactMap { $0 }.joined(separator: " · "))
+                                    .font(.system(size: 24, design: .rounded)).foregroundStyle(TVRes.mist)
                                 Text("\(session.sessionStateLabel ?? "") · \(session.queueCount ?? 0) queued")
-                                    .font(.subheadline).foregroundStyle(.secondary)
+                                    .font(.system(size: 24, design: .rounded)).foregroundStyle(TVRes.mist)
                             }
                         }
                         if (session.durationSeconds ?? 0) > 0 {
-                            TVPlaybackBar(session: session, accent: accent)
+                            TVPlaybackBar(session: session, accent: color)
                         }
                     }
-                    .padding(24)
-                    .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 20))
+                    .padding(30)
+                    .tvGlass(radius: 32, edge: session.isPlaying == true ? color : nil)
                     .focusable()
                 }
             }
-            .padding(60)
+            .padding(70)
         }
+        .background(
+            ZStack {
+                Color(red: 0.03, green: 0.05, blue: 0.08)
+                RadialGradient(colors: [color.opacity(0.3), .clear], center: .topTrailing, startRadius: 20, endRadius: 900)
+            }
+            .ignoresSafeArea()
+        )
     }
 }
 
@@ -258,8 +416,9 @@ struct TVPlaybackBar: View {
             VStack(alignment: .leading, spacing: 6) {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
-                        Capsule().fill(Color.white.opacity(0.15))
-                        Capsule().fill(accent)
+                        Capsule().fill(Color.white.opacity(0.12))
+                        Capsule().fill(LinearGradient(colors: [accent.opacity(0.7), accent], startPoint: .leading, endPoint: .trailing))
+                            .shadow(color: accent.opacity(0.6), radius: 8)
                             .frame(width: duration > 0 ? geo.size.width * CGFloat(position / duration) : 0)
                     }
                 }
@@ -294,8 +453,8 @@ struct TVThumbnail: View {
                 Image(systemName: "music.note").font(.title).foregroundStyle(.secondary)
             }
         }
-        .frame(width: 160, height: 90)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .frame(width: 192, height: 108)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 }
 
@@ -326,44 +485,16 @@ struct TVAvatar: View {
     }
 }
 
-struct TVMetric: View {
-    let label: String
-    let value: String
-    let accent: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(label.uppercased()).font(.caption.weight(.bold)).foregroundStyle(accent)
-            Text(value).font(.title2.weight(.bold)).lineLimit(1).minimumScaleFactor(0.6)
-        }
-        .padding(24)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 20))
-    }
-}
-
-struct TVStatusPill: View {
-    let text: String
-    let color: Color
-
-    var body: some View {
-        Text(text)
-            .font(.caption.weight(.bold))
-            .padding(.horizontal, 18)
-            .padding(.vertical, 8)
-            .background(color.opacity(0.22), in: Capsule())
-            .overlay(Capsule().stroke(color.opacity(0.7), lineWidth: 2))
-    }
-}
-
 struct TVChip: View {
     let text: String
 
     var body: some View {
         Text(text)
-            .font(.caption)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 6)
-            .background(Color.white.opacity(0.1), in: Capsule())
+            .font(.system(size: 22, weight: .semibold, design: .rounded))
+            .foregroundStyle(TVRes.mist)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 7)
+            .background(Color.white.opacity(0.08), in: Capsule())
+            .overlay(Capsule().strokeBorder(TVRes.hairline, lineWidth: 1))
     }
 }

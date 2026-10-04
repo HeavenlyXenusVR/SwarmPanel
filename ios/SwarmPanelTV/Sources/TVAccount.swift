@@ -184,10 +184,8 @@ struct TVPanelBackground: View {
                 colors: [Color.black.opacity(0.55), Color.black.opacity(0.85)],
                 startPoint: .top, endPoint: .bottom
             )
-            LinearGradient(
-                colors: [account.accent.opacity(0.14), .clear],
-                startPoint: .topLeading, endPoint: .center
-            )
+            // Resonance: accent glow and slow sound-wave ribbons.
+            TVResonanceOverlay(accent: account.accent)
         }
         .ignoresSafeArea()
         .animation(.easeInOut(duration: 0.6), value: account.backgroundImageURL)
