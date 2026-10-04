@@ -9,16 +9,20 @@ import UIKit
 /// AppearanceSettings' .preferredColorScheme() the same way the rest of
 /// SwiftUI does.
 enum SwarmTheme {
-    static var background: Color { dynamic(dark: 0x090D0F, light: 0xF6F8FB) }
-    static var panel: Color { dynamic(dark: 0x11171B, light: 0xFFFFFF) }
-    static var panel2: Color { dynamic(dark: 0x182127, light: 0xEEF3F8) }
-    static var line: Color { dynamic(dark: 0x304047, light: 0xC9D3DF) }
+    // Resonance redesign: these long-standing tokens (used by 30+ screens)
+    // now resolve to the Resonance palette (DesignSystem/ResonanceUI.swift),
+    // so every screen picks up the new look without being rewritten. Panels
+    // are translucent on purpose -- they sit over the Resonance backdrop.
+    static var background: Color { Res.skyBottom }
+    static var panel: Color { Res.surface }
+    static var panel2: Color { Res.well }
+    static var line: Color { Res.hairline }
     static var lineStrong: Color { dynamic(dark: 0x50656C, light: 0x9BADBF) }
-    static var textPrimary: Color { dynamic(dark: 0xEDF3FB, light: 0x101823) }
-    static var textMuted: Color { dynamic(dark: 0x9EABBC, light: 0x536172) }
-    static var ok: Color { Color(hex: "5BD97E") ?? .green }
-    static var warn: Color { Color(hex: "E8B366") ?? .orange }
-    static var danger: Color { Color(hex: "FF6B6B") ?? .red }
+    static var textPrimary: Color { Res.ink }
+    static var textMuted: Color { Res.mist }
+    static var ok: Color { Res.live }
+    static var warn: Color { Res.warn }
+    static var danger: Color { Res.danger }
 
     /// Reads the same UserDefaults key AppearanceSettings persists to —
     /// lets static, non-view helpers (MetricTile, InitialsAvatar) reflect the
@@ -30,7 +34,7 @@ enum SwarmTheme {
         return Color(hex: hex) ?? Color(hex: AppearanceSettings.defaultAccentHex)!
     }
 
-    static let cardRadius: CGFloat = 16
+    static let cardRadius: CGFloat = Res.Radius.card
 
     /// "Swarm Pulse" redesign accents — additive, not replacing anything
     /// above (32 files already depend on those exact tokens). A second hue,
@@ -69,19 +73,10 @@ enum SwarmTheme {
 }
 
 extension View {
-    /// Layers SwarmTheme.background + backdropGlow behind the view — the
-    /// "Swarm Pulse" screen backdrop. Applied per-screen (Dashboard,
-    /// Controls, Profile's Command Center) rather than globally so
-    /// list-heavy screens that already set `.scrollContentBackground(.hidden)`
-    /// + `.background(SwarmTheme.background)` aren't forced to change.
+    /// Puts the view on the Resonance backdrop (kept under its old name so
+    /// existing call sites keep working).
     func swarmBackdrop() -> some View {
-        background(
-            ZStack {
-                SwarmTheme.background
-                SwarmTheme.backdropGlow
-            }
-            .ignoresSafeArea()
-        )
+        resonanceScreen()
     }
 }
 
@@ -255,12 +250,7 @@ struct PanelCard<Content: View>: View {
         VStack(alignment: .leading, spacing: 12, content: { content })
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(SwarmTheme.panel, in: RoundedRectangle(cornerRadius: SwarmTheme.cardRadius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: SwarmTheme.cardRadius, style: .continuous)
-                    .stroke(SwarmTheme.line, lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
+            .resGlass(radius: SwarmTheme.cardRadius)
     }
 }
 
@@ -359,15 +349,7 @@ struct SwarmHeroCard<Content: View>: View {
         VStack(alignment: .leading, spacing: 12, content: { content })
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(SwarmTheme.panel, in: RoundedRectangle(cornerRadius: SwarmTheme.cardRadius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: SwarmTheme.cardRadius, style: .continuous)
-                    .stroke(
-                        LinearGradient(colors: [tint.opacity(0.65), tint.opacity(0.1)], startPoint: .topLeading, endPoint: .bottomTrailing),
-                        lineWidth: 1.5
-                    )
-            )
-            .shadow(color: tint.opacity(0.25), radius: 16, y: 6)
+            .resGlass(radius: SwarmTheme.cardRadius, elevated: true, edge: tint)
     }
 }
 

@@ -17,11 +17,11 @@ struct ControlsView: View {
             Form {
                 if let error = viewModel.errorMessage {
                     Section { ErrorBanner(message: error) }
-                        .listRowBackground(SwarmTheme.panel)
+                        .listRowBackground(ResRowBackground())
                 }
                 if let status = viewModel.statusMessage {
                     Section { Text(status).foregroundStyle(SwarmTheme.ok) }
-                        .listRowBackground(SwarmTheme.panel)
+                        .listRowBackground(ResRowBackground())
                 }
 
                 Section {
@@ -70,7 +70,7 @@ struct ControlsView: View {
                 } header: {
                     SectionLabel(title: "Bot & Guild")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 Section {
                     HStack {
@@ -138,7 +138,7 @@ struct ControlsView: View {
                 } header: {
                     SectionLabel(title: "Action")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 if let session = viewModel.controlState {
                     Section {
@@ -176,7 +176,7 @@ struct ControlsView: View {
                     } header: {
                         SectionLabel(title: "Current Session")
                     }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
                 }
 
                 Section {
@@ -233,7 +233,7 @@ struct ControlsView: View {
                 } header: {
                     SectionLabel(title: "Saved Queues", count: viewModel.savedQueues.count)
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 // Every bot in the selected guild at once -- mirrors the web
                 // Controls page's Guild Overview.
@@ -262,7 +262,7 @@ struct ControlsView: View {
                         Text("Active bots in guild \(viewModel.guildOverviewGuildId ?? "") are counted in the header.")
                     }
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 Section {
                     Button {
@@ -285,10 +285,10 @@ struct ControlsView: View {
                 }
                 .disabled(viewModel.isConverting || viewModel.guildId.isEmpty)
                 .tint(SwarmTheme.accent)
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
             }
             .scrollContentBackground(.hidden)
-            .background(SwarmTheme.background)
+            .background(ResonanceBackdrop().ignoresSafeArea())
             .navigationTitle("Controls")
             .task {
                 await viewModel.loadBots(defaultGuildId: appState.guildId)

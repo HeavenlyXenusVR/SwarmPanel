@@ -8,7 +8,7 @@ struct LumisoundAdminView: View {
         List {
             if let error = viewModel.errorMessage {
                 Section { ErrorBanner(message: error) }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
             }
 
             Section {
@@ -22,7 +22,7 @@ struct LumisoundAdminView: View {
             } header: {
                 SectionLabel(title: "Bug Reports", count: viewModel.bugReports.count)
             }
-            .listRowBackground(SwarmTheme.panel)
+            .listRowBackground(ResRowBackground())
 
             Section {
                 if viewModel.uploads.isEmpty {
@@ -53,7 +53,7 @@ struct LumisoundAdminView: View {
             } header: {
                 SectionLabel(title: "Uploads", count: viewModel.uploads.count)
             }
-            .listRowBackground(SwarmTheme.panel)
+            .listRowBackground(ResRowBackground())
 
             Section {
                 if viewModel.users.isEmpty {
@@ -79,10 +79,10 @@ struct LumisoundAdminView: View {
             } header: {
                 SectionLabel(title: "Users", count: viewModel.users.count)
             }
-            .listRowBackground(SwarmTheme.panel)
+            .listRowBackground(ResRowBackground())
         }
         .scrollContentBackground(.hidden)
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle("Lumisound")
         .task { await viewModel.load() }
         .refreshable {

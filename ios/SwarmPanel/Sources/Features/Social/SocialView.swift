@@ -11,7 +11,7 @@ struct SocialView: View {
             List {
                 if let error = viewModel.errorMessage {
                     Section { ErrorBanner(message: error) }
-                        .listRowBackground(SwarmTheme.panel)
+                        .listRowBackground(ResRowBackground())
                 }
 
                 Section {
@@ -67,7 +67,7 @@ struct SocialView: View {
                 } header: {
                     SectionLabel(title: "Find People")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
                 .id("findPeople")
 
                 if !viewModel.incomingRequests.isEmpty {
@@ -103,7 +103,7 @@ struct SocialView: View {
                     } header: {
                         SectionLabel(title: "Friend Requests", count: viewModel.incomingRequests.count)
                     }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
                 }
 
                 if !viewModel.outgoingRequests.isEmpty {
@@ -129,7 +129,7 @@ struct SocialView: View {
                     } header: {
                         SectionLabel(title: "Sent Requests")
                     }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
                 }
 
                 Section {
@@ -159,7 +159,7 @@ struct SocialView: View {
                 } header: {
                     SectionLabel(title: "Friends", count: viewModel.friends.count)
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 Section {
                     if viewModel.threads.isEmpty {
@@ -192,10 +192,10 @@ struct SocialView: View {
                 } header: {
                     SectionLabel(title: "Messages", count: viewModel.threads.count)
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
             }
             .scrollContentBackground(.hidden)
-            .background(SwarmTheme.background)
+            .background(ResonanceBackdrop().ignoresSafeArea())
             .navigationTitle("Community")
             .toolbar {
                 // Full directory browse (web: /users) — moved here from the

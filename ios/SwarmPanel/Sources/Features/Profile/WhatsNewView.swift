@@ -27,7 +27,7 @@ struct WhatsNewView: View {
             }
             .padding(.vertical)
         }
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle("What's New")
         .navigationBarTitleDisplayMode(.inline)
     }

@@ -48,7 +48,7 @@ struct LearningView: View {
             }
             .padding(.vertical)
         }
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle("Learning")
         .task { await viewModel.load(guildId: appState.guildId) }
         .refreshable { await viewModel.load(guildId: appState.guildId) }

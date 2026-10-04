@@ -45,6 +45,9 @@ targets:
       # none before, which is why "ios" never showed up in the server-side
       # client telemetry at all.
       - path: Shared/ClientTelemetry.swift
+      # Resonance (the visual language) pieces shared with the Apple TV app:
+      # bot colours, hive geometry, the wave field and the equalizer.
+      - path: Shared/Resonance.swift
     # Resources listed EXPLICITLY so XcodeGen creates a proper "Compile Asset
     # Catalogs" (actool) build phase — mirrors Lumisound's project.yml.
     resources:
@@ -119,6 +122,7 @@ targets:
     sources:
       - path: SwarmPanelTV/Sources
       - path: Shared/ClientTelemetry.swift
+      - path: Shared/Resonance.swift
       - path: SwarmPanel/Sources/Networking/APIClient.swift
       - path: SwarmPanel/Sources/Networking/APIError.swift
       - path: SwarmPanel/Sources/Networking/CancellationCheck.swift

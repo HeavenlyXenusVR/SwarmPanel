@@ -144,7 +144,7 @@ struct BotDetailView: View {
             }
             .padding(.vertical)
         }
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle(botDisplayName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

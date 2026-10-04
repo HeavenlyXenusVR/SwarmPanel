@@ -20,25 +20,37 @@ struct SwarmPanelApp: App {
         BackgroundRefreshManager.register()
     }
 
-    /// UIKit appearance proxies for the tab bar / nav bar — SwiftUI has no
-    /// pure-SwiftUI equivalent for this, and without it every screen's chrome
-    /// stays plain system-gray no matter how the content underneath is styled.
-    /// Colors are dynamic (SwarmTheme), so this still follows light/dark mode.
+    /// UIKit appearance proxies for the navigation bar: transparent at the
+    /// top of a screen so the Resonance backdrop runs edge to edge, a soft
+    /// blur once content scrolls under it, and rounded heavy titles to match
+    /// the rest of the app. Colors are dynamic, so this follows light/dark.
     private static func configureGlobalChrome() {
-        let tabAppearance = UITabBarAppearance()
-        tabAppearance.configureWithOpaqueBackground()
-        tabAppearance.backgroundColor = UIColor(SwarmTheme.panel)
-        UITabBar.appearance().standardAppearance = tabAppearance
-        UITabBar.appearance().scrollEdgeAppearance = tabAppearance
+        let titleColor = UIColor(Res.ink)
+        let rounded = UIFont.systemFont(ofSize: 34, weight: .heavy).fontDescriptor.withDesign(.rounded)
+        let inline = UIFont.systemFont(ofSize: 17, weight: .bold).fontDescriptor.withDesign(.rounded)
 
-        let navAppearance = UINavigationBarAppearance()
-        navAppearance.configureWithOpaqueBackground()
-        navAppearance.backgroundColor = UIColor(SwarmTheme.panel)
-        navAppearance.titleTextAttributes = [.foregroundColor: UIColor(SwarmTheme.textPrimary)]
-        navAppearance.largeTitleTextAttributes = [.foregroundColor: UIColor(SwarmTheme.textPrimary)]
-        UINavigationBar.appearance().standardAppearance = navAppearance
-        UINavigationBar.appearance().scrollEdgeAppearance = navAppearance
-        UINavigationBar.appearance().compactAppearance = navAppearance
+        func styled(_ appearance: UINavigationBarAppearance) -> UINavigationBarAppearance {
+            appearance.titleTextAttributes = [
+                .foregroundColor: titleColor,
+                .font: inline.map { UIFont(descriptor: $0, size: 17) } ?? UIFont.systemFont(ofSize: 17, weight: .bold),
+            ]
+            appearance.largeTitleTextAttributes = [
+                .foregroundColor: titleColor,
+                .font: rounded.map { UIFont(descriptor: $0, size: 34) } ?? UIFont.systemFont(ofSize: 34, weight: .heavy),
+            ]
+            appearance.shadowColor = .clear
+            return appearance
+        }
+
+        let edge = UINavigationBarAppearance()
+        edge.configureWithTransparentBackground()
+        let scrolled = UINavigationBarAppearance()
+        scrolled.configureWithDefaultBackground()
+        scrolled.backgroundEffect = UIBlurEffect(style: .systemUltraThinMaterial)
+
+        UINavigationBar.appearance().standardAppearance = styled(scrolled)
+        UINavigationBar.appearance().compactAppearance = styled(scrolled)
+        UINavigationBar.appearance().scrollEdgeAppearance = styled(edge)
     }
 
     var body: some Scene {
@@ -49,6 +61,7 @@ struct SwarmPanelApp: App {
                 .environmentObject(router)
                 .environmentObject(biometricLock)
                 .tint(appearance.accentColor)
+                .environment(\.resAccent, appearance.accentColor)
                 .preferredColorScheme(appearance.colorScheme)
                 .overlay(BiometricLockOverlay(lock: biometricLock))
                 .task { await appState.bootstrap() }

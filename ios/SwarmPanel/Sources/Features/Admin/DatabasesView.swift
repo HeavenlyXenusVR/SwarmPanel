@@ -125,7 +125,7 @@ struct DatabasesView: View {
             }
             .padding(.vertical)
         }
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle("Database Viewer")
         .task { await viewModel.loadSchemas() }
         .onChange(of: viewModel.selectedSchema) { _ in
@@ -201,7 +201,7 @@ private struct TruncateConfirmSheet: View {
                     .foregroundStyle(SwarmTheme.danger)
                     .font(.subheadline.bold())
             }
-            .listRowBackground(SwarmTheme.panel)
+            .listRowBackground(ResRowBackground())
 
             Section {
                 Text(expectedText)
@@ -214,7 +214,7 @@ private struct TruncateConfirmSheet: View {
             } header: {
                 SectionLabel(title: "Type to confirm")
             }
-            .listRowBackground(SwarmTheme.panel)
+            .listRowBackground(ResRowBackground())
 
             Section {
                 SecureField("Site owner confirmation phrase", text: $ownerConfirmText)
@@ -223,11 +223,11 @@ private struct TruncateConfirmSheet: View {
             } footer: {
                 Text("The confirmation phrase this SwarmPanel deployment is configured with. Leave blank if none is configured — the server will reject this if one is required.")
             }
-            .listRowBackground(SwarmTheme.panel)
+            .listRowBackground(ResRowBackground())
 
             if let errorMessage {
                 Section { ErrorBanner(message: errorMessage) }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
             }
 
             Section {
@@ -249,7 +249,7 @@ private struct TruncateConfirmSheet: View {
             .listRowBackground(SwarmTheme.danger.opacity(canConfirm ? 0.85 : 0.3))
         }
         .scrollContentBackground(.hidden)
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle(title)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {

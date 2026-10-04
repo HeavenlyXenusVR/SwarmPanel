@@ -90,7 +90,7 @@ struct AlertRulesView: View {
             }
             .padding(.vertical)
         }
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle("Alert Rules")
         .task { await viewModel.load() }
         .refreshable {

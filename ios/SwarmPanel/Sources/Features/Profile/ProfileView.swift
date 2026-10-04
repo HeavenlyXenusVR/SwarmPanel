@@ -43,7 +43,7 @@ struct ProfileView: View {
                     }
                     .padding(.vertical, 6)
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 // Kept at the top — for an admin/moderator, this is the
                 // reason they're in this app; burying it at the bottom of a
@@ -59,7 +59,7 @@ struct ProfileView: View {
                     } footer: {
                         Text("Switches between your normal guild-scoped view and the unrestricted admin view.")
                     }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
                 }
 
                 // Admin tools live on their own hub screen (AdminHubView),
@@ -82,7 +82,7 @@ struct ProfileView: View {
                     } footer: {
                         Text("Visible because your account has owner or moderator access on this guild.")
                     }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
                 }
 
                 Section {
@@ -96,7 +96,7 @@ struct ProfileView: View {
                 } header: {
                     SectionLabel(title: "Account")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 Section {
                     ChecklistRow(label: "Account verified", done: viewModel.isVerified)
@@ -107,15 +107,15 @@ struct ProfileView: View {
                 } header: {
                     SectionLabel(title: "Getting Started")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 if let error = viewModel.errorMessage {
                     Section { ErrorBanner(message: error) }
-                        .listRowBackground(SwarmTheme.panel)
+                        .listRowBackground(ResRowBackground())
                 }
                 if let status = viewModel.statusMessage {
                     Section { Text(status).foregroundStyle(SwarmTheme.ok) }
-                        .listRowBackground(SwarmTheme.panel)
+                        .listRowBackground(ResRowBackground())
                 }
 
                 Section {
@@ -158,7 +158,7 @@ struct ProfileView: View {
                 } footer: {
                     Text("Theme and accent apply instantly on this device. Accent also syncs to your account when you tap Save Profile, so it's consistent on the web panel too.")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 Section {
                     Button {
@@ -173,7 +173,7 @@ struct ProfileView: View {
                     .disabled(viewModel.isSaving)
                     .tint(SwarmTheme.accent)
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 Section {
                     HStack {
@@ -186,14 +186,14 @@ struct ProfileView: View {
                 } footer: {
                     Text("Locks SwarmPanel behind \(biometricLock.biometryLabel) whenever it returns from the background.")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 Section {
                     NavigationLink { ServerSettingsView() } label: { IconRow(icon: "server.rack", tint: .gray, title: "Server") }
                 } header: {
                     SectionLabel(title: "Advanced")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 Section {
                     NavigationLink { WhatsNewView() } label: { IconRow(icon: "sparkles", tint: .yellow, title: "What's New") }
@@ -202,15 +202,15 @@ struct ProfileView: View {
                 } header: {
                     SectionLabel(title: "About")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 Section {
                     Button("Log Out", role: .destructive) { appState.logout() }
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
             }
             .scrollContentBackground(.hidden)
-            .background(SwarmTheme.background)
+            .background(ResonanceBackdrop().ignoresSafeArea())
             .navigationTitle("Account")
             .task { await viewModel.load() }
             .refreshable {

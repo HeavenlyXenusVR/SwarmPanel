@@ -1,7 +1,7 @@
 import Foundation
 import UserNotifications
 
-/// Owned once by RootTabView so the unread badge stays live regardless of
+/// Owned once by AppShellView so the unread badge stays live regardless of
 /// which tab is currently selected — mirrors the web bell's always-polling
 /// behavior (frontend/src/components/Shell.jsx's NotificationsBell).
 @MainActor

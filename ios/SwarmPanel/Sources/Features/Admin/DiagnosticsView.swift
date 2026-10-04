@@ -32,7 +32,7 @@ struct DiagnosticsView: View {
             }
             .padding(.vertical)
         }
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle("Fleet Health")
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {

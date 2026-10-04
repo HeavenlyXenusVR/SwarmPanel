@@ -20,7 +20,7 @@ struct NotificationsView: View {
             List {
                 if let error = viewModel.errorMessage {
                     Section { ErrorBanner(message: error) }
-                        .listRowBackground(SwarmTheme.panel)
+                        .listRowBackground(ResRowBackground())
                 }
                 if viewModel.notifications.isEmpty && viewModel.isLoading {
                     Section { SkeletonList(rowCount: 4) }
@@ -30,12 +30,12 @@ struct NotificationsView: View {
                     Section {
                         EmptyStateView(icon: "checkmark.circle", title: "You're all caught up.")
                     }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
                 } else if filteredNotifications.isEmpty {
                     Section {
                         EmptyStateView(icon: "magnifyingglass", title: "No notifications match \"\(searchQuery)\".")
                     }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
                 } else {
                     Section {
                         ForEach(filteredNotifications) { notification in
@@ -66,11 +66,11 @@ struct NotificationsView: View {
                             }
                         }
                     }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(SwarmTheme.background)
+            .background(ResonanceBackdrop().ignoresSafeArea())
             .navigationTitle("Notifications")
             .searchable(text: $searchQuery, prompt: "Search notifications")
             .toolbar {

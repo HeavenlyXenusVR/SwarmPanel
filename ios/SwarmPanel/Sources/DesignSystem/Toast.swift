@@ -3,7 +3,7 @@ import SwiftUI
 /// Lightweight transient message surface — "Copied", "Saved", "Deleted" — so
 /// actions that previously relied on haptics alone (the only feedback a user
 /// gets if they're not looking right at the button) get a visible
-/// confirmation too. One instance is owned by RootTabView and injected via
+/// confirmation too. One instance is owned by AppShellView and injected via
 /// environment so any screen can call `toast.show(...)`.
 @MainActor
 final class ToastCenter: ObservableObject {

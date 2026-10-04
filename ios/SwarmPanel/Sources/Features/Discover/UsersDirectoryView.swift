@@ -42,7 +42,7 @@ struct UsersDirectoryView: View {
             }
             .padding(.vertical)
         }
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle("Directory")
         .task { await viewModel.load() }
         // Single-parameter onChange: iOS 16 deployment target (see ControlsView).

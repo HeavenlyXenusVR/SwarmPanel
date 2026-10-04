@@ -220,7 +220,7 @@ struct LeaderboardView: View {
                 }
                 .padding(.vertical)
             }
-            .background(SwarmTheme.background)
+            .background(ResonanceBackdrop().ignoresSafeArea())
             .navigationTitle(viewModel.scope == .swarm && appState.isAdmin ? "Swarm Leaderboard" : "Leaderboard")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {

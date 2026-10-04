@@ -32,7 +32,7 @@ struct AdminHubView: View {
                 } header: {
                     SectionLabel(title: "At a Glance")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
             }
 
             if appState.isAdmin {
@@ -52,7 +52,7 @@ struct AdminHubView: View {
                 } header: {
                     SectionLabel(title: "Monitoring")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
             } else if appState.isModerator {
                 // Moderators could already open Alert Rules from Profile
                 // before the restructure — keep that access.
@@ -63,7 +63,7 @@ struct AdminHubView: View {
                 } header: {
                     SectionLabel(title: "Monitoring")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
             }
 
             if canModerate || appState.canGallery {
@@ -84,7 +84,7 @@ struct AdminHubView: View {
                 } header: {
                     SectionLabel(title: "Moderation")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
             }
 
             if appState.isAdmin {
@@ -98,11 +98,11 @@ struct AdminHubView: View {
                 } header: {
                     SectionLabel(title: "Data")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
             }
         }
         .scrollContentBackground(.hidden)
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle("Admin")
         .task { await loadStats() }
         .refreshable { await loadStats() }

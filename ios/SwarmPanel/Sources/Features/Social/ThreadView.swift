@@ -38,7 +38,7 @@ struct ThreadView: View {
             }
             .padding()
         }
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle(viewModel.peerName)
         .navigationBarTitleDisplayMode(.inline)
         .task {

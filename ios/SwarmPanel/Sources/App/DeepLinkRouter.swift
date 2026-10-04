@@ -1,7 +1,7 @@
 import Foundation
 
 /// Bridges non-SwiftUI entry points (home screen quick actions, the
-/// `swarmpanel://` URL scheme) into a tab switch. RootTabView observes
+/// `swarmpanel://` URL scheme) into a tab switch. AppShellView observes
 /// `pendingTab` and clears it once applied.
 @MainActor
 final class DeepLinkRouter: ObservableObject {

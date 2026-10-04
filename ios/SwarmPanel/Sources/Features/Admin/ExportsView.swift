@@ -64,7 +64,7 @@ struct ExportsView: View {
             }
             .padding(.vertical)
         }
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle("Scheduled Exports")
         .task { await viewModel.load() }
         .refreshable {

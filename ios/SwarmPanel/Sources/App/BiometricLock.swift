@@ -65,20 +65,26 @@ struct BiometricLockOverlay: View {
     var body: some View {
         if lock.isEnabled && !lock.isUnlocked {
             ZStack {
-                SwarmTheme.background.ignoresSafeArea()
-                VStack(spacing: 16) {
-                    Image(systemName: "lock.shield")
-                        .font(.system(size: 44))
-                        .foregroundStyle(SwarmTheme.accent)
-                    Text("SwarmPanel Locked")
-                        .font(.headline)
-                        .foregroundStyle(SwarmTheme.textPrimary)
-                    Button("Unlock with \(lock.biometryLabel)") {
-                        Task { await lock.attemptUnlock() }
+                ResonanceBackdrop().ignoresSafeArea()
+                VStack(spacing: 22) {
+                    ResonanceEmblem(size: 132)
+                    VStack(spacing: 6) {
+                        Text("SwarmPanel is locked")
+                            .font(Res.display(26))
+                            .foregroundStyle(Res.ink)
+                        Text("The fleet keeps playing while you're away.")
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(Res.mist)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(SwarmTheme.accent)
+                    Button {
+                        Task { await lock.attemptUnlock() }
+                    } label: {
+                        Label("Unlock with \(lock.biometryLabel)", systemImage: "faceid")
+                    }
+                    .buttonStyle(ResPrimaryButtonStyle())
+                    .frame(maxWidth: 320)
                 }
+                .padding(32)
             }
             .task { await lock.attemptUnlock() }
         }
