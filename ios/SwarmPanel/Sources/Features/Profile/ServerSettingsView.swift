@@ -25,11 +25,11 @@ struct ServerSettingsView: View {
             } footer: {
                 Text("Default is the production SwarmPanel backend. Only change this for local development against a Docker instance (e.g. http://127.0.0.1:8003). Saving logs you out.")
             }
-            .listRowBackground(SwarmTheme.panel)
+            .listRowBackground(ResRowBackground())
 
             if let errorMessage {
                 Section { Text(errorMessage).foregroundStyle(SwarmTheme.danger) }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
             }
 
             Section {
@@ -37,7 +37,7 @@ struct ServerSettingsView: View {
                     urlText = APIClient.defaultBaseURL.absoluteString
                 }
             }
-            .listRowBackground(SwarmTheme.panel)
+            .listRowBackground(ResRowBackground())
 
             Section {
                 Button {
@@ -55,7 +55,7 @@ struct ServerSettingsView: View {
             .listRowBackground(Rectangle().fill(SwarmTheme.accent.gradient))
         }
         .scrollContentBackground(.hidden)
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle("Server")
     }
 

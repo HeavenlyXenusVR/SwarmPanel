@@ -55,7 +55,7 @@ struct AuditLogView: View {
             }
             .padding(.vertical)
         }
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle("Audit Log")
         .task { await viewModel.load() }
         .refreshable {

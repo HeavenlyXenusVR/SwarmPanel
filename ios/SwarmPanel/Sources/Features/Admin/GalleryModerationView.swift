@@ -36,7 +36,7 @@ struct GalleryModerationView: View {
             case .users: usersList
             }
         }
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle("Gallery Moderation")
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
@@ -145,7 +145,7 @@ struct GalleryModerationView: View {
         List {
             if let error = viewModel.errorMessage {
                 Section { ErrorBanner(message: error) }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
             }
 
             Section {
@@ -159,7 +159,7 @@ struct GalleryModerationView: View {
             } header: {
                 SectionLabel(title: "Reports", count: viewModel.reports.count)
             }
-            .listRowBackground(SwarmTheme.panel)
+            .listRowBackground(ResRowBackground())
 
             Section {
                 if viewModel.comments.isEmpty {
@@ -198,7 +198,7 @@ struct GalleryModerationView: View {
             } header: {
                 SectionLabel(title: "Comments", count: viewModel.comments.count)
             }
-            .listRowBackground(SwarmTheme.panel)
+            .listRowBackground(ResRowBackground())
         }
         .scrollContentBackground(.hidden)
         .safeAreaInset(edge: .bottom) {
@@ -214,7 +214,7 @@ struct GalleryModerationView: View {
         List {
             if let error = viewModel.errorMessage {
                 Section { ErrorBanner(message: error) }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
             }
             Section {
                 if viewModel.media.isEmpty {
@@ -238,7 +238,7 @@ struct GalleryModerationView: View {
                 .disabled(viewModel.isExporting)
                 .font(.caption)
             }
-            .listRowBackground(SwarmTheme.panel)
+            .listRowBackground(ResRowBackground())
         }
         .scrollContentBackground(.hidden)
         .safeAreaInset(edge: .bottom) {
@@ -254,11 +254,11 @@ struct GalleryModerationView: View {
         List {
             if let error = viewModel.errorMessage {
                 Section { ErrorBanner(message: error) }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
             }
             if let status = viewModel.statusMessage {
                 Section { Text(status).foregroundStyle(SwarmTheme.ok) }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
             }
             Section {
                 if viewModel.users.isEmpty {
@@ -284,7 +284,7 @@ struct GalleryModerationView: View {
                 .disabled(viewModel.isExporting)
                 .font(.caption)
             }
-            .listRowBackground(SwarmTheme.panel)
+            .listRowBackground(ResRowBackground())
         }
         .scrollContentBackground(.hidden)
         .safeAreaInset(edge: .bottom) {

@@ -9,9 +9,16 @@ struct SocialView: View {
         NavigationStack {
             ScrollViewReader { proxy in
             List {
+                Section {
+                    ResScreenHeader(eyebrow: "The people", title: "Community", subtitle: "Find operators, add friends, and talk shop.")
+                        .padding(.horizontal, -20)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20))
+                        .listRowBackground(Color.clear)
+                }
+
                 if let error = viewModel.errorMessage {
                     Section { ErrorBanner(message: error) }
-                        .listRowBackground(SwarmTheme.panel)
+                        .listRowBackground(ResRowBackground())
                 }
 
                 Section {
@@ -67,7 +74,7 @@ struct SocialView: View {
                 } header: {
                     SectionLabel(title: "Find People")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
                 .id("findPeople")
 
                 if !viewModel.incomingRequests.isEmpty {
@@ -103,7 +110,7 @@ struct SocialView: View {
                     } header: {
                         SectionLabel(title: "Friend Requests", count: viewModel.incomingRequests.count)
                     }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
                 }
 
                 if !viewModel.outgoingRequests.isEmpty {
@@ -129,7 +136,7 @@ struct SocialView: View {
                     } header: {
                         SectionLabel(title: "Sent Requests")
                     }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
                 }
 
                 Section {
@@ -159,7 +166,7 @@ struct SocialView: View {
                 } header: {
                     SectionLabel(title: "Friends", count: viewModel.friends.count)
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 Section {
                     if viewModel.threads.isEmpty {
@@ -192,11 +199,12 @@ struct SocialView: View {
                 } header: {
                     SectionLabel(title: "Messages", count: viewModel.threads.count)
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
             }
             .scrollContentBackground(.hidden)
-            .background(SwarmTheme.background)
+            .background(ResonanceBackdrop().ignoresSafeArea())
             .navigationTitle("Community")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 // Full directory browse (web: /users) — moved here from the
                 // Account tab's old "Discover" list so every Community

@@ -23,7 +23,7 @@ struct InvitesView: View {
             }
             .padding(.vertical)
         }
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle("Invite Bots")
         .task { await viewModel.load() }
         .refreshable {

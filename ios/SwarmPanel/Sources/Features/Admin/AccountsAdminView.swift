@@ -66,7 +66,7 @@ struct AccountsAdminView: View {
             // Room for the bulk-action bar so the last row isn't hidden behind it.
             .padding(.bottom, viewModel.isSelecting && !viewModel.selectedIds.isEmpty ? 64 : 0)
         }
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle("Accounts")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

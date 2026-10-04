@@ -44,7 +44,7 @@ struct OtherProjectsView: View {
             }
             .padding(.vertical)
         }
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle("My Other Projects")
         .sheet(item: $shareURL) { item in
             ActivityShareSheet(activityItems: [item.url])

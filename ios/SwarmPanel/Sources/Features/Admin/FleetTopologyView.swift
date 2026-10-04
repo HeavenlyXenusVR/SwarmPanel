@@ -101,7 +101,7 @@ struct FleetTopologyView: View {
             }
             .padding(.vertical)
         }
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle("Fleet Topology")
         .task { await viewModel.load() }
         .refreshable {

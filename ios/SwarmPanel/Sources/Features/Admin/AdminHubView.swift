@@ -14,6 +14,13 @@ struct AdminHubView: View {
 
     var body: some View {
         List {
+            Section {
+                ResScreenHeader(eyebrow: "Command center", title: "Admin", subtitle: "Monitoring, moderation and data for the whole swarm.")
+                    .padding(.horizontal, -20)
+                    .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20))
+                    .listRowBackground(Color.clear)
+            }
+
             // Same stats as the web /admin overview.
             if let stats {
                 Section {
@@ -32,7 +39,7 @@ struct AdminHubView: View {
                 } header: {
                     SectionLabel(title: "At a Glance")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
             }
 
             if appState.isAdmin {
@@ -52,7 +59,7 @@ struct AdminHubView: View {
                 } header: {
                     SectionLabel(title: "Monitoring")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
             } else if appState.isModerator {
                 // Moderators could already open Alert Rules from Profile
                 // before the restructure — keep that access.
@@ -63,7 +70,7 @@ struct AdminHubView: View {
                 } header: {
                     SectionLabel(title: "Monitoring")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
             }
 
             if canModerate || appState.canGallery {
@@ -84,7 +91,7 @@ struct AdminHubView: View {
                 } header: {
                     SectionLabel(title: "Moderation")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
             }
 
             if appState.isAdmin {
@@ -98,12 +105,13 @@ struct AdminHubView: View {
                 } header: {
                     SectionLabel(title: "Data")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
             }
         }
         .scrollContentBackground(.hidden)
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle("Admin")
+        .navigationBarTitleDisplayMode(.inline)
         .task { await loadStats() }
         .refreshable { await loadStats() }
     }

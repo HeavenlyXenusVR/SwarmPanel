@@ -18,15 +18,15 @@ struct AccountSecurityView: View {
             } header: {
                 SectionLabel(title: "Status")
             }
-            .listRowBackground(SwarmTheme.panel)
+            .listRowBackground(ResRowBackground())
 
             if let error = viewModel.errorMessage {
                 Section { ErrorBanner(message: error) }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
             }
             if let status = viewModel.statusMessage {
                 Section { Text(status).foregroundStyle(SwarmTheme.ok) }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
             }
 
             Section {
@@ -43,7 +43,7 @@ struct AccountSecurityView: View {
             } header: {
                 SectionLabel(title: "Email")
             }
-            .listRowBackground(SwarmTheme.panel)
+            .listRowBackground(ResRowBackground())
 
             Section {
                 SecureField("Current Password", text: $viewModel.currentPassword)
@@ -59,7 +59,7 @@ struct AccountSecurityView: View {
             } footer: {
                 Text(viewModel.hasPassword ? "" : "No password set yet on this account.")
             }
-            .listRowBackground(SwarmTheme.panel)
+            .listRowBackground(ResRowBackground())
 
             Section {
                 TextField("Discord Webhook URL", text: $viewModel.verificationWebhookUrl)
@@ -77,7 +77,7 @@ struct AccountSecurityView: View {
             } footer: {
                 Text("Proves you own a real Discord server by posting a code to a webhook you control there.")
             }
-            .listRowBackground(SwarmTheme.panel)
+            .listRowBackground(ResRowBackground())
 
             Section {
                 TextField("Your Discord User ID", text: $viewModel.discordUserId)
@@ -95,7 +95,7 @@ struct AccountSecurityView: View {
             } footer: {
                 Text("Sends a code via Discord DM instead — needs the bot to share a server with you.")
             }
-            .listRowBackground(SwarmTheme.panel)
+            .listRowBackground(ResRowBackground())
 
             Section {
                 TextField("Verification Code", text: $viewModel.verificationCode)
@@ -113,10 +113,10 @@ struct AccountSecurityView: View {
             } header: {
                 SectionLabel(title: "Enter Code")
             }
-            .listRowBackground(SwarmTheme.panel)
+            .listRowBackground(ResRowBackground())
         }
         .scrollContentBackground(.hidden)
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle("Account Security")
         .task { await viewModel.load() }
         .refreshable { await viewModel.load() }

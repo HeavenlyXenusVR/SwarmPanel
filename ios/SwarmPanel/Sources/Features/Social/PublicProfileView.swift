@@ -45,7 +45,7 @@ struct PublicProfileView: View {
             }
             .padding(.vertical)
         }
-        .background(SwarmTheme.background)
+        .background(ResonanceBackdrop().ignoresSafeArea())
         .navigationTitle(viewModel.profile?.name ?? "Profile")
         .navigationBarTitleDisplayMode(.inline)
         .task { await viewModel.load() }

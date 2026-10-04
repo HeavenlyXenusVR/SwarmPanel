@@ -22,9 +22,13 @@ struct BotDetailView: View {
         return candidate?.isEmpty == false ? candidate : nil
     }
 
+    private var botColor: Color { BotPalette.color(for: botKey) }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 18) {
+                hero
+
                 if let error = viewModel.errorMessage {
                     ErrorBanner(message: error).padding(.horizontal)
                 }
@@ -37,106 +41,64 @@ struct BotDetailView: View {
                         isPaused: session.isPaused ?? false,
                         positionSeconds: session.positionSeconds ?? 0,
                         durationSeconds: session.durationSeconds ?? 0,
-                        positionObservedAt: session.positionObservedAt
+                        positionObservedAt: session.positionObservedAt,
+                        botKey: botKey
                     )
                     .padding(.horizontal)
 
-                    PanelCard {
-                        StatRow(icon: "music.note.list", tint: .purple, label: "Queue", value: "\(session.queueCount ?? 0)")
-                        StatRow(icon: "arrow.triangle.2.circlepath", tint: .indigo, label: "Backup Queue", value: "\(session.backupQueueCount ?? 0)")
-                        if let volume = session.volume {
-                            StatRow(icon: "speaker.wave.2.fill", tint: .orange, label: "Volume", value: "\(volume)%")
-                        }
-                        Divider().overlay(SwarmTheme.line)
-                        HStack {
-                            IconChip(systemName: "repeat", tint: .teal)
-                            Text("Loop").foregroundStyle(SwarmTheme.textMuted)
-                            Spacer()
-                            Menu {
-                                ForEach(loopModes, id: \.self) { mode in
-                                    Button(mode.capitalized) {
-                                        Task { await setLoopMode(mode) }
-                                    }
-                                }
-                            } label: {
-                                Label((session.loopMode ?? "queue").capitalized, systemImage: "chevron.up.chevron.down")
-                                    .font(.subheadline)
-                            }
-                            .disabled(viewModel.isSending)
-                        }
-                        HStack {
-                            IconChip(systemName: "slider.horizontal.3", tint: .pink)
-                            Text("Filter").foregroundStyle(SwarmTheme.textMuted)
-                            Spacer()
-                            Menu {
-                                ForEach(filterModes, id: \.self) { mode in
-                                    Button(mode.capitalized) {
-                                        Task { await setFilterMode(mode) }
-                                    }
-                                }
-                            } label: {
-                                Label((session.filterMode ?? "none").capitalized, systemImage: "chevron.up.chevron.down")
-                                    .font(.subheadline)
-                            }
-                            .disabled(viewModel.isSending)
-                        }
-                        if let pending = session.pendingDirectOrders, pending > 0 {
-                            Divider().overlay(SwarmTheme.line)
-                            StatRow(icon: "clock.badge.exclamationmark", tint: SwarmTheme.warn, label: "Pending Orders", value: "\(pending)")
-                            if let command = session.latestDirectOrder?.command {
-                                Text("Waiting on the bot to pick up: \(command)")
-                                    .font(.caption2)
-                                    .foregroundStyle(SwarmTheme.textMuted)
-                            }
-                        }
+                    HStack(spacing: 0) {
+                        ResReadout(value: "\(session.queueCount ?? 0)", label: "Queue", tint: botColor)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        ResReadout(value: "\(session.backupQueueCount ?? 0)", label: "Backup")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        ResReadout(value: session.volume.map { "\($0)%" } ?? "—", label: "Volume")
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .padding(18)
+                    .resGlass()
                     .padding(.horizontal)
 
-                    if let items = session.queuePreview, !items.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            SectionLabel(title: "Up Next", count: items.count)
-                            PanelCard(padding: 0) {
-                                VStack(spacing: 0) {
-                                    ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                                        if index > 0 { Divider().overlay(SwarmTheme.line) }
-                                        Text(item.title?.isEmpty == false ? item.title! : item.videoUrl)
-                                            .font(.caption)
-                                            .foregroundStyle(SwarmTheme.textPrimary)
-                                            .lineLimit(1)
-                                            .padding(12)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .contentShape(Rectangle())
-                                            .onTapGesture {
-                                                guard let url = URL(string: item.videoUrl) else { return }
-                                                UIApplication.shared.open(url)
-                                            }
-                                            .contextMenu {
-                                                if let voiceChannelId = playbackVoiceChannelId {
-                                                    Button {
-                                                        Task { await queueThis(item, voiceChannelId: voiceChannelId) }
-                                                    } label: {
-                                                        Label("Queue This", systemImage: "text.badge.plus")
-                                                    }
-                                                }
-                                                Button {
-                                                    UIPasteboard.general.string = item.videoUrl
-                                                    Haptics.success()
-                                                    toastCenter.success("Link copied")
-                                                } label: {
-                                                    Label("Copy Link", systemImage: "doc.on.doc")
-                                                }
-                                                Button {
-                                                    guard let url = URL(string: item.videoUrl) else { return }
-                                                    UIApplication.shared.open(url)
-                                                } label: {
-                                                    Label("Open in Safari", systemImage: "safari")
-                                                }
-                                            }
-                                    }
+                    if let pending = session.pendingDirectOrders, pending > 0 {
+                        HStack(spacing: 12) {
+                            Image(systemName: "clock.badge.exclamationmark")
+                                .font(.title3)
+                                .foregroundStyle(Res.warn)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("\(pending) order\(pending == 1 ? "" : "s") waiting")
+                                    .font(.system(.subheadline, design: .rounded).weight(.bold))
+                                    .foregroundStyle(Res.ink)
+                                if let command = session.latestDirectOrder?.command {
+                                    Text("The bot hasn't picked up \(command) yet.")
+                                        .font(.caption)
+                                        .foregroundStyle(Res.mist)
                                 }
                             }
+                            Spacer()
                         }
+                        .padding(14)
+                        .resGlass(edge: Res.warn)
                         .padding(.horizontal)
+                    }
+
+                    modeShelf(title: "Loop", icon: "repeat", options: loopModes, current: session.loopMode ?? "queue") { mode in
+                        Task { await setLoopMode(mode) }
+                    }
+                    modeShelf(title: "Filter", icon: "slider.horizontal.3", options: filterModes, current: session.filterMode ?? "none") { mode in
+                        Task { await setFilterMode(mode) }
+                    }
+
+                    if let items = session.queuePreview, !items.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ResSectionHeader(eyebrow: "Up next", title: "\(items.count) in the queue")
+                            VStack(spacing: 0) {
+                                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                                    if index > 0 { Divider().overlay(Res.hairline).padding(.leading, 52) }
+                                    upNextRow(index: index, item: item)
+                                }
+                            }
+                            .resGlass()
+                            .padding(.horizontal)
+                        }
                     }
                 } else if viewModel.isLoading {
                     SkeletonCard(lines: 4).padding(.horizontal)
@@ -144,7 +106,8 @@ struct BotDetailView: View {
             }
             .padding(.vertical)
         }
-        .background(SwarmTheme.background)
+        .resonanceScreen()
+        .hidesDock()
         .navigationTitle(botDisplayName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -155,6 +118,7 @@ struct BotDetailView: View {
                 } label: {
                     Image(systemName: pinnedBots.isPinned(botKey: botKey, guildId: guildId) ? "pin.fill" : "pin")
                 }
+                .accessibilityLabel(pinnedBots.isPinned(botKey: botKey, guildId: guildId) ? "Unpin" : "Pin")
             }
             if let items = viewModel.session?.queuePreview, !items.isEmpty {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -173,6 +137,114 @@ struct BotDetailView: View {
             await viewModel.load(botKey: botKey, guildId: guildId)
         }
         .refreshOnForeground { await viewModel.load(botKey: botKey, guildId: guildId) }
+    }
+
+    /// The bot's own hexagon, name and the guild this view is scoped to.
+    private var hero: some View {
+        HStack(spacing: 16) {
+            ZStack {
+                Hexagon()
+                    .fill(LinearGradient(colors: [botColor.opacity(0.85), botColor.opacity(0.35)], startPoint: .top, endPoint: .bottom))
+                Hexagon().stroke(botColor, lineWidth: 1.5)
+                Text(BotPalette.monogram(for: botKey, name: botDisplayName))
+                    .font(.system(size: 22, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 64, height: 74)
+            .shadow(color: botColor.opacity(0.5), radius: 14)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("MUSIC BOT")
+                    .font(Res.eyebrow)
+                    .tracking(1.4)
+                    .foregroundStyle(botColor)
+                Text(botDisplayName)
+                    .font(Res.display(30))
+                    .foregroundStyle(Res.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                if !guildId.isEmpty {
+                    Button {
+                        UIPasteboard.general.string = guildId
+                        Haptics.success()
+                        toastCenter.success("Guild ID copied")
+                    } label: {
+                        Label("Guild \(guildId)", systemImage: "doc.on.doc")
+                            .font(.caption)
+                            .foregroundStyle(Res.mist)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+    }
+
+    private func modeShelf(title: String, icon: String, options: [String], current: String, onPick: @escaping (String) -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title.uppercased(), systemImage: icon)
+                .font(Res.eyebrow)
+                .tracking(1.2)
+                .foregroundStyle(Res.mist)
+                .padding(.horizontal, 20)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(options, id: \.self) { mode in
+                        ResChip(title: mode.capitalized, tint: botColor, isSelected: mode.lowercased() == current.lowercased()) {
+                            guard mode.lowercased() != current.lowercased() else { return }
+                            Haptics.selection()
+                            onPick(mode)
+                        }
+                        .disabled(viewModel.isSending)
+                    }
+                }
+                .padding(.horizontal)
+            }
+        }
+    }
+
+    private func upNextRow(index: Int, item: QueueItem) -> some View {
+        HStack(spacing: 12) {
+            Text("\(index + 1)")
+                .font(Res.readout(15))
+                .foregroundStyle(index == 0 ? botColor : Res.mist)
+                .frame(width: 28)
+            Text(item.title?.isEmpty == false ? item.title! : item.videoUrl)
+                .font(.system(.subheadline, design: .rounded))
+                .foregroundStyle(Res.ink)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard let url = URL(string: item.videoUrl) else { return }
+            UIApplication.shared.open(url)
+        }
+        .contextMenu {
+            if let voiceChannelId = playbackVoiceChannelId {
+                Button {
+                    Task { await queueThis(item, voiceChannelId: voiceChannelId) }
+                } label: {
+                    Label("Queue This", systemImage: "text.badge.plus")
+                }
+            }
+            Button {
+                UIPasteboard.general.string = item.videoUrl
+                Haptics.success()
+                toastCenter.success("Link copied")
+            } label: {
+                Label("Copy Link", systemImage: "doc.on.doc")
+            }
+            Button {
+                guard let url = URL(string: item.videoUrl) else { return }
+                UIApplication.shared.open(url)
+            } label: {
+                Label("Open in Safari", systemImage: "safari")
+            }
+        }
     }
 
     private func upNextShareText(_ items: [QueueItem]) -> String {

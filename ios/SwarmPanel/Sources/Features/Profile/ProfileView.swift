@@ -14,36 +14,26 @@ struct ProfileView: View {
         return "\(currentAppVersion) (\(build))"
     }
 
+    private var roleLabel: String {
+        if appState.isOwner { return appState.isAdmin ? "Owner · admin mode" : "Owner" }
+        if appState.isModerator { return "Moderator" }
+        return appState.role.isEmpty ? "Member" : appState.role.capitalized
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    HStack(spacing: 14) {
-                        InitialsAvatar(name: appState.username.isEmpty ? "?" : appState.username, diameter: 56)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(appState.username)
-                                .font(.title3.bold())
-                                .foregroundStyle(SwarmTheme.textPrimary)
-                            if let guildId = appState.guildId {
-                                Button {
-                                    UIPasteboard.general.string = guildId
-                                    Haptics.success()
-                                } label: {
-                                    HStack(spacing: 4) {
-                                        Text("Guild \(guildId)")
-                                        Image(systemName: "doc.on.doc")
-                                    }
-                                    .font(.caption)
-                                    .foregroundStyle(SwarmTheme.textMuted)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        Spacer()
-                    }
-                    .padding(.vertical, 6)
+                    IdentityCard(
+                        name: viewModel.displayName.isEmpty ? appState.username : viewModel.displayName,
+                        username: appState.username,
+                        guildId: appState.guildId,
+                        role: roleLabel,
+                        isPublic: viewModel.isPublic
+                    )
+                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                    .listRowBackground(Color.clear)
                 }
-                .listRowBackground(SwarmTheme.panel)
 
                 // Kept at the top — for an admin/moderator, this is the
                 // reason they're in this app; burying it at the bottom of a
@@ -59,7 +49,7 @@ struct ProfileView: View {
                     } footer: {
                         Text("Switches between your normal guild-scoped view and the unrestricted admin view.")
                     }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
                 }
 
                 // Admin tools live on their own hub screen (AdminHubView),
@@ -82,7 +72,7 @@ struct ProfileView: View {
                     } footer: {
                         Text("Visible because your account has owner or moderator access on this guild.")
                     }
-                    .listRowBackground(SwarmTheme.panel)
+                    .listRowBackground(ResRowBackground())
                 }
 
                 Section {
@@ -96,7 +86,7 @@ struct ProfileView: View {
                 } header: {
                     SectionLabel(title: "Account")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 Section {
                     ChecklistRow(label: "Account verified", done: viewModel.isVerified)
@@ -107,15 +97,15 @@ struct ProfileView: View {
                 } header: {
                     SectionLabel(title: "Getting Started")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 if let error = viewModel.errorMessage {
                     Section { ErrorBanner(message: error) }
-                        .listRowBackground(SwarmTheme.panel)
+                        .listRowBackground(ResRowBackground())
                 }
                 if let status = viewModel.statusMessage {
                     Section { Text(status).foregroundStyle(SwarmTheme.ok) }
-                        .listRowBackground(SwarmTheme.panel)
+                        .listRowBackground(ResRowBackground())
                 }
 
                 Section {
@@ -158,7 +148,7 @@ struct ProfileView: View {
                 } footer: {
                     Text("Theme and accent apply instantly on this device. Accent also syncs to your account when you tap Save Profile, so it's consistent on the web panel too.")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 Section {
                     Button {
@@ -173,7 +163,7 @@ struct ProfileView: View {
                     .disabled(viewModel.isSaving)
                     .tint(SwarmTheme.accent)
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 Section {
                     HStack {
@@ -186,14 +176,14 @@ struct ProfileView: View {
                 } footer: {
                     Text("Locks SwarmPanel behind \(biometricLock.biometryLabel) whenever it returns from the background.")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 Section {
                     NavigationLink { ServerSettingsView() } label: { IconRow(icon: "server.rack", tint: .gray, title: "Server") }
                 } header: {
                     SectionLabel(title: "Advanced")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 Section {
                     NavigationLink { WhatsNewView() } label: { IconRow(icon: "sparkles", tint: .yellow, title: "What's New") }
@@ -202,16 +192,17 @@ struct ProfileView: View {
                 } header: {
                     SectionLabel(title: "About")
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
 
                 Section {
                     Button("Log Out", role: .destructive) { appState.logout() }
                 }
-                .listRowBackground(SwarmTheme.panel)
+                .listRowBackground(ResRowBackground())
             }
             .scrollContentBackground(.hidden)
-            .background(SwarmTheme.background)
-            .navigationTitle("Account")
+            .background(ResonanceBackdrop().ignoresSafeArea())
+            .navigationTitle("You")
+            .navigationBarTitleDisplayMode(.inline)
             .task { await viewModel.load() }
             .refreshable {
                 Haptics.light()
@@ -224,6 +215,105 @@ struct ProfileView: View {
             }
             .notificationsBell(notificationsViewModel)
         }
+    }
+}
+
+/// The top of You: a glass card washed in the viewer's accent with their
+/// avatar, name, role and guild, over a faint hive pattern.
+private struct IdentityCard: View {
+    let name: String
+    let username: String
+    let guildId: String?
+    let role: String
+    let isPublic: Bool
+
+    @Environment(\.resAccent) private var accent
+    @EnvironmentObject private var toastCenter: ToastCenter
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 16) {
+                ZStack {
+                    Hexagon().fill(LinearGradient(colors: [accent, accent.hueShifted(by: 34)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    Text(String(name.prefix(1)).uppercased())
+                        .font(.system(size: 30, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.black.opacity(0.8))
+                }
+                .frame(width: 70, height: 80)
+                .shadow(color: accent.opacity(0.5), radius: 14)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(role.uppercased())
+                        .font(Res.eyebrow)
+                        .tracking(1.4)
+                        .foregroundStyle(accent)
+                    Text(name)
+                        .font(Res.display(28))
+                        .foregroundStyle(Res.ink)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    if name != username {
+                        Text("@\(username)")
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(Res.mist)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 8) {
+                if let guildId {
+                    Button {
+                        UIPasteboard.general.string = guildId
+                        Haptics.success()
+                        toastCenter.success("Guild ID copied")
+                    } label: {
+                        Label("Guild \(guildId)", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer()
+                Label(isPublic ? "Public profile" : "Private profile", systemImage: isPublic ? "globe" : "lock.fill")
+            }
+            .font(.system(.caption, design: .rounded).weight(.semibold))
+            .foregroundStyle(Res.mist)
+        }
+        .padding(20)
+        .background(
+            ZStack(alignment: .topTrailing) {
+                LinearGradient(colors: [accent.opacity(0.22), .clear], startPoint: .topLeading, endPoint: .bottomTrailing)
+                HoneycombPattern(color: accent)
+                    .frame(width: 180, height: 140)
+                    .opacity(0.35)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: Res.Radius.panel, style: .continuous))
+        )
+        .resGlass(radius: Res.Radius.panel, elevated: true, edge: accent)
+    }
+}
+
+/// A faint corner of honeycomb, used as texture behind identity cards.
+struct HoneycombPattern: View {
+    var color: Color
+
+    var body: some View {
+        Canvas { canvas, size in
+            let cell: CGFloat = 26
+            let height = cell * 2 / sqrt(3)
+            var row = 0
+            var y: CGFloat = 0
+            while y < size.height + height {
+                var x: CGFloat = row.isMultiple(of: 2) ? 0 : cell / 2
+                while x < size.width + cell {
+                    let rect = CGRect(x: x - cell / 2, y: y - height / 2, width: cell * 0.92, height: height * 0.92)
+                    let fade = 1 - min(1, hypot(size.width - x, y) / max(size.width, 1))
+                    canvas.stroke(Hexagon().path(in: rect), with: .color(color.opacity(0.6 * fade)), lineWidth: 1)
+                    x += cell
+                }
+                y += height * 0.75
+                row += 1
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
